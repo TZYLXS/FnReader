@@ -462,3 +462,16 @@ details.section[open] > summary { border-bottom: 1px solid var(--line); }
 .detail-actions { display: flex; gap: 10px; padding: 6px 14px 12px; }
 .detail-actions .btn { flex: 1; }
 .detail-intro { padding: 0 2px 12px; font-size: 13.5px; line-height: 1.8; color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
+
+/* ---------- 换源弹窗 ---------- */
+.switch-item { display: flex; gap: 10px; align-items: center; padding: 10px 4px; border-top: 1px solid var(--line); }
+.switch-item:first-child { border-top: 0; }
+.switch-cover {
+  width: 44px; height: 60px; flex: none; border-radius: 6px; overflow: hidden;
+  background: var(--panel-2, rgba(128,128,128,0.12)); display: grid; place-items: center;
+}
+.switch-cover img { width: 100%; height: 100%; object-fit: cover; }
+.switch-cover .ph { font-size: 18px; color: var(--text-2); }
+.switch-meta { flex: 1; min-width: 0; font-size: 13px; }
+.switch-meta b { display: block; font-size: 13.5px; margin-bottom: 2px; word-break: break-all; }
+.switch-meta .desc { font-size: 11.5px; color: var(--text-2); word-break: break-all; }

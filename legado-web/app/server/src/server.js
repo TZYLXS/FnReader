@@ -278,6 +278,7 @@ async function handleSearchSSE(req, res, params) {
   let cursor = 0;
   let found = 0;
   let doneCount = 0;
+  let cachedSources = 0;
   const worker = async () => {
     while (!closed) {
       const i = cursor++;
@@ -288,6 +289,8 @@ async function handleSearchSSE(req, res, params) {
       try {
         const books = await searchSource(source, key, 1);
         if (closed) return;
+        const fromCache = books.fromCache === true;
+        if (fromCache) cachedSources++;
         if (books.length) {
           found += books.length;
           send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books });
@@ -300,6 +303,8 @@ async function handleSearchSSE(req, res, params) {
           ms: Date.now() - startedAt,
           done: doneCount,
           total: sources.length,
+          cached: fromCache,
+          cachedTotal: cachedSources,
         });
       } catch (e) {
         doneCount++;
@@ -756,6 +761,8 @@ async function handleRefreshToc(book) {
   if (!source) throw new Error('未找到书源，可能已被删除');
   if (!book.tocUrl) await getBookInfo(source, book);
   const chapters = await getToc(source, book);
+  book.chapters = chapters;
+  book.totalChapterNum = chapters.length;
   store.upsertBook(book);
   // 拿到目录后先把「当前阅读位置」和第一章缓存起来
   prefetchChapter(book, book.durChapterIndex || 0);
@@ -1158,6 +1165,32 @@ async function route(req, res, url) {
   if (p === '/api/books' && method === 'GET') {
     const books = [...store.books].sort((a, b) => (b.durChapterTime || 0) - (a.durChapterTime || 0));
     return json(res, 200, { books: books.map(sanitizeBook) });
+  }
+
+  // 换源：按书名再搜一遍，返回其它书源的同名书
+  if (p === '/api/switch-source' && method === 'GET') {
+    const name = String(searchParams.get('name') || '').trim();
+    const exclude = String(searchParams.get('exclude') || '');
+    if (!name) return json(res, 400, { error: '缺少书名' });
+    try {
+      const books = await mobileSearch(name, searchParams.get('group') || '', searchParams.get('limit') || 8);
+      const norm = (t) => String(t || '').replace(/\s+/g, '').toLowerCase();
+      const target = norm(name);
+      const list = books
+        .filter((b) => b.bookUrl !== exclude)
+        .map((b) => {
+          const n = norm(b.name);
+          const score = n === target ? 0 : n.includes(target) ? 1 : target.includes(n) ? 2 : 3;
+          return { b, score };
+        })
+        .sort((x, y) => x.score - y.score)
+        .filter((x) => x.score <= 2)
+        .slice(0, 30)
+        .map((x) => x.b);
+      return json(res, 200, { name, books: list });
+    } catch (e) {
+      return json(res, 502, { error: '换源搜索失败：' + (e.message || e) });
+    }
   }
 
   // 书籍详情（搜索结果点进去）

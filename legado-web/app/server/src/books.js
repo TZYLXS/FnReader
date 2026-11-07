@@ -127,7 +127,11 @@ async function searchSource(source, key, page = 1, opts = {}) {
 
   // 命中缓存就直接返回（同一个搜索请求 URL 只抓一次）
   const cached = searchCache.get(url, body);
-  if (cached) return cached.map((b) => ({ ...b }));
+  if (cached) {
+    const list = cached.map((b) => ({ ...b }));
+    list.fromCache = true;
+    return list;
+  }
   const resp = await fetchPage(url, source, {
     method,
     body,
@@ -220,18 +224,17 @@ async function getBookInfo(source, book, opts = {}) {
 }
 
 /** 拉取目录 */
-async function getToc(source, book, opts = {}) {
-  let tocUrl = book.tocUrl || book.bookUrl;
-  const rule = source.ruleToc || {};
+async function parseTocFrom(startUrl, source, book) {
   let chapters = [];
   let pageGuard = 0;
-  let nextUrl = tocUrl;
+  let nextUrl = startUrl;
 
   while (nextUrl && pageGuard < 5) {
     pageGuard++;
     const resp = await fetchPage(nextUrl, source, {});
     const doc = makeDoc(resp.body);
     const ctx = { doc, json: tryJson(resp.body), baseUrl: resp.url, source, book };
+    const rule = source.ruleToc || {};
     if (rule.init) evalRule(rule.init, ctx);
     if (rule.formatJs) evalRule(rule.formatJs, ctx);
 
@@ -260,9 +263,7 @@ async function getToc(source, book, opts = {}) {
     }
   }
 
-  if (!chapters.length) throw new Error('目录为空，可能书源规则不匹配或站点改版');
-
-  // 去重（部分站点分页会重复返回同一批章节）
+  // 去重（分页可能重复返回同一批）
   const seen = new Set();
   const unique = [];
   for (const c of chapters) {
@@ -277,40 +278,70 @@ async function getToc(source, book, opts = {}) {
   ordered.forEach((c, i) => {
     c.index = i;
   });
-
-  book.chapters = ordered;
-  book.totalChapterNum = ordered.length;
-  book.tocUrl = tocUrl;
   return ordered;
 }
 
-function applyReplaceRules(text, rule) {
-  let out = text;
-  if (!rule) return out;
-  // 支持 Legado 的 ##正则##替换 写法，也兼容直接写正则
-  const rules = [];
-  const chunks = String(rule).split('##');
-  if (chunks.length >= 2) {
-    for (let i = 1; i < chunks.length; i += 2) {
-      rules.push({ pattern: chunks[i], replacement: chunks[i + 1] === undefined ? '' : chunks[i + 1] });
-    }
-  } else {
-    for (const line of String(rule).split(/\n+/).filter(Boolean)) {
-      rules.push({ pattern: line, replacement: '' });
+/** 目录只有「最新章节」时，找页面上的「全部章节 / 完整目录」链接再抓一次 */
+const FULL_TOC_TEXT = /(全部|完整|查看|展开|更多)\s*(章节|目录)|章节列表|全部目录|查看目录/;
+
+async function findFullTocUrls(source, book) {
+  const urls = [];
+  const pageUrl = book.tocUrl || book.bookUrl;
+
+  // 1) 页面上的「全部章节 / 完整目录」链接
+  try {
+    const resp = await fetchPage(pageUrl, source, {});
+    const $ = makeDoc(resp.body).$;
+    $('a').each((i, el) => {
+      const text = $(el).text().trim();
+      const href = $(el).attr('href') || '';
+      if (!href || !text || text.length > 12) return;
+      if (FULL_TOC_TEXT.test(text)) {
+        const abs = absoluteUrl(resp.url, href);
+        if (abs && !urls.includes(abs)) urls.push(abs);
+      }
+    });
+  } catch {
+    /* ignore */
+  }
+
+  // 2) 常见完整目录地址：<书页>/index.html
+  for (const base of [book.bookUrl, book.tocUrl]) {
+    if (!base) continue;
+    const dir = base.replace(/[^/]*$/, '');
+    for (const name of ['index.html', 'all.html']) {
+      const abs = dir + name;
+      if (/^https?:/i.test(abs) && !urls.includes(abs) && abs !== pageUrl) urls.push(abs);
     }
   }
-  for (const r of rules) {
-    if (!r.pattern) continue;
-    try {
-      out = out.replace(new RegExp(r.pattern, 'g'), r.replacement);
-    } catch {
-      /* ignore */
-    }
-  }
-  return out;
+  return urls.slice(0, 3);
 }
 
-/** 拉取正文 */
+async function getToc(source, book, opts = {}) {
+  const tocUrl = book.tocUrl || book.bookUrl;
+  let chapters = await parseTocFrom(tocUrl, source, book);
+
+  // 少于 30 章且像「最新章节」列表时，尝试找完整目录
+  if (chapters.length > 0 && chapters.length <= 30) {
+    const candidates = await findFullTocUrls(source, book).catch(() => []);
+    const oldUrls = new Set(chapters.map((c) => c.url));
+    for (const fullUrl of candidates) {
+      const more = await parseTocFrom(fullUrl, source, book).catch(() => []);
+      // 只有「明显更全」且仍包含原来的章节时才采用
+      if (more.length > chapters.length * 1.5) {
+        const hit = more.filter((c) => oldUrls.has(c.url)).length;
+        if (hit >= Math.ceil(chapters.length * 0.5)) {
+          chapters = more;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!chapters.length) throw new Error('目录为空，可能书源规则不匹配或站点改版');
+  return chapters;
+}
+
 async function getContent(source, book, chapter) {
   const rule = source.ruleContent || {};
   let url = chapter.url;

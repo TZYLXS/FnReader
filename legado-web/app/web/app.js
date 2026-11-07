@@ -100,7 +100,7 @@ async function router() {
   if (path === '/detail') return renderDetail();
   if (path === '/feeds') return renderFeeds();
   if (path === '/downloads') return renderDownloads();
-  if (path.startsWith('/read')) return openReader(params.get('url'));
+  if (path.startsWith('/read')) return openReader(params.get('url'), params.get('title'));
   return renderShelf();
 }
 
@@ -599,6 +599,7 @@ function startSearch(key, opts = {}) {
   if (state.search.running) return toast('正在搜索中…');
   state.search.key = key;
   state.search.results = [];
+  state.search.cachedTotal = 0;
   state.search.running = true;
   renderSearchResults();
 
@@ -649,12 +650,14 @@ function startSearch(key, opts = {}) {
       state.search.results.push(...fresh);
       renderSearchResults();
     } else if (msg.type === 'source-done') {
+      if (msg.cachedTotal) state.search.cachedTotal = msg.cachedTotal;
       done = msg.done || done + 1;
       if (msg.total) total = msg.total;
-      status.textContent = `已搜索 ${done}/${total || '?'} 个书源，找到 ${state.search.results.length} 本`;
+      const cacheNote = msg.cachedTotal ? `（其中 ${msg.cachedTotal} 个命中缓存）` : '';
+      status.textContent = `已搜索 ${done}/${total || '?'} 个书源${cacheNote}，找到 ${state.search.results.length} 本`;
     } else if (msg.type === 'done') {
       status.textContent = state.search.results.length
-        ? `搜索完成：${state.search.results.length} 本（${total} 个书源）`
+        ? `搜索完成：${state.search.results.length} 本（${total} 个书源${state.search.cachedTotal ? '，' + state.search.cachedTotal + ' 个命中缓存' : ''}）`
         : '没有找到结果：可能是书源失效，或该源需要 WebView/加密接口。可在「书源」里只选几个源重试';
       finishSearch();
     } else if (msg.type === 'error') {
@@ -694,7 +697,7 @@ function finishSearch() {
 }
 
 /* ---------------- 阅读器 ---------------- */
-async function openReader(bookUrl) {
+async function openReader(bookUrl, wantTitle) {
   if (!bookUrl) return (location.hash = '#/shelf');
   view.innerHTML = `<div class="reader"><div class="empty"><span class="spinner"></span> 正在打开…</div></div>`;
   try {
@@ -709,7 +712,19 @@ async function openReader(bookUrl) {
     if (!chapters || !chapters.length) throw new Error('目录为空');
     book.chapters = chapters;
     book.totalChapterNum = chapters.length;
-    state.reader = { book, chapters, index: Math.min(book.durChapterIndex || 0, chapters.length - 1) };
+    let idx = Math.min(book.durChapterIndex || 0, chapters.length - 1);
+    // 换源后按章节标题定位到同一章
+    if (wantTitle) {
+      const norm = (t) => String(t || '').replace(/\s+/g, '');
+      const target = norm(wantTitle);
+      const exact = chapters.findIndex((c) => norm(c.title) === target);
+      if (exact >= 0) idx = exact;
+      else {
+        const loose = chapters.findIndex((c) => norm(c.title).includes(target) || target.includes(norm(c.title)));
+        if (loose >= 0) idx = loose;
+      }
+    }
+    state.reader = { book, chapters, index: idx };
     renderReaderShell();
     await loadChapter(state.reader.index);
   } catch (e) {
@@ -724,6 +739,7 @@ function renderReaderShell() {
       <header class="reader-head" id="reader-head">
         <button class="icon-btn" id="back">‹</button>
         <div class="title" id="book-title">${esc(book.name)}</div>
+        <button class="icon-btn" id="switch-src" title="换源">⇄</button>
         <button class="icon-btn" id="catalog">☰</button>
         <button class="icon-btn" id="reader-settings">Aa</button>
       </header>
@@ -749,6 +765,7 @@ function renderReaderShell() {
     </div>`;
 
   $('#back').onclick = () => (location.hash = '#/shelf');
+  $('#switch-src').onclick = openSwitchSource;
   $('#catalog').onclick = toggleDrawer;
   $('#drawer-mask').onclick = toggleDrawer;
   $('#prev').onclick = () => gotoChapter(state.reader.index - 1);
@@ -850,6 +867,77 @@ function saveProgress() {
       shelfBook.durChapterTitle = r.chapters[r.index].title;
     }
   }, 600);
+}
+
+async function openSwitchSource() {
+  const r = state.reader;
+  if (!r) return;
+  const modal = $('#modal');
+  const box = $('#modal-box');
+  const curTitle = r.chapters[r.index] ? r.chapters[r.index].title : '';
+  box.innerHTML = `
+    <h3 style="margin-bottom:6px">换源</h3>
+    <div class="desc" style="font-size:12px;color:var(--text-2);margin-bottom:10px">
+      按书名「${esc(r.book.name)}」重新搜索，当前进度：${esc(curTitle)}
+    </div>
+    <div id="switch-list" style="max-height:56vh;overflow:auto"><div class="empty"><span class="spinner"></span> 搜索中…</div></div>
+    <div class="modal-actions"><button class="btn" id="switch-close">关闭</button></div>`;
+  modal.classList.remove('hidden');
+  const close = () => modal.classList.add('hidden');
+  $('#switch-close').onclick = close;
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+
+  let data;
+  try {
+    data = await api(
+      `/switch-source?name=${encodeURIComponent(r.book.name)}&exclude=${encodeURIComponent(r.book.bookUrl)}&limit=10`
+    );
+  } catch (e) {
+    $('#switch-list').innerHTML = `<div class="empty">搜索失败：${esc(e.message)}</div>`;
+    return;
+  }
+
+  if (!data.books.length) {
+    $('#switch-list').innerHTML = '<div class="empty">没有找到其它书源的同名书</div>';
+    return;
+  }
+
+  $('#switch-list').innerHTML = data.books
+    .map(
+      (b, i) => `
+      <div class="switch-item" data-i="${i}">
+        <div class="switch-cover">${b.coverUrl ? `<img loading="lazy" src="${esc(coverSrc(b.coverUrl, b.bookUrl))}" onerror="this.remove()" />` : `<span class="ph">${esc((b.name || '?').slice(0, 1))}</span>`}</div>
+        <div class="switch-meta">
+          <b>${esc(b.name)}</b>
+          <div class="desc">${esc(b.author || '未知作者')} · ${esc(b.originName || '')}</div>
+          <div class="desc">${esc(b.lastChapter ? '最新：' + b.lastChapter : '')}</div>
+        </div>
+        <button class="btn primary" data-pick="${i}" style="padding:6px 12px;font-size:12px">切到这本</button>
+      </div>`
+    )
+    .join('');
+
+  $('#switch-list').onclick = async (e) => {
+    const btn = e.target.closest('[data-pick]');
+    if (!btn) return;
+    const b = data.books[Number(btn.dataset.pick)];
+    if (!b) return;
+    btn.disabled = true;
+    btn.textContent = '切换中…';
+    try {
+      await api('/books', { method: 'POST', body: b });
+      await loadBooks();
+      close();
+      location.hash =
+        '#/read?url=' + encodeURIComponent(b.bookUrl) + '&title=' + encodeURIComponent(curTitle);
+    } catch (err) {
+      toast('换源失败：' + err.message);
+      btn.disabled = false;
+      btn.textContent = '切到这本';
+    }
+  };
 }
 
 function openReaderSettings() {
@@ -1576,7 +1664,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.6 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.7 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
