@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""发版助手：递增版本号 + 写一条更新日志 + 同步静态资源指纹。
+"""发版助手：递增版本号 + 写一条更新日志。
 
 用法：
     python tools/release.py "更新说明1；说明2" [--build] [--dry-run]
@@ -13,11 +13,11 @@ import sys
 from datetime import date
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MANIFEST = os.path.join(BASE, "legado-web", "manifest")
-APPJS = os.path.join(BASE, "legado-web", "app", "web", "app.js")
-INDEX = os.path.join(BASE, "legado-web", "app", "web", "index.html")
-TXT = os.path.join(BASE, "docs", "更新日志.txt")
-MD = os.path.join(BASE, "docs", "更新日志.md")
+MANIFEST = os.path.join(BASE, "fnos-legado", "manifest")
+APPJS = os.path.join(BASE, "fnos-legado", "app", "web", "app.js")
+INDEX = os.path.join(BASE, "fnos-legado", "app", "web", "index.html")
+TXT = os.path.join(BASE, "dist", "更新日志.txt")
+MD = os.path.join(BASE, "dist", "更新日志.md")
 
 NL = "\n"
 
@@ -53,9 +53,11 @@ def main():
     today = date.today().isoformat()
     notes = split_notes(note)
 
+    # manifest
     manifest_new = re.sub(r"^version=.+$", "version=" + new, manifest, flags=re.M)
     manifest_new = re.sub(r"^changelog=.*$", "changelog=" + note, manifest_new, flags=re.M)
 
+    # 更新日志 txt
     txt = io.open(TXT, encoding="utf-8").read()
     items = "".join("  ・" + n + NL for n in notes)
     entry = (
@@ -68,6 +70,7 @@ def main():
     txt_new = txt[:idx] + entry + txt[idx:]
     txt_new = re.sub(r"当前版本：V[\d.]+", "当前版本：V" + new, txt_new, count=1)
 
+    # 更新日志 md
     md_new = None
     if os.path.exists(MD):
         md = io.open(MD, encoding="utf-8").read()
@@ -77,11 +80,13 @@ def main():
         if first >= 0:
             md_new = md[:first] + md_entry + md[first:]
 
+    # app.js 版本显示
     js_new = None
     if os.path.exists(APPJS):
         js = io.open(APPJS, encoding="utf-8").read()
         js_new = re.sub(r"版本 V[\d.]+", "版本 V" + new, js)
 
+    # index.html：版本 meta + 静态资源版本号
     idx_new = None
     if os.path.exists(INDEX):
         h = io.open(INDEX, encoding="utf-8").read()

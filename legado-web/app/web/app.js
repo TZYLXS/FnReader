@@ -1402,6 +1402,15 @@ async function renderSettings() {
         </div>
       </div>
       <div class="section">
+        <h3>手机接入</h3>
+        <div class="row"><div class="label">接口地址<div class="desc" id="api-base" style="word-break:break-all">-</div></div>
+          <button class="btn" id="copy-base" style="padding:5px 10px;font-size:12px">复制</button></div>
+        <div class="row"><div class="label">访问令牌<div class="desc" id="api-token" style="word-break:break-all">-</div></div>
+          <button class="btn" id="copy-token" style="padding:5px 10px;font-size:12px">复制</button>
+          <button class="btn ghost" id="reset-token" style="padding:5px 8px;font-size:12px;color:var(--danger)">重置</button></div>
+        <div class="row"><div class="label">说明<div class="desc">安卓 App 通过 /api/m/* 读取书架、目录与正文，请求头带 X-Api-Token</div></div></div>
+      </div>
+      <div class="section">
         <h3>下载</h3>
         <a class="row" href="#/downloads" style="text-decoration:none"><div class="label">已下载书籍<div class="desc" id="stat-dl">-</div></div><span style="color:var(--text-2)">›</span></a>
         <div class="row"><div class="label">保存位置<div class="desc" id="stat-dir">-</div></div>
@@ -1418,7 +1427,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.6.10 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.6.11 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -1457,6 +1466,34 @@ async function renderSettings() {
     } catch {
       /* 忽略 */
     }
+
+    // 手机接入：接口地址 + token
+    const apiBase = location.origin + location.pathname.replace(/\/[^/]*$/, '');
+    const baseEl = $('#api-base');
+    if (baseEl) baseEl.textContent = apiBase;
+    const tokenEl = $('#api-token');
+    if (tokenEl) tokenEl.textContent = cfg.apiToken || '';
+    const copy = (text, label) => {
+      if (!text) return toast('没有可复制的内容');
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast(label + '已复制')).catch(() => toast('复制失败'));
+      else toast('当前环境不支持复制');
+    };
+    const cb = $('#copy-base');
+    if (cb) cb.onclick = () => copy(apiBase, '接口地址');
+    const ct = $('#copy-token');
+    if (ct) ct.onclick = () => copy(cfg.apiToken || '', '令牌');
+    const rt = $('#reset-token');
+    if (rt)
+      rt.onclick = async () => {
+        if (!confirm('重置后旧 App 的 token 会失效，需要重新填写。继续？')) return;
+        try {
+          const r = await api('/m/reset-token', { method: 'POST' });
+          $('#api-token').textContent = r.apiToken;
+          toast('令牌已重置');
+        } catch (e) {
+          toast('重置失败：' + e.message);
+        }
+      };
 
     // 已下载书籍数量 + 保存位置
     try {
