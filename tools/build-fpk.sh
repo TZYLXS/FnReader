@@ -14,7 +14,8 @@ command -v "$NODE" >/dev/null 2>&1 || { echo "找不到 node，请先安装 Node
 echo "==> 1/4 打包前端服务（esbuild）"
 cd "$SRC/app/server"
 if [ -x node_modules/esbuild/bin/esbuild ]; then
-  "$NODE" node_modules/esbuild/bin/esbuild src/server.js \
+  # 该路径下是 esbuild 的平台原生二进制（ELF），直接执行，不要用 node 运行
+  node_modules/esbuild/bin/esbuild src/server.js \
     --bundle --platform=node --target=node18 --format=cjs --minify \
     --outfile=server.bundle.js >/dev/null
 else
