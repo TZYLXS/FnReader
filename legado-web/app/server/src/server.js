@@ -13,6 +13,7 @@ const { request, requestBinary, absoluteUrl } = require('./util');
 const { fetchFeed } = require('./feeds');
 const { getArticle } = require('./article');
 const replaceRules = require('./replace');
+const introLookup = require('./intro');
 
 // 订阅条目正文的内存缓存（按条目链接）
 const chapterCache = new Map();
@@ -1390,6 +1391,29 @@ async function route(req, res, url) {
       return json(res, 200, { name, books: list });
     } catch (e) {
       return json(res, 502, { error: '换源搜索失败：' + (e.message || e) });
+    }
+  }
+
+  // 简介补全：本应用无关书源里都没有简介时，去其它书源 / 晋江取
+  if (p === '/api/intro' && method === 'GET') {
+    const name = String(searchParams.get('name') || '').trim();
+    const author = String(searchParams.get('author') || '').trim();
+    if (!name) return json(res, 400, { error: '缺少书名' });
+    try {
+      const r = await introLookup.lookup(name, author, store.dataDir, {
+        force: searchParams.get('force') === '1',
+        searchSources: (key, limit) => mobileSearch(key, '', limit),
+        fetchDetail: async (b) => {
+          const src = store.findSource(b.origin);
+          if (!src) return null;
+          const book = { ...b };
+          await getBookInfo(src, book).catch(() => null);
+          return book;
+        },
+      });
+      return json(res, 200, r);
+    } catch (e) {
+      return json(res, 502, { error: '获取简介失败：' + (e.message || e) });
     }
   }
 

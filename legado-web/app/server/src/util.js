@@ -1,4 +1,5 @@
 'use strict';
+const zlib = require('node:zlib');
 // 通用工具：HTTP 抓取（cookie/编码/重定向）、文本处理、JSON path
 
 const DEFAULT_UA =
@@ -114,7 +115,16 @@ async function requestOnce(url, options = {}) {
       throw new Error(cause ? err.message + ' [' + cause + ']' : err.message);
     }
     storeCookies(res.url || url, res.headers);
-    const buf = Buffer.from(await res.arrayBuffer());
+    let buf = Buffer.from(await res.arrayBuffer());
+    // 有些站点无条件返回 gzip，不处理会解出乱码
+    const enc = String(res.headers.get('content-encoding') || '').toLowerCase();
+    try {
+      if (enc.includes('gzip') || (buf[0] === 0x1f && buf[1] === 0x8b)) buf = zlib.gunzipSync(buf);
+      else if (enc.includes('deflate')) buf = zlib.inflateSync(buf);
+      else if (enc.includes('br')) buf = zlib.brotliDecompressSync(buf);
+    } catch {
+      /* 解压失败就按原始内容走 */
+    }
     const ct = res.headers.get('content-type') || '';
     const text = charset ? new TextDecoder(charset).decode(buf) : decodeBody(buf, ct);
     return { body: text, url: res.url || url, status: res.status, contentType: ct, headers: res.headers };

@@ -80,7 +80,8 @@ function parseHash() {
 async function router() {
   const { path, params } = parseHash();
   // 订阅并入「搜索」页，底部只保留 4 个标签
-  const tab = path === '/feeds' ? 'search' : path.split('/')[1] || 'shelf';
+  const raw = path.split('/')[1] || 'shelf';
+  const tab = raw === 'feeds' ? 'search' : raw === 'sources' ? 'settings' : raw;
   $$('#tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   if (!path.startsWith('/sources')) {
     const bulk = document.getElementById('source-bulk');
@@ -512,7 +513,8 @@ async function renderDetail() {
     </div>
     <div class="section" style="margin:12px 14px">
       <h3>简介</h3>
-      <div class="detail-intro">${esc(b.intro || '暂无简介')}</div>
+      <div class="detail-intro" id="detail-intro">${esc(b.intro || '暂无简介')}</div>
+      ${b.intro ? '' : '<button class="btn" id="fetch-intro" style="margin-top:8px;padding:6px 12px;font-size:12px">从其它书源 / 晋江获取简介</button>'}
     </div>`;
 
   $('#detail-add').onclick = async () => {
@@ -528,6 +530,33 @@ async function renderDetail() {
   };
 
   $('#detail-download').onclick = () => startDownloadFlow(url, b.name);
+
+  const fetchBtn = $('#fetch-intro');
+  if (fetchBtn)
+    fetchBtn.onclick = async () => {
+      fetchBtn.disabled = true;
+      fetchBtn.textContent = '获取中…';
+      try {
+        const r = await api('/intro?name=' + encodeURIComponent(b.name) + '&author=' + encodeURIComponent(b.author || ''));
+        if (!r.intro) {
+          fetchBtn.disabled = false;
+          fetchBtn.textContent = '没找到，重试';
+          return;
+        }
+        b.intro = r.intro;
+        $('#detail-intro').textContent = r.intro;
+        fetchBtn.remove();
+        const tip = document.createElement('div');
+        tip.className = 'desc';
+        tip.style.cssText = 'font-size:11.5px;color:var(--text-2);margin-top:8px';
+        tip.textContent = '简介来源：' + (r.source || '未知') + (r.url ? ' · ' + r.url : '');
+        $('#detail-intro').after(tip);
+      } catch (e) {
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = '获取失败，重试';
+        toast('获取简介失败：' + e.message);
+      }
+    };
 }
 
 function renderSearchResults() {
@@ -1655,6 +1684,10 @@ async function renderSettings() {
         <div class="row"><div class="label">搜索缓存<div class="desc" id="stat-cache">-</div></div><button class="btn" id="clear-cache" style="padding:5px 10px;font-size:12px">清空</button></div>
       </div>
       <div class="section">
+        <h3>书源</h3>
+        <a class="row" href="#/sources" style="text-decoration:none"><div class="label">书源管理<div class="desc" id="src-summary">导入、检测、分组与批量删除</div></div><span style="color:var(--text-2)">›</span></a>
+      </div>
+      <div class="section">
         <h3>屏蔽规则</h3>
         <div class="row"><div class="label">替换规则<div class="desc" id="rules-count">加载中…</div></div>
           <input type="file" id="rules-file" accept=".json,application/json" hidden />
@@ -1673,7 +1706,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.12 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.16 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');

@@ -59,7 +59,7 @@ input, textarea, select { font: inherit; color: inherit; }
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   background: color-mix(in srgb, var(--panel) 88%, transparent);
   backdrop-filter: blur(18px);
   border-top: 1px solid var(--line);
