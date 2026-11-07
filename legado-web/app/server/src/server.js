@@ -661,6 +661,30 @@ function buildLibraryManifest() {
   return data;
 }
 
+// 国内网络直连 GitHub 下载会被拦，按顺序回退到镜像
+const UPDATE_MIRRORS = ['https://ghfast.top/', 'https://gh-proxy.com/', 'https://ghproxy.net/'];
+
+async function downloadUpdateAsset(url) {
+  const candidates = [url, ...UPDATE_MIRRORS.map((m) => m + url)];
+  let lastError = null;
+  for (const target of candidates) {
+    try {
+      const r = await fetch(target, {
+        headers: { 'User-Agent': 'FnReader' },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(90000),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length < 10000) throw new Error('返回内容过小（' + buf.length + ' 字节）');
+      return { buf, from: target };
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError || new Error('所有下载通道都失败');
+}
+
 async function fetchLatestRelease(force) {
   if (!force && updateCache.data && Date.now() - updateCache.at < UPDATE_CACHE_MS) return updateCache.data;
   const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
@@ -807,13 +831,13 @@ async function route(req, res, url) {
       const dir = path.join(store.dataDir, 'updates');
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `legado-web-${rel.version}.fpk`);
-      const r = await fetch(rel.asset.url, {
-        headers: { 'User-Agent': 'FnReader' },
-        redirect: 'follow',
-        signal: AbortSignal.timeout(120000),
-      });
-      if (!r.ok) throw new Error('下载失败 HTTP ' + r.status);
-      const buf = Buffer.from(await r.arrayBuffer());
+      let downloaded;
+      try {
+        downloaded = await downloadUpdateAsset(rel.asset.url);
+      } catch (e) {
+        throw new Error('下载失败：' + (e.message || e));
+      }
+      const buf = downloaded.buf;
       fs.writeFileSync(file, buf, { mode: 0o644 });
       try {
         fs.chmodSync(file, 0o644);
