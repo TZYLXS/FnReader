@@ -10,7 +10,7 @@
 - **离线加速**：章节正文磁盘缓存 + 后台预取，翻页约 20ms
 
 ![书架](docs/screenshots/shelf.png)
-![阅读页](docs/screenshots/reader.png)
+
 
 ---
 
