@@ -1647,8 +1647,8 @@ async function renderSettings() {
           <button class="btn" id="copy-apk-link" style="padding:5px 10px;font-size:12px">复制</button></div>
         <div class="row"><div class="label">书源 JSON<div class="desc" id="apk-src-json" style="word-break:break-all">-</div></div>
           <button class="btn ghost" id="copy-apk-json" style="padding:5px 10px;font-size:12px">复制</button></div>
-        <div class="row"><div class="label">APK<div class="desc"><a id="apk-dl" href="https://github.com/TZYLXS/yuedu-pro/releases" target="_blank">下载「阅读Pro」APK（Android 7.0+，arm64 / armv7）</a><br><a href="https://github.com/TZYLXS/yuedu-android4/releases" target="_blank" style="font-size:12px">老设备（Android 4.4–5.1）用兼容版</a></div></div></div>
-        <div class="row"><div class="label">用法<div class="desc">两种都行：①把上面那条 <code>legado://...</code> 链接发到手机上<b>点开</b>，直接唤起阅读Pro的导入确认；②复制「书源 JSON」地址，在阅读Pro「我的 → 书源管理 → 网络导入」里粘贴。<b>注意</b>：<code>legado://</code> 链接不要粘进「网络导入」输入框，那里只认 http(s) 地址或 JSON 文本。<br>阅读Pro 里另有「设置 → 其它设置 → 接入 FnReader 服务器」，填服务器地址和令牌后能一键导入，也能看 WebDAV / HTTP API 等其它接入方式。</div></div></div>
+        <div class="row"><div class="label">APK<div class="desc"><a id="apk-dl" href="https://github.com/TZYLXS/yuedu-android4/releases" target="_blank">下载「阅读」兼容版 APK（Android 4.4–5.1）</a></div></div></div>
+        <div class="row"><div class="label">用法<div class="desc">手机装好 APK 后，复制上面的导入链接，在「阅读」里「我的 → 书源管理 → 网络导入」粘贴即可；之后搜书、目录、正文、封面全部走本机飞牛书库。</div></div></div>
       </div>
       <div class="section">
         <h3>下载</h3>
@@ -1686,7 +1686,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.20 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.22 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');

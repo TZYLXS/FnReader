@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.7.21
+version=1.7.22
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=修复书源 JSON 格式：/api/m/booksource 改为返回数组（阅读的「网络导入」只认数组，之前返回单个对象会报「格式不对」）；设置页 APK 下载指向「阅读Pro」，并说明 legado:// 链接要点击使用。
+changelog=布局自适应：内容整体居中限宽；搜索范围下拉缩短并居中；底部菜单保持原样。

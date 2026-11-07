@@ -491,3 +491,39 @@ details.section[open] > summary { border-bottom: 1px solid var(--line); }
 @media (max-width: 380px) {
   .scope-select { max-width: 38%; font-size: 12px; padding: 8px 6px; }
 }
+
+/* ---------- 搜索范围下拉：短宽度、居中 ---------- */
+.scope-select {
+  flex: none;
+  width: 132px;
+  padding: 8px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: center;
+  text-align-last: center;
+  outline: none;
+}
+@media (max-width: 380px) {
+  .scope-select { width: 108px; font-size: 12px; padding: 8px 4px; }
+}
+
+/* ---------- 宽屏自适应 ---------- */
+/* 内容收在居中的栏里；底部标签保持全宽，不做改动 */
+@media (min-width: 900px) {
+  :root { --content-max: 880px; }
+  #view { max-width: var(--content-max); margin: 0 auto; width: 100%; }
+  .searchbar, .results, .chips { max-width: 100%; }
+  .shelf { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px; }
+  .reader.kindle .reader-head,
+  .reader.kindle .reader-foot {
+    max-width: calc(var(--page-width, 720px) + 44px);
+    margin: 0 auto;
+  }
+}
+@media (min-width: 1280px) {
+  :root { --content-max: 1040px; --page-width: 760px; }
+  .shelf { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+}
