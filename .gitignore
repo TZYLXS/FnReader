@@ -6,3 +6,4 @@ data/
 Thumbs.db
 legado-web/app/server/server.bundle.js
 test/tmp-data*/
+dist/legado-web.fpk

@@ -10,6 +10,7 @@
 - **下载**：整本抓取并合并为 TXT，可选保存到 fnOS 授权目录
 - **离线加速**：章节正文磁盘缓存 + 后台预取，翻页约 20ms
 - **手机接入**：`/api/m/*` 接口（令牌鉴权）供安卓 App 读取书架、目录、正文、进度
+- **「阅读」APK 接入**：一键生成 Legado 书源导入链接，老安卓设备（4.4–5.1）装 [yuedu-android4](https://github.com/TZYLXS/yuedu-android4) 即可直连飞牛书库
 - **WebDAV**：`/dav/` 把书架挂进文件管理器，也可直接给 Legado 的 WebDAV 备份用（客户端零改动）
 - **应用内更新**：设置页检查 GitHub Release、下载 fpk 并给出安装指引
 
@@ -20,7 +21,7 @@
 
 ## 安装
 
-1. 从 [Releases](https://github.com/TZYLXS/FnReader/releases) 下载最新的 `legado-web.fpk`（或直接用仓库里的 [dist/legado-web.fpk](dist/legado-web.fpk)）
+1. 从 [Releases](https://github.com/TZYLXS/FnReader/releases) 下载最新的 `legado-web.fpk`（打 tag 时由 CI 从源码构建，仓库不再提交旧包）
 2. 飞牛「应用中心 → 手动安装」选择该文件
 3. 桌面出现「阅读」图标，点击即可（走统一网关 `/app/legado-web/`）
 
@@ -62,6 +63,12 @@ GET /api/m/search?key=...      POST /api/m/progress
 ```
 
 详见 [docs/WebDAV接入.md](docs/WebDAV接入.md) 与 [docs/手机接入API.md](docs/手机接入API.md)。
+
+**「阅读」APK 接入**（Android 4.4–5.1 老设备）
+
+设置页 →「阅读 APK 接入」→ 复制 `legado://import/bookSource?src=...` 链接，
+在 [yuedu-android4](https://github.com/TZYLXS/yuedu-android4) 的 APK 里「网络导入」即可搜书看正文。
+详见 [docs/APK接入.md](docs/APK接入.md)。
 
 ## 构建
 

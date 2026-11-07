@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.7.6
+version=1.7.7
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=新增书籍详情页：搜索结果点击进入，可看简介并在详情页加入书架；搜索结果仍支持一键加入。
+changelog=新增「阅读 APK 接入」：设置页一键复制书源链接，安卓阅读 App 导入后可直接读飞牛书架与正文；服务端新增 /api/m/booksource 与 /api/m/legado/{search,book,toc} 书源桥接口。
