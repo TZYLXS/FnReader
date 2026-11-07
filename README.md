@@ -277,7 +277,7 @@ test/                  e2e.js、mock-site.js、preview.js
 
 *图 4　详情页：封面、来源、简介与加入书架*
 
-![书源管理](docs/screenshots/sources.png)
+
 
 *图 5　书源管理：分组与勾选批量删除*
 
