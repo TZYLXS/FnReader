@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.6.12
+version=1.6.13
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=新增 WebDAV 服务（/dav/books 只读书架已下载书籍，/dav/backup 可读写用于 App 备份），无需改动 Legado 客户端源码即可接入。
+changelog=新增应用内更新：设置页可检查 GitHub Release、下载 fpk 到下载目录，并尝试调用系统安装；无权限时给出手动安装指引。

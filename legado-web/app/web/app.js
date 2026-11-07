@@ -40,6 +40,9 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// 页面里由打包脚本写入的版本号（release.py 会同步）
+const APP_VER = (document.querySelector('meta[name="app-version"]') || { content: '' }).content || '';
+
 const state = {
   books: [],
   sources: [],
@@ -1424,10 +1427,16 @@ async function renderSettings() {
         <div class="row"><div class="label">搜索缓存<div class="desc" id="stat-cache">-</div></div><button class="btn" id="clear-cache" style="padding:5px 10px;font-size:12px">清空</button></div>
       </div>
       <div class="section">
+        <h3>版本更新</h3>
+        <div class="row"><div class="label">当前版本<div class="desc">V${esc(APP_VER)}</div></div>
+          <button class="btn" id="btn-check-update" style="padding:5px 10px;font-size:12px">检查更新</button></div>
+        <div id="update-info"></div>
+      </div>
+      <div class="section">
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.6.12 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.6.13 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -1466,6 +1475,86 @@ async function renderSettings() {
     } catch {
       /* 忽略 */
     }
+
+    // 版本更新
+    const upBox = $('#update-info');
+    const btnCheck = $('#btn-check-update');
+    if (btnCheck)
+      btnCheck.onclick = async () => {
+        btnCheck.disabled = true;
+        btnCheck.textContent = '检查中…';
+        upBox.innerHTML = '';
+        try {
+          const r = await api('/update/check?force=1');
+          if (!r.hasUpdate) {
+            upBox.innerHTML =
+              '<div class="row"><div class="label">已是最新版本<div class="desc">远端 ' + esc(r.latest) + '</div></div></div>';
+            return;
+          }
+          upBox.innerHTML =
+            '<div class="row"><div class="label">发现新版本 V' + esc(r.latest) +
+            '<div class="desc">' + esc(r.name || '') + ' · ' +
+            (r.asset ? (r.asset.size / 1024 / 1024).toFixed(2) : '0') + ' MB</div></div></div>' +
+            '<div class="row" style="display:block"><div class="desc" style="white-space:pre-wrap;font-size:12px;line-height:1.6">' +
+            esc((r.notes || '').slice(0, 600)) + '</div></div>' +
+            '<div class="row"><div class="label">下载更新包<div class="desc" id="up-status">点击右侧按钮开始</div></div>' +
+            '<button class="btn primary" id="btn-dl-update" style="padding:6px 12px;font-size:12px">下载</button></div>';
+
+          $('#btn-dl-update').onclick = async () => {
+            const btn = $('#btn-dl-update');
+            btn.disabled = true;
+            btn.textContent = '下载中…';
+            $('#up-status').textContent = '正在从 GitHub 下载…';
+            let d;
+            try {
+              d = await api('/update/download', { method: 'POST' });
+            } catch (e) {
+              $('#up-status').textContent = '下载失败：' + e.message;
+              btn.disabled = false;
+              btn.textContent = '重试';
+              return;
+            }
+            $('#up-status').textContent =
+              '已保存：' + d.file + (d.copyPath ? '（也已复制到 ' + d.copyPath + '）' : '');
+            btn.remove();
+
+            const row = document.createElement('div');
+            row.className = 'row';
+            row.innerHTML =
+              '<div class="label">安装<div class="desc">自动安装需要系统权限，失败会提示手动方式</div></div>' +
+              '<button class="btn primary" id="btn-install-update" style="padding:6px 12px;font-size:12px">安装</button>';
+            upBox.appendChild(row);
+
+            $('#btn-install-update').onclick = async () => {
+              const b = $('#btn-install-update');
+              b.disabled = true;
+              b.textContent = '安装中…';
+              try {
+                const r2 = await api('/update/install', { method: 'POST', body: { file: d.file } });
+                if (r2.ok) {
+                  toast('已提交安装，应用即将重启');
+                } else {
+                  alert(
+                    '无法自动安装：' + (r2.message || '') + '。更新包：' + r2.file +
+                      '。请在应用中心 → 手动安装中选择该文件；升级前建议先卸载，数据会保留。'
+                  );
+                }
+              } catch (e) {
+                toast('安装失败：' + e.message);
+              } finally {
+                b.disabled = false;
+                b.textContent = '安装';
+              }
+            };
+          };
+        } catch (e) {
+          upBox.innerHTML =
+            '<div class="row"><div class="label">检查失败<div class="desc">' + esc(e.message) + '</div></div></div>';
+        } finally {
+          btnCheck.disabled = false;
+          btnCheck.textContent = '检查更新';
+        }
+      };
 
     // 手机接入：接口地址 + token
     const apiBase = location.origin + location.pathname.replace(/\/[^/]*$/, '');

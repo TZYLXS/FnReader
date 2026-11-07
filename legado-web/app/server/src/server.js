@@ -599,6 +599,51 @@ function checkApiToken(req, url) {
   return !!t && t === apiToken();
 }
 
+/* ---------------- 应用内更新 ---------------- */
+const UPDATE_REPO = 'TZYLXS/FnReader';
+const UPDATE_CACHE_MS = 10 * 60 * 1000;
+let updateCache = { at: 0, data: null };
+
+function semverParts(v) {
+  return String(v || '0')
+    .replace(/^v/i, '')
+    .split('.')
+    .map((n) => parseInt(n, 10) || 0);
+}
+
+function semverGt(a, b) {
+  const x = semverParts(a);
+  const y = semverParts(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const xa = x[i] || 0;
+    const yb = y[i] || 0;
+    if (xa !== yb) return xa > yb;
+  }
+  return false;
+}
+
+async function fetchLatestRelease(force) {
+  if (!force && updateCache.data && Date.now() - updateCache.at < UPDATE_CACHE_MS) return updateCache.data;
+  const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+    headers: { 'User-Agent': 'FnReader', Accept: 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`GitHub 返回 ${res.status}`);
+  const rel = await res.json();
+  const asset = (rel.assets || []).find((a) => /\.fpk$/i.test(a.name)) || null;
+  const data = {
+    tag: rel.tag_name,
+    version: String(rel.tag_name || '').replace(/^v/i, ''),
+    name: rel.name || rel.tag_name,
+    body: rel.body || '',
+    publishedAt: rel.published_at,
+    htmlUrl: rel.html_url,
+    asset: asset ? { name: asset.name, size: asset.size, url: asset.browser_download_url } : null,
+  };
+  updateCache = { at: Date.now(), data };
+  return data;
+}
+
 function mobileBook(b) {
   return {
     bookUrl: b.bookUrl,
@@ -692,6 +737,101 @@ async function route(req, res, url) {
       version: APP_VERSION,
       tokenRequired: true,
       endpoints: ['/api/m/shelf', '/api/m/search', '/api/m/toc', '/api/m/content', '/api/m/progress', '/api/m/cover'],
+    });
+  }
+
+  if (p === '/api/update/check' && method === 'GET') {
+    try {
+      const rel = await fetchLatestRelease(searchParams.get('force') === '1');
+      return json(res, 200, {
+        current: APP_VERSION,
+        latest: rel.version,
+        hasUpdate: semverGt(rel.version, APP_VERSION),
+        name: rel.name,
+        notes: rel.body,
+        publishedAt: rel.publishedAt,
+        htmlUrl: rel.htmlUrl,
+        asset: rel.asset,
+      });
+    } catch (e) {
+      return json(res, 502, { error: '检查更新失败：' + (e.message || e) });
+    }
+  }
+
+  if (p === '/api/update/download' && method === 'POST') {
+    try {
+      const rel = await fetchLatestRelease(true);
+      if (!rel.asset) return json(res, 404, { error: '最新版本没有附带 fpk 文件' });
+      if (!semverGt(rel.version, APP_VERSION)) {
+        return json(res, 200, { ok: true, upToDate: true, current: APP_VERSION, latest: rel.version });
+      }
+      const dir = path.join(store.dataDir, 'updates');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `legado-web-${rel.version}.fpk`);
+      const r = await fetch(rel.asset.url, {
+        headers: { 'User-Agent': 'FnReader' },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!r.ok) throw new Error('下载失败 HTTP ' + r.status);
+      const buf = Buffer.from(await r.arrayBuffer());
+      fs.writeFileSync(file, buf, { mode: 0o644 });
+      try {
+        fs.chmodSync(file, 0o644);
+      } catch {
+        /* ignore */
+      }
+
+      // 复制一份到用户授权的下载目录，方便在应用中心手动安装
+      let copyPath = '';
+      try {
+        const target = resolveDownloadDir();
+        if (target) {
+          const dest = path.join(target, `legado-web-${rel.version}.fpk`);
+          fs.copyFileSync(file, dest);
+          try {
+            fs.chmodSync(dest, 0o644);
+          } catch {
+            /* ignore */
+          }
+          copyPath = dest;
+        }
+      } catch {
+        /* 下载目录不可写时忽略 */
+      }
+
+      return json(res, 200, { ok: true, version: rel.version, file, copyPath, size: buf.length });
+    } catch (e) {
+      return json(res, 502, { error: '下载更新失败：' + (e.message || e) });
+    }
+  }
+
+  if (p === '/api/update/install' && method === 'POST') {
+    const body = await readJson(req);
+    const file = body && body.file;
+    if (!file || !fs.existsSync(file)) return json(res, 404, { error: '更新包不存在，请先下载' });
+    // fnOS 的应用安装需要 root 权限；应用自身通常没有，失败时引导用户手动安装
+    const attempts = [
+      ['appcenter-cli', 'install-fpk', file],
+      ['sudo', '-n', 'appcenter-cli', 'install-fpk', file],
+    ];
+    for (const args of attempts) {
+      try {
+        const out = require('node:child_process').execFileSync(args[0], args.slice(1), {
+          timeout: 120000,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        return json(res, 200, { ok: true, output: String(out).slice(0, 2000) });
+      } catch (e) {
+        // 继续尝试下一种方式
+      }
+    }
+    return json(res, 200, {
+      ok: false,
+      needManual: true,
+      file,
+      message: '应用没有安装系统应用的权限，请在「应用中心 → 手动安装」选择这个 fpk',
     });
   }
 
