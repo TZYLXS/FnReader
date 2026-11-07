@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.7.11
+version=1.7.12
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=README 按论文格式重写：摘要/关键词/分章正文/实测数据/已知限制；重新截取 6 张界面图作为插图。
+changelog=修复换源后书架出现两条记录：改为在原地替换同一本书并继承阅读进度。

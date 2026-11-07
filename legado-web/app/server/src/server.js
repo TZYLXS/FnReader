@@ -1438,6 +1438,42 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  // 换源：把书架里的旧书替换成新源的同一本书，避免出现两条记录
+  if (p === '/api/books/switch' && method === 'POST') {
+    const body = await readJson(req);
+    const fromUrl = String((body && body.fromUrl) || '');
+    const target = body && body.book;
+    if (!fromUrl || !target || !target.bookUrl) return json(res, 400, { error: '缺少源书或目标书' });
+    const old = store.findBook(fromUrl);
+    const existing = store.findBook(target.bookUrl);
+
+    if (existing) {
+      // 目标书已在书架：只保留它，进度沿用旧书
+      if (old && old.bookUrl !== existing.bookUrl) {
+        existing.durChapterIndex = old.durChapterIndex || 0;
+        existing.durChapterTitle = old.durChapterTitle || existing.durChapterTitle || '';
+        existing.durChapterTime = Date.now();
+        store.upsertBook(existing);
+        store.removeBook(fromUrl);
+      }
+      return json(res, 200, { ok: true, bookUrl: existing.bookUrl, replaced: fromUrl, existed: true });
+    }
+
+    const book = {
+      ...target,
+      chapters: [],
+      tocUrl: '',
+      durChapterIndex: old ? old.durChapterIndex || 0 : 0,
+      durChapterPos: old ? old.durChapterPos || 0 : 0,
+      durChapterTitle: old ? old.durChapterTitle || '' : '',
+      durChapterTime: Date.now(),
+      totalChapterNum: 0,
+    };
+    store.upsertBook(book);
+    if (old && old.bookUrl !== book.bookUrl) store.removeBook(fromUrl);
+    return json(res, 200, { ok: true, bookUrl: book.bookUrl, replaced: fromUrl, existed: false });
+  }
+
   if (p === '/api/progress' && method === 'POST') {
     const body = await readJson(req);
     const book = store.findBook(body.bookUrl);
