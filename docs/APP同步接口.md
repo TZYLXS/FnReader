@@ -148,3 +148,101 @@ POST /api/m/progress/batch
 | 401 | 令牌无效或缺失 |
 | 404 | 书不在书架 / 章节不存在 |
 | 502 | 上游书源抓取失败（可对同一接口重试一次）|
+
+---
+
+## 7 方向二：App 回传，网页实时显示
+
+网页端订阅 `GET /api/events`（SSE，无需令牌），App 一提交进度，网页的书架立刻更新。
+
+```js
+const es = new EventSource('/api/events');
+es.onmessage = (e) => {
+  const msg = JSON.parse(e.data);      // {type:'progress', bookUrl, index, title, via:'app', at}
+  if (msg.type === 'progress') { /* 更新本地书架条目 */ }
+};
+```
+
+服务端在以下两处会广播：
+
+- `POST /api/m/progress`
+- `POST /api/m/progress/batch`
+
+事件体：
+
+```json
+{ "type": "progress", "bookUrl": "http://...", "index": 45,
+  "title": "第46章 石清虚", "via": "app", "at": 1794086400000 }
+```
+
+网页收到后会把书架卡片上的「读到 x/y 章」改写，并弹一条提示。
+
+---
+
+## 8 方向三：借用手机端解析器搜书
+
+有些书源依赖 WebView 或加密接口，服务端跑不了。开启「手机解析」后，本机解析失败的源
+会变成一个任务交给 App，App 执行完回传结果，网页拿到后照常显示。
+
+### 8.1 服务端 → 建任务（网页内部用）
+
+```http
+POST /api/remote/job
+{ "type": "search", "payload": { "source": "https://xxx.com", "key": "斗破苍穹" }, "waitMs": 20000 }
+```
+
+服务端会挂起等待，最多 `waitMs`（上限 60s）：
+
+```json
+// 成功
+{ "ok": true, "data": { "books": [ { "name": "...", "author": "...", "bookUrl": "..." } ] } }
+// 失败
+{ "ok": false, "error": "手机端没有响应" }
+```
+
+### 8.2 App 领任务
+
+```http
+GET /api/m/remote/pending?token=…&wait=10000&limit=5
+```
+
+长轮询：没有任务时最多挂 10 秒（`wait` 可调，上限 30s），返回：
+
+```json
+{ "jobs": [ { "id": "a1b2c3d4e5f6", "type": "search",
+              "payload": { "source": "https://xxx.com", "key": "斗破苍穹" }, "age": 1200 } ] }
+```
+
+`age` 是任务已等待的毫秒数。
+
+### 8.3 App 回结果
+
+```http
+POST /api/m/remote/result?token=…
+{ "id": "a1b2c3d4e5f6", "ok": true,
+  "data": { "books": [ { "name": "斗破苍穹", "author": "天蚕土豆",
+                         "bookUrl": "https://…", "coverUrl": "…", "intro": "…" } ] } }
+```
+
+失败时传 `{ "ok": false, "error": "解析失败原因" }`。
+
+### 8.4 任务类型
+
+| type | payload | data 约定 |
+| --- | --- | --- |
+| `search` | `{source, key}` | `{books: [{name,author,bookUrl,coverUrl,intro,kind}]}` |
+| `toc` | `{source, bookUrl}` | `{chapters: [{title,url}]}` |
+| `content` | `{source, chapterUrl}` | `{paragraphs: ["…"]}` |
+
+### 8.5 App 侧实现建议
+
+```text
+loop:
+  jobs = GET /api/m/remote/pending?wait=15000
+  for job in jobs:
+      result = 用书源规则在本地执行 job.type
+      POST /api/m/remote/result {id: job.id, ok: true, data: result}
+  sleep 1s
+```
+
+配上「前台服务」常驻，用户搜索时手机在后台就能接管解析；服务端 20 秒内没等到会退回本地结果。

@@ -73,6 +73,39 @@ async function saveConfig(patch) {
   }
 }
 
+/* ---------------- 事件流：App 回传的进度实时同步到网页 ---------------- */
+function connectEvents() {
+  if (state.events) return;
+  try {
+    const es = new EventSource('./api/events');
+    state.events = es;
+    es.onmessage = (ev) => {
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (msg.type !== 'progress') return;
+      const book = (state.books || []).find((b) => b.bookUrl === msg.bookUrl);
+      if (book) {
+        book.durChapterIndex = msg.index;
+        book.durChapterTitle = msg.title;
+        book.durChapterTime = msg.at || Date.now();
+        if (location.hash.startsWith('#/shelf')) renderShelf();
+      }
+      if (msg.via === 'app') toast(`App 已同步进度：${msg.title || ''}`);
+    };
+    es.onerror = () => {
+      es.close();
+      state.events = null;
+      setTimeout(connectEvents, 5000);
+    };
+  } catch {
+    /* 环境不支持 EventSource 就忽略 */
+  }
+}
+
 /* ---------------- 路由 ---------------- */
 function parseHash() {
   const raw = location.hash.replace(/^#/, '') || '/shelf';
@@ -373,6 +406,7 @@ async function renderSearch() {
     <div class="chips" id="mode-row" style="padding-bottom:0">
       <button class="chip on" data-mode="book">找书</button>
       <button class="chip" data-mode="feed">订阅</button>
+      <button class="chip ${state.search.remote ? 'on' : ''}" id="chip-remote" title="用手机端解析器搜索">📱 手机解析</button>
     </div>
     <div class="searchbar">
       <input id="kw" type="search" placeholder="书名 / 作者" enterkeyhint="search" />
@@ -386,6 +420,12 @@ async function renderSearch() {
   $('#mode-row').onclick = (e) => {
     const b = e.target.closest('.chip');
     if (!b) return;
+    if (b.id === 'chip-remote') {
+      state.search.remote = !state.search.remote;
+      b.classList.toggle('on', state.search.remote);
+      toast(state.search.remote ? '已开启手机解析：本机解析失败的源会交给手机' : '已关闭手机解析');
+      return;
+    }
     if (b.dataset.mode === 'feed') location.hash = '#/feeds';
   };
 
@@ -622,6 +662,7 @@ function startSearch(key, opts = {}) {
   else if (state.search.onlyChecked) params.set('only', 'checked');
   else if (state.search.group) params.set('group', state.search.group);
   if (opts.auto === false) params.set('auto', '0');
+  if (state.search.remote) params.set('remote', '1');
   const hint = $('#academic-hint');
   if (hint) hint.style.display = 'none';
   status.innerHTML = `<span class="spinner"></span> 正在搜索…`;
@@ -659,6 +700,7 @@ function startSearch(key, opts = {}) {
       status.innerHTML = `<span class="spinner"></span> ${done}/${total || '?'} · 正在搜索：${esc(msg.source)}`;
     } else if (msg.type === 'result') {
       const fresh = msg.books.filter((b) => !state.search.results.some((x) => x.bookUrl === b.bookUrl));
+      if (msg.via === 'phone') fresh.forEach((b) => (b.viaPhone = true));
       state.search.results.push(...fresh);
       renderSearchResults();
     } else if (msg.type === 'source-done') {
@@ -1694,7 +1736,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.25 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.26 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -2012,4 +2054,5 @@ document.addEventListener('keydown', (e) => {
   }
   router();
   maybeShowFirstRunHelp();
+  connectEvents();
 })();

@@ -15,6 +15,8 @@ const { getArticle } = require('./article');
 const replaceRules = require('./replace');
 const introLookup = require('./intro');
 const { buildSyncPayload } = require('./sync');
+const events = require('./events');
+const remote = require('./remote');
 
 // 订阅条目正文的内存缓存（按条目链接）
 const chapterCache = new Map();
@@ -309,6 +311,30 @@ async function handleSearchSSE(req, res, params) {
           cachedTotal: cachedSources,
         });
       } catch (e) {
+        // 本机解析失败（需要 WebView / 加密接口）：如果开了手机解析，交给 App 再试一次
+        if (params.get('remote') === '1' && !closed) {
+          const r = await remote.request(
+            'search',
+            { source: source.bookSourceUrl, name: source.bookSourceName, key },
+            15000
+          );
+          if (!closed && r.ok && r.data && Array.isArray(r.data.books) && r.data.books.length) {
+            const fromPhone = r.data.books;
+            found += fromPhone.length;
+            send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books: fromPhone, via: 'phone' });
+            doneCount++;
+            send({
+              type: 'source-done',
+              source: source.bookSourceName,
+              count: fromPhone.length,
+              ms: Date.now() - startedAt,
+              done: doneCount,
+              total: sources.length,
+              via: 'phone',
+            });
+            return;
+          }
+        }
         doneCount++;
         if (!closed)
           send({
@@ -1111,6 +1137,7 @@ async function route(req, res, url) {
     book.durChapterTitle = body.title || (book.chapters && book.chapters[book.durChapterIndex] ? book.chapters[book.durChapterIndex].title : '');
     book.durChapterTime = Date.now();
     store.upsertBook(book);
+    events.broadcast({ type: 'progress', bookUrl: book.bookUrl, index: book.durChapterIndex, title: book.durChapterTitle, via: 'app' });
     return json(res, 200, { ok: true });
   }
 
@@ -1128,6 +1155,7 @@ async function route(req, res, url) {
       book.durChapterTitle = item.title || book.durChapterTitle || '';
       book.durChapterTime = Number(item.time) || Date.now();
       store.upsertBook(book);
+      events.broadcast({ type: 'progress', bookUrl: book.bookUrl, index: book.durChapterIndex, title: book.durChapterTitle, via: 'app' });
       updated++;
     }
     return json(res, 200, { ok: true, updated, total: list.length });
@@ -1414,6 +1442,44 @@ async function route(req, res, url) {
     }
   }
 
+  // 网页端事件流：App 回传进度后立即刷新
+  if (p === '/api/events' && method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(`data: ${JSON.stringify({ type: 'hello', at: Date.now() })}
+
+`);
+    events.addClient(res);
+    const ping = setInterval(() => {
+      try {
+        res.write(': ping' + String.fromCharCode(10, 10));
+      } catch {
+        /* ignore */
+      }
+    }, 25000);
+    req.on('close', () => clearInterval(ping));
+    return;
+  }
+
+  // 借助手机端解析器：服务端建任务并等待结果
+  if (p === '/api/remote/job' && method === 'POST') {
+    const body = await readJson(req);
+    const type = String((body && body.type) || '');
+    if (!['search', 'toc', 'content'].includes(type)) return json(res, 400, { error: '不支持的任务类型' });
+    const wait = Math.min(60000, Number((body && body.waitMs) || 20000));
+    const result = await remote.request(type, body.payload || {}, wait);
+    if (!result.ok) return json(res, 504, { error: result.error === 'timeout' ? '手机端没有响应' : result.error });
+    return json(res, 200, { ok: true, data: result.data });
+  }
+
+  if (p === '/api/remote/stats' && method === 'GET') {
+    return json(res, 200, { ...remote.stats(), viewers: events.count() });
+  }
+
   // App 同步：一次拉取书架 / 阅读进度 / 书源配置
   if (p === '/api/m/sync' && method === 'GET') {
     const payload = buildSyncPayload(store, {
@@ -1422,6 +1488,25 @@ async function route(req, res, url) {
       version: APP_VERSION,
     });
     return json(res, 200, payload);
+  }
+
+  // 手机端领任务（长轮询：没有任务就等一会儿再返回）
+  if (p === '/api/m/remote/pending' && method === 'GET') {
+    const wait = Math.min(30000, Number(searchParams.get('wait') || 10000));
+    const deadline = Date.now() + wait;
+    let list = remote.pending(Number(searchParams.get('limit') || 5));
+    while (!list.length && Date.now() < deadline && !res.writableEnded) {
+      await new Promise((r) => setTimeout(r, 800));
+      list = remote.pending(5);
+    }
+    return json(res, 200, { jobs: list, waitMs: wait });
+  }
+
+  if (p === '/api/m/remote/result' && method === 'POST') {
+    const body = await readJson(req);
+    if (!body || !body.id) return json(res, 400, { error: '缺少任务 id' });
+    const ok = remote.complete(body.id, body.ok !== false, body.data, body.error);
+    return json(res, 200, { ok, accepted: ok });
   }
 
   // 书源配置原文件（与 Legado 导出的数组格式一致，可直接导入）
