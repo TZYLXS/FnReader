@@ -136,7 +136,20 @@ function readBody(req, limit = 32 * 1024 * 1024) {
       }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('end', () => {
+      const buf = Buffer.concat(chunks);
+      let text = buf.toString('utf8');
+      // 有些安卓端把 JSON 按 GBK 发上来，UTF-8 解出来会带替换符，这里回退一次
+      if (text.includes('\uFFFD')) {
+        try {
+          const gbk = new TextDecoder('gbk').decode(buf);
+          if (gbk && !gbk.includes('\uFFFD')) text = gbk;
+        } catch {
+          /* 环境不支持 gbk 就保持原样 */
+        }
+      }
+      resolve(text);
+    });
     req.on('error', reject);
   });
 }

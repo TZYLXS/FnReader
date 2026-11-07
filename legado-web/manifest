@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.7.26
+version=1.7.27
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=App 回传进度经 SSE 实时同步到网页；新增手机端解析桥（/api/remote/job + /api/m/remote/pending|result），本机解析失败的书源可交给手机执行。
+changelog=请求体兼容 GBK：安卓端按 GBK 发 JSON 时自动回退解码，避免中文进度变成乱码。
