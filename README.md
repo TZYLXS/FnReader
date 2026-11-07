@@ -12,6 +12,7 @@
 - **手机接入**：`/api/m/*` 接口（令牌鉴权）供安卓 App 读取书架、目录、正文、进度
 - **WebDAV**：`/dav/` 把书架挂进文件管理器，也可直接给 Legado 的 WebDAV 备份用（客户端零改动）
 - **应用内更新**：设置页检查 GitHub Release、下载 fpk 并给出安装指引
+- **AI 友好**：结构扁平、无构建步骤，README 内附可直接复制的提示词，方便用 AI 继续开发
 
 ![书架](docs/screenshots/shelf.png)
 
@@ -62,6 +63,111 @@ GET /api/m/search?key=...      POST /api/m/progress
 ```
 
 详见 [docs/WebDAV接入.md](docs/WebDAV接入.md) 与 [docs/手机接入API.md](docs/手机接入API.md)。
+
+## 用 AI 继续开发
+
+这个项目刻意做成了「AI 友好」的结构：没有构建步骤、没有前端框架、目录扁平、测试自带模拟站点。
+把仓库丢给任意 AI，粘一段下面的提示词，它就能自己上手改。
+
+### 先让它建立上下文
+
+```text
+你是 FnReader（飞牛 fnOS 上的 Legado 书源阅读器）的开发者。请先按顺序读这些文件建立上下文：
+1. docs/AI构建指南.md      项目结构、数据流、常见坑
+2. legado-web/manifest      版本与依赖
+3. legado-web/app/server/src/server.js   路由总入口（很长，先看路由分发）
+4. legado-web/app/server/src/books.js    搜索 / 目录 / 正文主流程
+5. legado-web/app/web/app.js             前端单页应用（按 renderXxx 划分）
+6. test/e2e.js              验收标准
+
+读完向我复述：服务端有哪些模块、前端有几个页面、数据存在哪里、怎样才能发一版。
+不要先写代码。
+```
+
+### 修 bug
+
+```text
+项目：FnReader（Node.js 服务端 + 原生 JS 前端，飞牛 FPK 应用）。
+
+现象：<把报错、截图、复现步骤贴这里>
+
+请：
+1. 先在代码里定位根因（给出 文件:行号），说明为什么会这样，不要猜；
+2. 给出最小修复；
+3. 说明会不会影响已有接口的返回结构；
+4. 按「收尾自检」一节自测。
+```
+
+### 加功能
+
+```text
+在 FnReader 里新增功能：<一句话描述>。
+
+约定（必须遵守）：
+- 服务端接口放 server.js 的 route() 里，路径 /api/ 开头，出错统一 json(res, 4xx/5xx, {error})
+- 移动端接口放 /api/m/*，走 checkApiToken
+- 前端：新页面 = app.js 里加 renderXxx() + router 注册 path；样式追加到 style.css 末尾
+- 不引入前端框架，不新增 npm 依赖（除非我同意）
+- 改完在 test/e2e.js 补一条断言
+
+先给我改动清单（文件 + 函数 + 大致行数），确认后再写代码。
+```
+
+### 适配新的书源规则
+
+```text
+书源规则解析在 legado-web/app/server/src/rules.js，XPath 在 xpath.js。
+
+有个 Legado 书源用了我们还不支持的写法：<贴规则片段>
+
+请：1) 对照 Legado 语法说明这条规则的语义；2) 指出 rules.js 里哪个函数负责解析
+（parseSegment / evalString / evalRule）；3) 补上支持并在 test/e2e.js 加断言。
+```
+
+### 调界面
+
+```text
+FnReader 前端是原生 JS，没有构建步骤。
+要改的是：<页面/组件>，期望效果：<描述或参考图>。
+
+约束：
+- 只用 CSS 变量（--bg / --panel / --line / --text / --text-2 / --accent），不要写死颜色
+- 移动端优先，360–500px 不能溢出
+- 新增样式追加到 style.css 末尾，别改旧规则
+- 改完告诉我怎么本地预览（node test/preview.js）
+```
+
+### 收尾自检（每个任务都加这段）
+
+```text
+完成前请自查：
+1. node test/e2e.js 是否全绿？失败项是哪条？
+2. 有没有改动 /api/books、/api/toc、/api/content 的返回字段？（前端依赖，改了要同步）
+3. 新增接口有没有参数校验和错误处理？
+4. 有没有把密码、token、个人路径写进代码或文档？
+5. 是否需要跟着改 docs/更新日志.txt？
+```
+
+### 懒人版
+
+```text
+这是 FnReader 的源码（飞牛 fnOS 上的 Legado 阅读器）。先读 docs/AI构建指南.md，
+然后帮我：<你的需求>。改完跑 node test/e2e.js，全绿再来找我。
+```
+
+### 发版
+
+```text
+请给 FnReader 发一版：
+1. python tools/release.py "一句话说明；第二条" --build
+2. 把 dist/legado-web.fpk 传到 GitHub Release
+3. 提醒我：fnOS 覆盖安装无效，必须 uninstall → install-fpk
+
+发版前先跑 node test/e2e.js，必须全绿。
+```
+
+> 更细的说明（每个服务端文件的职责、数据流、7 条常见坑、改哪里对照表）见
+> [docs/AI构建指南.md](docs/AI构建指南.md)。
 
 ## 构建
 
