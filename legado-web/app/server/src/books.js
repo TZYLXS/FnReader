@@ -91,6 +91,20 @@ async function fetchPage(url, source, extra = {}) {
 }
 
 /** 搜索一本书 */
+/** 过滤期刊/杂志期号这类噪音结果（如「2026年第11期」「2025-03-01」） */
+const PERIODICAL_RE = /^\s*\d{4}\s*年\s*(第\s*)?\d{1,2}\s*期/;
+const DATE_ONLY_RE = /^\s*\d{4}[-./年]\s*\d{1,2}([-./月]\s*\d{1,2})?\s*(日|号)?\s*$/;
+
+function isJunkResult(name, author) {
+  const n = String(name || '').trim();
+  if (!n) return true;
+  if (PERIODICAL_RE.test(n)) return true;
+  if (DATE_ONLY_RE.test(n)) return true;
+  const a = String(author || '').trim();
+  if (/第\s*\d{1,3}\s*期\s*$/.test(n) && n.length <= 20 && (!a || a === '未知作者' || a === '未知')) return true;
+  return false;
+}
+
 async function searchSource(source, key, page = 1, opts = {}) {
   if (!source.searchUrl) throw new Error('书源未配置搜索地址');
   if (source.ruleSearch && source.ruleSearch.checkKeyWord) {
@@ -135,6 +149,7 @@ async function searchSource(source, key, page = 1, opts = {}) {
     const name = get(rule.name);
     const bookUrl = get(rule.bookUrl);
     if (!name && !bookUrl) continue;
+    if (isJunkResult(name, get(rule.author))) continue;
     const absolute = absoluteUrl(resp.url, bookUrl);
     if (!/^https?:/i.test(absolute)) continue;
     books.push({
@@ -346,6 +361,7 @@ async function getContent(source, book, chapter) {
 }
 
 module.exports = {
+  isJunkResult,
   normalizeSource,
   sourceId,
   searchSource,

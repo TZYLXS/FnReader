@@ -14,7 +14,7 @@ const HIT_TTL = 24 * 3600 * 1000; // 有结果缓存 1 天
 const MISS_TTL = 10 * 60 * 1000; // 空结果只缓存 10 分钟
 
 function keyFor(url, body) {
-  return crypto.createHash('sha1').update(`v2|${url}|${body || ''}`).digest('hex');
+  return crypto.createHash('sha1').update(`v3|${url}|${body || ''}`).digest('hex');
 }
 
 /** 只留展示需要的字段，控制缓存体积 */
