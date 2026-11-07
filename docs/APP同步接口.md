@@ -246,3 +246,42 @@ loop:
 ```
 
 配上「前台服务」常驻，用户搜索时手机在后台就能接管解析；服务端 20 秒内没等到会退回本地结果。
+
+---
+
+## 9 把 App 本地新增的书推到 NAS
+
+App 在自己这边加了一本书（本地书架有 5 本，NAS 只有 4 本）时，用这个接口补推：
+
+```http
+POST /api/m/books?token=…
+{ "bookUrl": "https://…", "name": "书名", "author": "作者",
+  "coverUrl": "https://…", "intro": "…", "originName": "手机端",
+  "index": 3, "title": "第三章 标题" }
+```
+
+也支持一次传数组：`{ "books": [ … ] }` 或直接 `[ … ]`。
+
+响应：`{ "ok": true, "added": 1, "updated": 0, "total": 5 }`
+
+- 已存在的书按 `bookUrl` 合并（只覆盖传上来的字段）
+- 新增的书会立刻出现在网页书架（通过 `/api/events` 广播 `{type:'shelf', action:'add'}`）
+
+### 进度回传时也可以顺带建书
+
+`POST /api/m/progress/batch` 的每一项如果带 `name`，服务端会自动建一条书架记录：
+
+```json
+{ "items": [
+  { "bookUrl": "https://…", "name": "书名", "author": "作者", "index": 3, "title": "第三章" }
+] }
+```
+
+不带 `name` 且书不存在时，会在响应的 `missing` 数组里返回这些 `bookUrl`，App 可以据此补传：
+
+```json
+{ "ok": true, "updated": 2, "total": 3, "missing": ["https://…"] }
+```
+
+> 建议：App 每次启动先 `GET /api/m/sync` 比对本地书架，把 NAS 没有的书用 `/api/m/books` 推上去，
+> 再开始同步进度，这样两边数量才一致。

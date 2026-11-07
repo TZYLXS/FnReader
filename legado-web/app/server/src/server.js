@@ -1154,15 +1154,90 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  // App 上传书籍：把手机本地加的书推到 NAS 书架
+  if (p === '/api/m/books' && method === 'POST') {
+    const body = await readJson(req);
+    const list = Array.isArray(body) ? body : body && Array.isArray(body.books) ? body.books : body ? [body] : [];
+    if (!list.length) return json(res, 400, { error: '请提供书籍对象或数组' });
+    let added = 0;
+    let updated = 0;
+    for (const item of list) {
+      const bookUrl = String((item && item.bookUrl) || '').trim();
+      if (!/^https?:/i.test(bookUrl)) continue;
+      const existing = store.findBook(bookUrl);
+      if (existing) {
+        store.upsertBook({
+          ...existing,
+          name: item.name || existing.name,
+          author: item.author || existing.author,
+          coverUrl: item.coverUrl || existing.coverUrl,
+          intro: item.intro || existing.intro,
+          durChapterIndex: Number(item.index != null ? item.index : item.durChapterIndex) || existing.durChapterIndex || 0,
+          durChapterTitle: item.title || item.durChapterTitle || existing.durChapterTitle || '',
+          durChapterTime: Number(item.time || item.durChapterTime) || existing.durChapterTime || Date.now(),
+        });
+        updated++;
+      } else {
+        store.upsertBook({
+          bookUrl,
+          name: String(item.name || '未命名'),
+          author: String(item.author || ''),
+          coverUrl: String(item.coverUrl || ''),
+          intro: String(item.intro || ''),
+          kind: String(item.kind || ''),
+          origin: String(item.origin || ''),
+          originName: String(item.originName || item.origin || '手机端'),
+          tocUrl: '',
+          chapters: [],
+          durChapterIndex: Number(item.index != null ? item.index : item.durChapterIndex) || 0,
+          durChapterPos: Number(item.pos || item.durChapterPos) || 0,
+          durChapterTitle: String(item.title || item.durChapterTitle || ''),
+          durChapterTime: Number(item.time || item.durChapterTime) || Date.now(),
+          totalChapterNum: Number(item.totalChapterNum) || 0,
+        });
+        added++;
+      }
+    }
+    if (added) events.broadcast({ type: 'shelf', action: 'add', count: added, via: 'app' });
+    return json(res, 200, { ok: true, added, updated, total: store.books.length });
+  }
+
   // 批量回传阅读进度（App 同步用）
   if (p === '/api/m/progress/batch' && method === 'POST') {
     const body = await readJson(req);
     const list = Array.isArray(body) ? body : body && Array.isArray(body.items) ? body.items : [];
     if (!list.length) return json(res, 400, { error: '请提供进度数组' });
     let updated = 0;
+    const missing = [];
     for (const item of list) {
-      const book = store.findBook(item.bookUrl);
-      if (!book) continue;
+      let book = store.findBook(item.bookUrl);
+      if (!book) {
+        // App 本地新加的书：带书名就顺手建一条，否则记为 missing 让 App 补传
+        if (item.name && /^https?:/i.test(String(item.bookUrl || ''))) {
+          book = {
+            bookUrl: item.bookUrl,
+            name: item.name,
+            author: item.author || '',
+            coverUrl: item.coverUrl || '',
+            intro: item.intro || '',
+            kind: item.kind || '',
+            origin: item.origin || '',
+            originName: item.originName || item.origin || '手机端',
+            tocUrl: '',
+            chapters: [],
+            durChapterIndex: 0,
+            durChapterPos: 0,
+            durChapterTitle: '',
+            durChapterTime: 0,
+            totalChapterNum: Number(item.totalChapterNum) || 0,
+          };
+          store.upsertBook(book);
+          events.broadcast({ type: 'shelf', action: 'add', bookUrl: book.bookUrl, via: 'app' });
+        } else {
+          missing.push(item.bookUrl);
+          continue;
+        }
+      }
       book.durChapterIndex = Number(item.index) || 0;
       book.durChapterPos = Number(item.pos) || 0;
       book.durChapterTitle = item.title || book.durChapterTitle || '';
@@ -1171,7 +1246,7 @@ async function route(req, res, url) {
       events.broadcast({ type: 'progress', bookUrl: book.bookUrl, index: book.durChapterIndex, title: book.durChapterTitle, via: 'app' });
       updated++;
     }
-    return json(res, 200, { ok: true, updated, total: list.length });
+    return json(res, 200, { ok: true, updated, total: list.length, missing });
   }
 
   if (p === '/api/m/cover' && method === 'GET') {
