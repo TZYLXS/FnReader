@@ -403,14 +403,47 @@ async function getContent(source, book, chapter) {
       }
     }
 
-    const contentRule = rule.content || 'body';
-    const html = evalRule(contentRule, ctx, { joinAll: true });
+    // 正文规则：支持 `规则<js>代码</js>@@选择器@@选择器` 的链式写法
+    const rawRule = String(rule.content || 'body');
+    const segments = rawRule.split('@@');
+    let head = segments[0];
+    let jsCode = '';
+    const jsMatch = head.match(/<js>([\s\S]*?)<\/js>/i);
+    if (jsMatch) {
+      jsCode = jsMatch[1];
+      head = head.replace(jsMatch[0], '').trim();
+    }
+    const html = evalRule(head || 'body', ctx, { joinAll: true });
     let htmlText = '';
     if (html.nodes && html.nodes.length) {
       const $ = ctx.doc.$;
       htmlText = html.nodes.map((n) => (n.type === 'tag' ? $(n).html() : '')).join('\n');
     }
     if (!htmlText) htmlText = html.values.join('\n');
+
+    // <js>result</js>：对取到的文本做二次加工
+    if (jsCode) {
+      try {
+        const out = runJs(jsCode, { result: htmlText, baseUrl: ctx.baseUrl, source, book });
+        if (out != null) htmlText = String(out);
+      } catch {
+        /* 脚本失败就用原文本 */
+      }
+    }
+
+    // @@ 之后的每一段都是对文本再做一次 HTML 选择
+    for (const extra of segments.slice(1)) {
+      const sel = extra.trim();
+      if (!sel || !htmlText) continue;
+      const sub = makeDoc(htmlText);
+      const picked = evalRule(sel, { doc: sub, json: htmlText, baseUrl: ctx.baseUrl, source, book });
+      const $s = sub.$;
+      const text =
+        picked.nodes && picked.nodes.length
+          ? picked.nodes.map((n) => (n.type === 'tag' ? $s(n).text() : '')).join('\n')
+          : picked.values.join('\n');
+      if (text) htmlText = text;
+    }
 
     let part = htmlToParagraphs(htmlText);
     if (part.length <= 1) {

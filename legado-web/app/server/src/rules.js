@@ -325,19 +325,35 @@ function applySuffixes(values, seg) {
 function evalRule(ruleStr, ctx, opts = {}) {
   let rule = ruleStr == null ? '' : String(ruleStr);
 
-  // JSON 列表项里的 {{$.field}} 模板替换
-  if (opts.scope && opts.scope.type === 'json' && rule.includes('{{$.')) {
-    rule = rule.replace(/\{\{\s*(\$?\.?[\w.$\[\]']+)\s*\}\}/g, (m, p) => {
-      const path = p.startsWith('$') ? p : '$' + (p.startsWith('.') ? p : '.' + p);
-      const v = jsonPath(opts.scope.value, path)[0];
+  // JSON 节点里的 {{$.field}} / {$..field} / {{field}} 模板替换
+  if (opts.scope && opts.scope.type === 'json' && rule.includes('{')) {
+    const scopeVal = opts.scope.value;
+    const lookup = (expr) => {
+      const e = String(expr).trim();
+      const path = e.startsWith('$') ? e : '$.' + e.replace(/^\./, '');
+      let v;
+      try {
+        v = jsonPath(scopeVal, path)[0];
+      } catch {
+        v = undefined;
+      }
       if (v === undefined || v === null) return '';
       return typeof v === 'object' ? JSON.stringify(v) : String(v);
-    });
-    // 整条规则只由 {{...}} 与字面量组成（如「玄幻,9.1分」）时，替换完就是最终文本
-    if (/^(?:[^{}]|\{\{[^{}]*\}\})*$/.test(String(ruleStr).trim()) && String(ruleStr).includes('{{')) {
+    };
+    rule = rule
+      .replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (m, e) => lookup(e))
+      .replace(/\{\s*([^{}\s]+)\s*\}/g, (m, e) => (e.startsWith('$') ? lookup(e) : m));
+
+    // 替换完只剩文本（URL 或纯文字）时直接当结果
+    const stripped = String(ruleStr)
+      .replace(/\{\{[^{}]*\}\}/g, '')
+      .replace(/\{\s*\$[^{}]*\}/g, '');
+    const isUrl = /^https?:\/\//i.test(rule.trim());
+    if (isUrl || !/[.$@\[\]()]/.test(stripped)) {
       return { values: [rule], nodes: [] };
     }
   }
+
   // {{变量}}（来自 @put）
   if (ctx.vars && rule.includes('{{')) {
     rule = rule.replace(/\{\{\s*([A-Za-z_][\w]*)\s*\}\}/g, (m, k) =>

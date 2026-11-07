@@ -1,0 +1,12 @@
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Headers: content-type
+Access-Control-Allow-Methods: GET,POST,PATCH,DELETE,OPTIONS
+Content-Type: text/plain; charset=utf-8
+Content-Length: 8031983
+Content-Disposition: attachment; filename*=UTF-8''%E6%B7%B1%E6%B5%B7%E6%8F%90%E7%9D%A3.txt
+Cache-Control: no-store
+Date: Thu, 05 Nov 2026 16:19:22 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+

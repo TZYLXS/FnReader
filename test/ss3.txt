@@ -1,0 +1,484 @@
+data: {"type":"start","total":1120}
+
+data: {"type":"source-start","source":"番茄小说","id":"https://api5-normal-lf.fqnovel.com"}
+
+data: {"type":"source-start","source":"🐼 松鹤庭沐🕸","id":"https://so.html5.qq.com"}
+
+data: {"type":"source-start","source":"独阅读吧","id":"https://app.duread8.com"}
+
+data: {"type":"source-start","source":"七猫小说","id":"https://api-bc.wtzw.com"}
+
+data: {"type":"source-start","source":"米读看书","id":"http://api.midukanshu.com"}
+
+data: {"type":"source-start","source":"🌙 番薯小说","id":"https://ggs.manmeng168.com"}
+
+data: {"type":"source-start","source":"值得阅读","id":"https://s.xcfcch.com"}
+
+data: {"type":"source-start","source":"笔趣阁","id":"http://m.leletxt.com"}
+
+data: {"type":"source-start","source":"翻书阁","id":"https://m.fansg.cc"}
+
+data: {"type":"source-start","source":"爱书网","id":"http://www.22ff.vip"}
+
+data: {"type":"source-done","source":"独阅读吧","error":"JS规则执行失败: JavaImporter is not defined","ms":18,"done":1,"total":1120}
+
+data: {"type":"source-start","source":"御书网","id":"https://m.yushugu.com"}
+
+data: {"type":"source-done","source":"🐼 松鹤庭沐🕸","count":0,"ms":5701,"done":2,"total":1120}
+
+data: {"type":"source-start","source":"书仓网","id":"https://m.shucangxs.com"}
+
+data: {"type":"source-done","source":"番茄小说","count":0,"ms":5952,"done":3,"total":1120}
+
+data: {"type":"source-start","source":"红甘泉26","id":"https://www.hgq26.com"}
+
+data: {"type":"source-done","source":"七猫小说","error":"请求失败 https://api-bc.wtzw.com/api/v5/search/words?&gender=3&imei_ip=2937357107&page=1&wd=%E6%96%97%E7%A0%B4&sign=0715b4f4ce2e3：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10487,"done":4,"total":1120}
+
+data: {"type":"source-start","source":"独步小说","id":"https://www.dubuxiaoshuo.com"}
+
+data: {"type":"source-done","source":"米读看书","error":"请求失败 http://api.midukanshu.com/fiction/search/search：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10490,"done":5,"total":1120}
+
+data: {"type":"source-start","source":"搜猫小说","id":"https://www.soumal.com"}
+
+data: {"type":"source-done","source":"御书网","error":"请求失败 https://m.yushugu.com/search.html?ss=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10487,"done":6,"total":1120}
+
+data: {"type":"source-start","source":"艾途小说","id":"https://m.aitbooks.com"}
+
+data: {"type":"source-done","source":"爱书网","error":"请求失败 http://www.22ff.vip/s/%E6%96%97%E7%A0%B4/1/：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10498,"done":7,"total":1120}
+
+data: {"type":"source-start","source":"无限小说","id":"https://www.555x.org"}
+
+data: {"type":"source-done","source":"翻书阁","error":"请求失败 https://m.fansg.cc/search.html?keyword=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10506,"done":8,"total":1120}
+
+data: {"type":"source-start","source":"Ｖ笔趣阁","id":"http://www.vbiquge.org"}
+
+data: {"type":"source-done","source":"笔趣阁","error":"请求失败 http://m.leletxt.com/search/?searchkey=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10509,"done":9,"total":1120}
+
+data: {"type":"source-start","source":"飞速中文","id":"https://m.feixs.com"}
+
+data: {"type":"source-done","source":"值得阅读","error":"请求失败 https://s.xcfcch.com/v1/lists.api?keyword=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10514,"done":10,"total":1120}
+
+data: {"type":"source-start","source":"旭日小说","id":"https://m.xuribook.com"}
+
+data: {"type":"source-done","source":"🌙 番薯小说","error":"请求失败 https://ggs.manmeng168.com/v1/search/do_search,{\"method\":\"POST\",\"body\":{\"keyword\":%E6%96%97%E7%A0%B4,\"page_index\":1,\"pag：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10519,"done":11,"total":1120}
+
+data: {"type":"source-start","source":"红袖小说","id":"https://www.hongxiuxs.com"}
+
+data: {"type":"source-done","source":"红甘泉26","error":"请求失败 https://m.hgq26.com/modules/article/waps.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10071,"done":12,"total":1120}
+
+data: {"type":"source-start","source":"爱随心看","id":"http://m.suixkan.com"}
+
+data: {"type":"source-done","source":"书仓网","error":"请求失败 https://m.shucangxs.com/search.html：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10293,"done":13,"total":1120}
+
+data: {"type":"source-start","source":"👑 蚂蚁阅读·贰","id":"http://www.imayitxt.com"}
+
+data: {"type":"source-done","source":"独步小说","error":"请求失败 https://www.dubuxiaoshuo.com/plus/search.php?q=%E6%96%97%E7%A0%B4：fetch failed [ECONNREFUSED]","ms":8109,"done":14,"total":1120}
+
+data: {"type":"source-start","source":"风筝小说","id":"https://www.56fz.net"}
+
+data: {"type":"source-done","source":"搜猫小说","error":"请求失败 https://www.soumal.com/search.html?keyword=%E6%96%97%E7%A0%B4：fetch failed [DEPTH_ZERO_SELF_SIGNED_CERT]","ms":8489,"done":15,"total":1120}
+
+data: {"type":"source-start","source":"玫瑰小说","id":"https://m.meiguixsw.com"}
+
+data: {"type":"source-done","source":"Ｖ笔趣阁","count":0,"ms":9742,"done":16,"total":1120}
+
+data: {"type":"source-start","source":"雅谷中文","id":"http://eyagu.com"}
+
+data: {"type":"source-done","source":"无限小说","error":"请求失败 https://www.555x.org/search/：fetch failed [UNABLE_TO_GET_ISSUER_CERT_LOCALLY]","ms":10107,"done":17,"total":1120}
+
+data: {"type":"source-start","source":"种田小说","id":"https://m.zhongtianwen.cn"}
+
+data: {"type":"source-done","source":"红袖小说","error":"请求失败 https://www.hongxiuxs.com/modules/article/search.php?searchkey=%E6%96%97%E7%A0%B4&page=1：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10448,"done":18,"total":1120}
+
+data: {"type":"source-start","source":"九桃小说","id":"http://00txs.com"}
+
+data: {"type":"source-done","source":"旭日小说","error":"请求失败 https://m.xuribook.com/search/：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10454,"done":19,"total":1120}
+
+data: {"type":"source-start","source":"爱看书吧","id":"http://www.ikanshuba.com"}
+
+data: {"type":"source-done","source":"艾途小说","error":"请求失败 https://m.aitbooks.com/search/：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10482,"done":20,"total":1120}
+
+data: {"type":"source-start","source":"下书久久","id":"https://www.xiashu99.com"}
+
+data: {"type":"source-done","source":"飞速中文","error":"请求失败 https://m.feixs.com/search.aspx?s=%E6%96%97%E7%A0%B4&submit=：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10467,"done":21,"total":1120}
+
+data: {"type":"source-start","source":"墨坛文学","id":"http://www.22mt.net"}
+
+data: {"type":"source-done","source":"爱随心看","count":0,"ms":7007,"done":22,"total":1120}
+
+data: {"type":"source-start","source":"闪文书库","id":"http://www.2dwx.com"}
+
+data: {"type":"source-done","source":"👑 蚂蚁阅读·贰","error":"请求失败 http://www.imayitxt.com/modules/article/search.php?q=%E6%96%97%E7%A0%B4&searchtype=all&s=17333194950446968473：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10481,"done":23,"total":1120}
+
+data: {"type":"source-start","source":"兔九三","id":"http://www.tu93.com"}
+
+data: {"type":"source-done","source":"雅谷中文","count":0,"ms":6439,"done":24,"total":1120}
+
+data: {"type":"source-start","source":"玄幻阁","id":"http://www.xuankuge.com"}
+
+data: {"type":"result","source":"种田小说","id":"https://m.zhongtianwen.cn","books":[{"name":"斗破之最牛赘婿","author":"作者：歌舞技","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoZhiZuiNiuZhuiXu671412/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525873},{"name":"斗破之我有个强化挂","author":"作者：夏夜的知了","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoZhiWoYouGeQiangHuaGua690712/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525873},{"name":"斗破之魂风","author":"作者：青虹紫电","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoZhiHunFeng715512/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525874},{"name":"斗破之狮王争霸","author":"作者：司城子罕","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoZhiShiWangZhengBa788212/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525874},{"name":"斗破大陆","author":"作者：气吞万里","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoDaLu2687812/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525875},{"name":"斗破昊天","author":"作者：想吃柠檬汁","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoHaoTian4128712/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525875},{"name":"斗破星际","author":"作者：卍卐","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoXingJi4360812/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525875},{"name":"斗破玄苍","author":"作者：栈桥","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoXuanCang5854012/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525876},{"name":"斗破斗罗之我们的巅峰传奇","author":"作者：九转妖帝","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoDouLuoZhiWoMenDeDianFengChuanQi6589612/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525876},{"name":"斗破之我有个外挂","author":"作者：回首前尘","kind":"","intro":"","lastChapter":"","updateTime":"","wordCount":"","coverUrl":"","bookUrl":"https://m.zhongtianwen.cn/DouPoZhiWoYouGeWaiGua8293912/","origin":"https://m.zhongtianwen.cn","originName":"种田小说","tocUrl":"","chapters":[],"durChapterIndex":0,"durChapterPos":0,"durChapterTitle":"","durChapterTime":0,"totalChapterNum":0,"group":0,"order":1793889525876}]}
+
+data: {"type":"source-done","source":"种田小说","count":10,"ms":7369,"done":25,"total":1120}
+
+data: {"type":"source-start","source":"选书网","id":"https://www.ixuanshu.org"}
+
+data: {"type":"source-done","source":"下书久久","count":0,"ms":8348,"done":26,"total":1120}
+
+data: {"type":"source-start","source":"大家读","id":"https://www.dajiadu8.com"}
+
+data: {"type":"source-done","source":"玫瑰小说","error":"请求失败 https://m.meiguixsw.com/modules/article/waps.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10503,"done":27,"total":1120}
+
+data: {"type":"source-start","source":"望书阁网","id":"http://wap.wangshuge.la"}
+
+data: {"type":"source-done","source":"墨坛文学","count":0,"ms":8706,"done":28,"total":1120}
+
+data: {"type":"source-start","source":"妙书斋","id":"https://www.miaoshuzhai.net"}
+
+data: {"type":"source-done","source":"选书网","error":"请求失败 https://www.ixuanshu.org/search.php：fetch failed [CERT_HAS_EXPIRED]","ms":2432,"done":29,"total":1120}
+
+data: {"type":"source-start","source":"笔趣网","id":"http://www.biquw.com"}
+
+data: {"type":"source-done","source":"风筝小说","error":"请求失败 https://www.56fz.net/home/search：This operation was aborted","ms":12008,"done":30,"total":1120}
+
+data: {"type":"source-start","source":"西红柿","id":"https://m.xhsxsw.com"}
+
+data: {"type":"source-done","source":"九桃小说","error":"请求失败 http://00txs.com/novel/search?searchkey=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10510,"done":31,"total":1120}
+
+data: {"type":"source-start","source":"追书网","id":"http://www.zhuishu.la"}
+
+data: {"type":"source-done","source":"爱看书吧","error":"请求失败 http://www.ikanshuba.com/search/result.html：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10509,"done":32,"total":1120}
+
+data: {"type":"source-start","source":"同人圈","id":"https://tongrenquan.org"}
+
+data: {"type":"source-done","source":"闪文书库","count":0,"ms":8803,"done":33,"total":1120}
+
+data: {"type":"source-start","source":"破万卷","id":"http://www.powanjuan.cc"}
+
+data: {"type":"source-done","source":"妙书斋","count":0,"ms":3790,"done":34,"total":1120}
+
+data: {"type":"source-start","source":"读一读","id":"http://du11du.com"}
+
+data: {"type":"source-done","source":"玄幻阁","error":"请求失败 http://www.xuankuge.com/modules/article/search.php?s=%E6%96%97%E7%A0%B4&searchtype=articlename：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10286,"done":35,"total":1120}
+
+data: {"type":"source-start","source":"147小说","id":"https://www.147xs.org"}
+
+data: {"type":"source-done","source":"兔九三","error":"请求失败 http://www.tu93.com/search：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10519,"done":36,"total":1120}
+
+data: {"type":"source-start","source":"ABC小说","id":"https://www.yb3.cc"}
+
+data: {"type":"source-done","source":"大家读","error":"请求失败 https://www.dajiadu8.com/modules/article/searchsou2.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10147,"done":37,"total":1120}
+
+data: {"type":"source-start","source":"三三小说","id":"https://m.x33xs.com"}
+
+data: {"type":"source-done","source":"笔趣网","error":"请求失败 http://www.biquw.com/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10066,"done":38,"total":1120}
+
+data: {"type":"source-start","source":"五五小说","id":"http://www.55shuba.com"}
+
+data: {"type":"source-done","source":"同人圈","error":"请求失败 https://tongrenquan.org/e/search/indexstart.php：fetch failed [ENOTFOUND]","ms":9354,"done":39,"total":1120}
+
+data: {"type":"source-start","source":"五六书库","id":"https://www.56shuku.la"}
+
+data: {"type":"source-done","source":"西红柿","error":"请求失败 https://m.xhsxsw.com/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10378,"done":40,"total":1120}
+
+data: {"type":"source-start","source":"六九书吧","id":"https://69shu.net"}
+
+data: {"type":"source-done","source":"追书网","count":0,"ms":9693,"done":41,"total":1120}
+
+data: {"type":"source-start","source":"爱下书网","id":"https://www.aixiaxsw.com"}
+
+data: {"type":"source-done","source":"望书阁网","error":"请求失败 http://wap.wangshuge.la/search.php?searchkey=%E6%96%97%E7%A0%B4：This operation was aborted","ms":12002,"done":42,"total":1120}
+
+data: {"type":"source-start","source":"玄幻文学","id":"https://m.xhwx5.com"}
+
+data: {"type":"source-done","source":"ABC小说","error":"请求失败 https://www.yb3.cc/search.php?keyword=%E6%96%97%E7%A0%B4：fetch failed [ENOTFOUND]","ms":5103,"done":43,"total":1120}
+
+data: {"type":"source-start","source":"👑 笔趣阁³","id":"https://www.mayiwxw.com"}
+
+data: {"type":"source-done","source":"破万卷","count":0,"ms":10383,"done":44,"total":1120}
+
+data: {"type":"source-start","source":"南山书院","id":"https://www.szyangxiao.com"}
+
+data: {"type":"source-done","source":"三三小说","error":"请求失败 https://m.x33xs.com/search.php?keyword=%E6%96%97%E7%A0%B4&submit=：fetch failed [UNABLE_TO_GET_ISSUER_CERT_LOCALLY]","ms":3820,"done":45,"total":1120}
+
+data: {"type":"source-start","source":"零零小说","id":"https://www.00shu.com"}
+
+data: {"type":"source-done","source":"五五小说","count":0,"ms":2909,"done":46,"total":1120}
+
+data: {"type":"source-start","source":"书趣中文","id":"https://www.shuquzw.com"}
+
+data: {"type":"source-done","source":"读一读","error":"请求失败 http://du11du.com/search.htm?keyword=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":9998,"done":47,"total":1120}
+
+data: {"type":"source-start","source":"💠 达文小说","id":"http://www.dawensk.com"}
+
+data: {"type":"source-done","source":"五六书库","error":"请求失败 https://www.56shuku.la/modules/article/search.php：fetch failed [ECONNREFUSED]","ms":3094,"done":48,"total":1120}
+
+data: {"type":"source-start","source":"亿软小说","id":"https://www.iyruan.com"}
+
+data: {"type":"source-done","source":"147小说","count":0,"ms":10140,"done":49,"total":1120}
+
+data: {"type":"source-start","source":"文桑小说","id":"http://www.wlwx.org"}
+
+data: {"type":"source-done","source":"南山书院","count":0,"ms":5989,"done":50,"total":1120}
+
+data: {"type":"source-start","source":"元宝小说","id":"https://www.ybwzx9.com"}
+
+data: {"type":"source-done","source":"六九书吧","count":0,"ms":7913,"done":51,"total":1120}
+
+data: {"type":"source-start","source":"山药小说","id":"https://www.zhanqunbao.cn"}
+
+data: {"type":"source-done","source":"书趣中文","error":"请求失败 https://www.shuquzw.com/modules/article/search.php：fetch failed [CERT_HAS_EXPIRED]","ms":5704,"done":52,"total":1120}
+
+data: {"type":"source-start","source":"👑 猪猪书网","id":"http://www.zzs5.com"}
+
+data: {"type":"source-done","source":"亿软小说","error":"请求失败 https://www.iyruan.com/modules/article/search.php：fetch failed [CERT_HAS_EXPIRED]","ms":7612,"done":53,"total":1120}
+
+data: {"type":"source-start","source":"键盘小说","id":"https://www.janpn.com"}
+
+data: {"type":"source-done","source":"爱下书网","count":0,"ms":10585,"done":54,"total":1120}
+
+data: {"type":"source-start","source":"饭饭小说","id":"http://www.ffxs8.com"}
+
+data: {"type":"source-done","source":"玄幻文学","error":"请求失败 https://m.xhwx5.com/search：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10480,"done":55,"total":1120}
+
+data: {"type":"source-start","source":"全本小说","id":"https://www.qb5.tw"}
+
+data: {"type":"source-done","source":"零零小说","error":"请求失败 https://www.00shu.com/modules/article/search.php?q=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10167,"done":56,"total":1120}
+
+data: {"type":"source-start","source":"💠 女生文学","id":"http://www.wenxuem.com"}
+
+data: {"type":"source-done","source":"山药小说","error":"请求失败 https://www.zhanqunbao.cn/index.php?do=wap_sea&so=yes&name=%E6%96%97%E7%A0%B4：fetch failed [ECONNREFUSED]","ms":4703,"done":57,"total":1120}
+
+data: {"type":"source-start","source":"同人小说","id":"http://www.trxs.cc"}
+
+data: {"type":"source-done","source":"👑 笔趣阁³","error":"请求失败 https://www.mayiwxw.com/modules/article/search.php?searchkey=%E6%96%97%E7%A0%B4：This operation was aborted","ms":12000,"done":58,"total":1120}
+
+data: {"type":"source-start","source":"若雨中文","id":"http://www.3yt.com"}
+
+data: {"type":"source-done","source":"💠 达文小说","error":"请求失败 http://www.dawensk.com/search.php：This operation was aborted","ms":12004,"done":59,"total":1120}
+
+data: {"type":"source-start","source":"艾克小说","id":"http://www.ik555.net"}
+
+data: {"type":"source-done","source":"饭饭小说","count":0,"ms":7358,"done":60,"total":1120}
+
+data: {"type":"source-start","source":"官场小说","id":"http://www.gcxs8.com"}
+
+data: {"type":"source-done","source":"文桑小说","error":"请求失败 http://www.wlwx.org/home/search：This operation was aborted","ms":12002,"done":61,"total":1120}
+
+data: {"type":"source-start","source":"百合小说","id":"https://m.baihexs.com"}
+
+data: {"type":"source-done","source":"键盘小说","error":"请求失败 https://www.janpn.com/search.php?q=%E6%96%97%E7%A0%B4&s=15947871991047423724：fetch failed [CERT_HAS_EXPIRED]","ms":7996,"done":62,"total":1120}
+
+data: {"type":"source-start","source":"八零小说","id":"https://www.80xs.la"}
+
+data: {"type":"source-done","source":"元宝小说","error":"请求失败 https://www.ybwzx9.com/search.php?keyword=%E6%96%97%E7%A0%B4：This operation was aborted","ms":12000,"done":63,"total":1120}
+
+data: {"type":"source-start","source":"千千小说","id":"https://www.qqxs.la"}
+
+data: {"type":"source-done","source":"同人小说","count":0,"ms":6903,"done":64,"total":1120}
+
+data: {"type":"source-start","source":"天籁小说","id":"https://m.23sk.com"}
+
+data: {"type":"source-done","source":"👑 猪猪书网","error":"请求失败 http://www.zzs5.com/index.php?m=search&c=index&a=init&typeid=2&siteid=1&q=%E6%96%97%E7%A0%B4：This operation was aborted","ms":12001,"done":65,"total":1120}
+
+data: {"type":"source-start","source":"六九中文","id":"https://www.zw69.com"}
+
+data: {"type":"source-done","source":"💠 女生文学","error":"请求失败 http://www.wenxuem.com/modules/article/search.php?searchkey=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10490,"done":66,"total":1120}
+
+data: {"type":"source-start","source":"顶点小说","id":"https://www.230book.net"}
+
+data: {"type":"source-done","source":"全本小说","error":"请求失败 https://www.qb5.tw/modules/article/search.php?searchkey=%E6%96%97%E7%A0%B4&submit=&page=1：This operation was aborted","ms":12000,"done":67,"total":1120}
+
+data: {"type":"source-start","source":"新笔趣阁","id":"https://www.xbiquge.so"}
+
+data: {"type":"source-done","source":"艾克小说","error":"请求失败 http://www.ik555.net/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10470,"done":68,"total":1120}
+
+data: {"type":"source-start","source":"乐文小说","id":"http://www.lewenge.org"}
+
+data: {"type":"source-done","source":"若雨中文","error":"请求失败 http://www.3yt.com/book/search.aspx?searchkey=%E6%96%97%E7%A0%B4&SeaButton=：This operation was aborted","ms":12001,"done":69,"total":1120}
+
+data: {"type":"source-start","source":"NB中文网","id":"http://www.nbw.la"}
+
+data: {"type":"source-done","source":"百合小说","error":"请求失败 https://m.baihexs.com/modules/article/waps.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10325,"done":70,"total":1120}
+
+data: {"type":"source-start","source":"7017k小说","id":"https://www.7017k.net"}
+
+data: {"type":"source-done","source":"官场小说","error":"请求失败 http://www.gcxs8.com/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10333,"done":71,"total":1120}
+
+data: {"type":"source-start","source":"爱下电子书","id":"https://m.aixdzs.com"}
+
+data: {"type":"source-done","source":"八零小说","error":"请求失败 https://www.80xs.la/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10409,"done":72,"total":1120}
+
+data: {"type":"source-start","source":"2K小说","id":"https://m.duxq.com"}
+
+data: {"type":"source-done","source":"千千小说","error":"请求失败 https://www.qqxs.la/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10287,"done":73,"total":1120}
+
+data: {"type":"source-start","source":"爱好中文","id":"https://m.ahzwx.com"}
+
+data: {"type":"source-done","source":"天籁小说","error":"请求失败 https://m.23sk.com/search.php?keyword=%E6%96%97%E7%A0%B4&submit=：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10447,"done":74,"total":1120}
+
+data: {"type":"source-start","source":"👑 基友书屋","id":"https://www.gaysay.com"}
+
+data: {"type":"source-done","source":"六九中文","error":"请求失败 https://www.zw69.com/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10350,"done":75,"total":1120}
+
+data: {"type":"source-start","source":"乐文小说","id":"https://m.lwlewenxs.com"}
+
+data: {"type":"source-done","source":"新笔趣阁","error":"请求失败 https://www.xbiquge.so/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10475,"done":76,"total":1120}
+
+data: {"type":"source-start","source":"🔰 九五小说","id":"http://www.xfjxs.com"}
+
+data: {"type":"source-done","source":"顶点小说","error":"请求失败 https://www.230book.net/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10493,"done":77,"total":1120}
+
+data: {"type":"source-start","source":"吞噬小说","id":"https://m.tszw.org"}
+
+data: {"type":"source-done","source":"乐文小说","error":"请求失败 http://www.lewenge.org/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10489,"done":78,"total":1120}
+
+data: {"type":"source-start","source":"燃文书库","id":"https://wap.778buy.com"}
+
+data: {"type":"source-done","source":"NB中文网","error":"请求失败 http://www.nbw.la/search.htm?keyword=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10356,"done":79,"total":1120}
+
+data: {"type":"source-start","source":"UC书库","id":"http://m.ucshuku.com"}
+
+data: {"type":"source-done","source":"爱下电子书","error":"请求失败 https://m.aixdzs.com/search/?k=%E6%96%97%E7%A0%B4&page=1：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10486,"done":80,"total":1120}
+
+data: {"type":"source-start","source":"520小说","id":"http://m.520xsb.com"}
+
+data: {"type":"source-done","source":"7017k小说","error":"请求失败 https://www.7017k.net/plus/search.php?kwtype=0&searchtype=&q=%E6%96%97%E7%A0%B4：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10492,"done":81,"total":1120}
+
+data: {"type":"source-start","source":"铅笔小说","id":"https://www.23qb.com"}
+
+data: {"type":"source-done","source":"铅笔小说","error":"JS规则执行失败: source.getVariable is not a function","ms":5,"done":82,"total":1120}
+
+data: {"type":"source-start","source":"指尖阅读","id":"https://zjyd.danmofun.com"}
+
+data: {"type":"source-done","source":"2K小说","error":"请求失败 https://m.duxq.com/modules/article/so.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10485,"done":83,"total":1120}
+
+data: {"type":"source-start","source":"💐 言情小说","id":"http://www.yqk.net"}
+
+data: {"type":"source-done","source":"爱好中文","error":"请求失败 https://m.ahzwx.com/s.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10486,"done":84,"total":1120}
+
+data: {"type":"source-start","source":"乡村小说","id":"http://m.1bzw.org"}
+
+data: {"type":"source-done","source":"👑 基友书屋","error":"请求失败 https://www.gaysay.com/search/%E6%96%97%E7%A0%B4/1：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10487,"done":85,"total":1120}
+
+data: {"type":"source-start","source":"下书网","id":"https://www.shutxt.com"}
+
+data: {"type":"source-done","source":"乐文小说","error":"请求失败 https://m.lwlewenxs.com/search/：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10488,"done":86,"total":1120}
+
+data: {"type":"source-start","source":"鬼书集","id":"https://www.guishuji.cc"}
+
+data: {"type":"source-done","source":"吞噬小说","error":"请求失败 https://m.tszw.org/search.html：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10485,"done":87,"total":1120}
+
+data: {"type":"source-start","source":"鬼大爷","id":"https://b.guidaye.com"}
+
+data: {"type":"source-done","source":"🔰 九五小说","error":"请求失败 http://www.xfjxs.com/modules/article/search.php?ie=gbk&searchkey=%E6%96%97%E7%A0%B4&ct=2097152：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10493,"done":88,"total":1120}
+
+data: {"type":"source-start","source":"👍 中华典藏","id":"https://www.zhonghuadiancang.com"}
+
+data: {"type":"source-done","source":"UC书库","error":"请求失败 http://m.ucshuku.com/s.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10483,"done":89,"total":1120}
+
+data: {"type":"source-start","source":"天涯书库","id":"https://www.tysk.cc"}
+
+data: {"type":"source-done","source":"燃文书库","error":"请求失败 https://wap.778buy.com/s.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10492,"done":90,"total":1120}
+
+data: {"type":"source-start","source":"👑 超星网站","id":"http://yz4.chaoxing.com"}
+
+data: {"type":"source-done","source":"指尖阅读","error":"请求失败 https://zjyd.danmofun.com/app/book/search/book?title=%E6%96%97%E7%A0%B4&page=1&size=10&uid=lkbe3ab3be8e5ddf1e6736590cf9c：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10481,"done":91,"total":1120}
+
+data: {"type":"source-start","source":"拉米阅读","id":"https://read.lmeee.com"}
+
+data: {"type":"source-done","source":"520小说","error":"请求失败 http://m.520xsb.com/modules/article/waps.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10494,"done":92,"total":1120}
+
+data: {"type":"source-start","source":"文学大全","id":"https://www.wenxue55.com"}
+
+data: {"type":"source-done","source":"💐 言情小说","error":"请求失败 http://www.yqk.net/%7B%7Bcookie.removeCookie(source.getKey())%7D%7D/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10492,"done":93,"total":1120}
+
+data: {"type":"source-start","source":"大悟读书","id":"https://5165.org"}
+
+data: {"type":"source-done","source":"大悟读书","error":"书源未配置搜索地址","ms":0,"done":94,"total":1120}
+
+data: {"type":"source-start","source":"小说天堂","id":"https://www.xstt5.com"}
+
+data: {"type":"source-done","source":"小说天堂","error":"书源未配置搜索地址","ms":0,"done":95,"total":1120}
+
+data: {"type":"source-start","source":"汉典古籍","id":"https://gj.zdic.net"}
+
+data: {"type":"source-done","source":"汉典古籍","error":"书源未配置搜索地址","ms":0,"done":96,"total":1120}
+
+data: {"type":"source-start","source":"九九藏书","id":"https://www.99csw.com"}
+
+data: {"type":"source-done","source":"九九藏书","error":"书源未配置搜索地址","ms":0,"done":97,"total":1120}
+
+data: {"type":"source-start","source":"知轩藏书","id":"http://zxcs.me"}
+
+data: {"type":"source-done","source":"乡村小说","error":"请求失败 http://m.1bzw.org/modules/article/waps.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10491,"done":98,"total":1120}
+
+data: {"type":"source-start","source":"幻想姬","id":"http://www.huanxiangji.com"}
+
+data: {"type":"source-done","source":"下书网","error":"请求失败 https://www.shutxt.com/e/search/index.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10491,"done":99,"total":1120}
+
+data: {"type":"source-start","source":"💐 ACGZC","id":"http://www.acgzc.com"}
+
+data: {"type":"source-done","source":"鬼书集","error":"请求失败 https://www.guishuji.cc/e/search/index.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10492,"done":100,"total":1120}
+
+data: {"type":"source-start","source":"轻之文库","id":"https://www.linovel.net"}
+
+data: {"type":"source-done","source":"👍 中华典藏","error":"请求失败 https://www.zhonghuadiancang.com/e/search/index.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10490,"done":101,"total":1120}
+
+data: {"type":"source-start","source":"哔哩轻文","id":"https://w.linovelib.com"}
+
+data: {"type":"source-done","source":"鬼大爷","error":"请求失败 https://b.guidaye.com/e/search/index.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10498,"done":102,"total":1120}
+
+data: {"type":"source-start","source":"🔰 荏染柔木[梯]","id":"https://m.po18.xyz"}
+
+data: {"type":"source-done","source":"👑 超星网站","error":"请求失败 http://yz4.chaoxing.com/circlemarket/getsearch：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10490,"done":103,"total":1120}
+
+data: {"type":"source-start","source":"少数派","id":"https://sspwk.me"}
+
+data: {"type":"source-done","source":"天涯书库","error":"请求失败 https://www.tysk.cc/e/search/index.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10499,"done":104,"total":1120}
+
+data: {"type":"source-start","source":"腐小说","id":"http://www.fuxsb.com"}
+
+data: {"type":"source-done","source":"文学大全","error":"请求失败 https://www.wenxue55.com/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10489,"done":105,"total":1120}
+
+data: {"type":"source-start","source":"🔰 福书村","id":"https://www.fushucun.com"}
+
+data: {"type":"source-done","source":"拉米阅读","error":"请求失败 https://read.lmeee.com/search?t=1&key=%E6%96%97%E7%A0%B4&p=1：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10496,"done":106,"total":1120}
+
+data: {"type":"source-start","source":"CP文库","id":"https://www.cpwenku.com"}
+
+data: {"type":"source-done","source":"知轩藏书","error":"请求失败 http://zxcs.me/index.php?keyword=%E6%96%97%E7%A0%B4&page=1：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10493,"done":107,"total":1120}
+
+data: {"type":"source-start","source":"BL文吧","id":"http://m.blwenba.com"}
+
+data: {"type":"source-done","source":"幻想姬","error":"请求失败 http://www.huanxiangji.com/modules/article/search.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10494,"done":108,"total":1120}
+
+data: {"type":"source-start","source":"256文学","id":"https://www.256wenku.com"}
+
+data: {"type":"source-done","source":"💐 ACGZC","error":"请求失败 http://www.acgzc.com/index.php/portal/booklist/?list=true&keywords=%E6%96%97%E7%A0%B4&per_page=1：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10493,"done":109,"total":1120}
+
+data: {"type":"source-start","source":"深夜看书","id":"https://www.shenyekanshu.com"}
+
+data: {"type":"source-done","source":"轻之文库","error":"请求失败 https://www.linovel.net/search/?kw=%E6%96%97%E7%A0%B4&page=1：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10492,"done":110,"total":1120}
+
+data: {"type":"source-start","source":"海棠看书","id":"https://www.haitangkanshu.com"}
+
+data: {"type":"source-done","source":"🔰 荏染柔木[梯]","error":"请求失败 https://m.po18.xyz/s.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10487,"done":111,"total":1120}
+
+data: {"type":"source-start","source":"什么看书","id":"https://www.smkan.top"}
+
+data: {"type":"source-done","source":"哔哩轻文","error":"请求失败 https://w.linovelib.com/S8/%E6%96%97%E7%A0%B4_1.html：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10495,"done":112,"total":1120}
+
+data: {"type":"source-start","source":"耽美书斋","id":"http://www.dmshuzhai.com"}
+
+data: {"type":"source-done","source":"腐小说","error":"请求失败 http://www.fuxsb.com/e/search/index.php：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10485,"done":113,"total":1120}
+
+data: {"type":"source-start","source":"西柚耽美","id":"https://xiyou.lfunv.com"}
+
+data: {"type":"source-done","source":"西柚耽美","error":"JS规则执行失败: JavaImporter is not defined","ms":4,"done":114,"total":1120}
+
+data: {"type":"source-start","source":"鲤鱼乡BL","id":"https://www.liyuxiangbl.com"}
+
+data: {"type":"source-done","source":"少数派","error":"请求失败 https://sspwk.me/search/：fetch failed [UND_ERR_CONNECT_TIMEOUT]","ms":10494,"done":115,"total":1120}
+
+data: {"type":"source-start","source":"耽美小说①","id":"http://www.dmxs.me"}
+

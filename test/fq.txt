@@ -1,0 +1,2 @@
+data: {"type":"error","message":"没有可用书源，请先在书源管理中导入"}
+
