@@ -11,6 +11,7 @@ const { searchSource, getBookInfo, getToc, getContent } = require('./books');
 const { request, requestBinary, absoluteUrl } = require('./util');
 const { fetchFeed } = require('./feeds');
 const { detectAcademic } = require('./academic');
+const { handleDav } = require('./dav');
 const searchCache = require('./searchcache');
 
 const APPNAME = process.env.TRIM_APPNAME || 'legado-web';
@@ -670,6 +671,17 @@ async function route(req, res, url) {
   }
   p = p.replace(/\/+$/, '') || '/';
 
+  if (p === '/dav' || p.startsWith('/dav/')) {
+    return handleDav(
+      { apiToken, readJSON, DOWNLOAD_INDEX, dataDir: store.dataDir },
+      req,
+      res,
+      url,
+      p,
+      method
+    );
+  }
+
   if (p === '/api/health')
     return json(res, 200, { ok: true, app: APPNAME, version: APP_VERSION, build: BUILD_ID });
 
@@ -1168,6 +1180,17 @@ const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'content-type, x-api-token');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
   if (req.method === 'OPTIONS') {
+    // WebDAV 客户端需要 DAV 头，交给 dav 处理器
+    if (url.pathname === '/dav' || url.pathname.startsWith('/dav/')) {
+      return handleDav(
+        { apiToken, readJSON, DOWNLOAD_INDEX, dataDir: store.dataDir },
+        req,
+        res,
+        url,
+        url.pathname,
+        'OPTIONS'
+      );
+    }
     res.writeHead(204);
     return res.end();
   }

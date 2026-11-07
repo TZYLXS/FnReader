@@ -1,50 +1,37 @@
 #!/usr/bin/env bash
-# 把当前构建部署到 fnOS 设备（只更新文件并重启，保留数据）
-#
-# 用法：
-#   FNOS_HOST=192.168.1.10 FNOS_USER=admin FNOS_PASS=**** bash tools/deploy.sh
+# 只更新服务端 bundle + 前端静态文件并重启（保留书源/书架数据）
 set -e
+BASE="C:/Users/csjt1/OneDrive/文档/deepseek-harness/default-workspace/work"
+NODE="C:/Users/csjt1/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node.exe"
+PASS='a!123456'
+TMP='/c/Users/csjt1/AppData/Local/Temp/lw-deploy'
+rm -rf "$TMP" && mkdir -p "$TMP"
 
-BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NODE="${NODE:-node}"
-HOST="${FNOS_HOST:?请设置 FNOS_HOST（fnOS 设备地址）}"
-USER="${FNOS_USER:-admin}"
-PASS="${FNOS_PASS:?请设置 FNOS_PASS（设备登录密码）}"
-APP="${FNOS_APP:-legado-web}"
-REMOTE_APP="/var/apps/$APP"
+cd "$BASE/fnos-legado/app/server"
+"$NODE" node_modules/esbuild/bin/esbuild src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
+cp server.bundle.js "$TMP/server.bundle.js"
+cp "$BASE/fnos-legado/app/web/index.html" "$BASE/fnos-legado/app/web/app.js" "$BASE/fnos-legado/app/web/style.css" "$TMP/"
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+cd "$BASE"
 mkdir -p "$TMP/docs"
+if [ -f "$BASE/dist/更新日志.txt" ]; then cp "$BASE/dist/更新日志.txt" "$TMP/docs/changelog.txt"; fi
 
-echo "==> 构建服务端 bundle"
-cd "$BASE/legado-web/app/server"
-if [ -x node_modules/esbuild/bin/esbuild ]; then
-  "$NODE" node_modules/esbuild/bin/esbuild src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
-else
-  npx --yes esbuild src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
-fi
-
-cp server.bundle.js "$BASE/legado-web/app/web/index.html" "$BASE/legado-web/app/web/app.js" "$BASE/legado-web/app/web/style.css" "$TMP/"
-[ -f "$BASE/docs/更新日志.txt" ] && cp "$BASE/docs/更新日志.txt" "$TMP/docs/changelog.txt"
-
-echo "==> 上传"
-cd "$BASE/tools"
 for f in server.bundle.js index.html app.js style.css; do
-  FNOS_HOST="$HOST" FNOS_USER="$USER" FNOS_PASS="$PASS" "$NODE" ssh.js put "$TMP/$f" "/tmp/lw-$f"
+  MSYS_NO_PATHCONV=1 "$NODE" tools/ssh.js put "$(cygpath -w "$TMP/$f")" "/tmp/lw-$f" >/dev/null
 done
-[ -f "$TMP/docs/changelog.txt" ] && FNOS_HOST="$HOST" FNOS_USER="$USER" FNOS_PASS="$PASS" "$NODE" ssh.js put "$TMP/docs/changelog.txt" /tmp/lw-changelog.txt
+MSYS_NO_PATHCONV=1 "$NODE" tools/ssh.js put "$(cygpath -w "$TMP/docs/changelog.txt")" /tmp/lw-changelog.txt >/dev/null
 
-echo "==> 安装并重启"
-FNOS_HOST="$HOST" FNOS_USER="$USER" FNOS_PASS="$PASS" "$NODE" ssh.js exec "
-echo '$PASS' | sudo -S -p '' cp /tmp/lw-server.bundle.js $REMOTE_APP/target/server/server.bundle.js &&
-echo '$PASS' | sudo -S -p '' cp /tmp/lw-index.html $REMOTE_APP/target/web/index.html &&
-echo '$PASS' | sudo -S -p '' cp /tmp/lw-app.js $REMOTE_APP/target/web/app.js &&
-echo '$PASS' | sudo -S -p '' cp /tmp/lw-style.css $REMOTE_APP/target/web/style.css &&
-echo '$PASS' | sudo -S -p '' mkdir -p $REMOTE_APP/target/web/docs &&
-echo '$PASS' | sudo -S -p '' cp /tmp/lw-changelog.txt $REMOTE_APP/target/web/docs/changelog.txt &&
-echo '$PASS' | sudo -S -p '' chown -R legado:legado $REMOTE_APP/target/server $REMOTE_APP/target/web &&
-echo '$PASS' | sudo -S -p '' appcenter-cli restart $APP >/dev/null 2>&1 || true
-"
-
-echo "完成。若应用中心版本号未更新，请卸载后重新安装 dist/legado-web.fpk"
+MSYS_NO_PATHCONV=1 "$NODE" tools/ssh.js exec "
+echo '$PASS' | sudo -S -p '' cp /tmp/lw-server.bundle.js /var/apps/legado-web/target/server/server.bundle.js &&
+echo '$PASS' | sudo -S -p '' cp /tmp/lw-index.html /var/apps/legado-web/target/web/index.html &&
+echo '$PASS' | sudo -S -p '' cp /tmp/lw-app.js /var/apps/legado-web/target/web/app.js &&
+echo '$PASS' | sudo -S -p '' cp /tmp/lw-style.css /var/apps/legado-web/target/web/style.css &&
+echo '$PASS' | sudo -S -p '' mkdir -p /var/apps/legado-web/target/web/docs &&
+echo '$PASS' | sudo -S -p '' cp /tmp/lw-changelog.txt /var/apps/legado-web/target/web/docs/changelog.txt &&
+echo '$PASS' | sudo -S -p '' chown -R legado:legado /var/apps/legado-web/target/server /var/apps/legado-web/target/web &&
+echo '$PASS' | sudo -S -p '' appcenter-cli stop legado-web >/dev/null 2>&1;
+sleep 1;
+echo '$PASS' | sudo -S -p '' appcenter-cli start legado-web 2>&1 | tail -1;
+sleep 2;
+tail -3 /var/apps/legado-web/var/app.log
+" 2>&1 | tail -6
