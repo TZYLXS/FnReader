@@ -1,0 +1,49 @@
+name: build-fpk
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install server dependencies
+        working-directory: legado-web/app/server
+        run: npm install --no-audit --no-fund
+
+      - name: Download fnpack
+        run: |
+          curl -fsSL -o fnpack https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64
+          chmod +x fnpack
+          sudo mv fnpack /usr/local/bin/fnpack
+          fnpack --help | head -3
+
+      - name: Build fpk
+        run: bash tools/build-fpk.sh
+
+      - name: Show result
+        run: ls -lh dist/*.fpk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: legado-web-fpk
+          path: dist/legado-web.fpk
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/legado-web.fpk
+          generate_release_notes: true
