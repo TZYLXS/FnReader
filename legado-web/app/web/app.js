@@ -81,7 +81,7 @@ async function router() {
   const { path, params } = parseHash();
   // 订阅并入「搜索」页，底部只保留 4 个标签
   const raw = path.split('/')[1] || 'shelf';
-  const tab = raw === 'feeds' ? 'search' : raw === 'sources' ? 'settings' : raw;
+  const tab = raw === 'feeds' ? 'search' : raw;
   $$('#tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   if (!path.startsWith('/sources')) {
     const bulk = document.getElementById('source-bulk');
@@ -1706,7 +1706,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.18 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.19 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
