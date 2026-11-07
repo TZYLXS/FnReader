@@ -333,6 +333,10 @@ function evalRule(ruleStr, ctx, opts = {}) {
       if (v === undefined || v === null) return '';
       return typeof v === 'object' ? JSON.stringify(v) : String(v);
     });
+    // 整条规则只由 {{...}} 与字面量组成（如「玄幻,9.1分」）时，替换完就是最终文本
+    if (/^(?:[^{}]|\{\{[^{}]*\}\})*$/.test(String(ruleStr).trim()) && String(ruleStr).includes('{{')) {
+      return { values: [rule], nodes: [] };
+    }
   }
   // {{变量}}（来自 @put）
   if (ctx.vars && rule.includes('{{')) {
@@ -343,6 +347,24 @@ function evalRule(ruleStr, ctx, opts = {}) {
   // 纯 URL 视为字面量（书源的 bookUrl 常见写法）
   if (/^https?:\/\//i.test(rule.trim())) {
     return { values: [rule.trim()], nodes: [] };
+  }
+
+  // 顶层 JSONPath：书源规则直接写 $.a.b / $..list[*]
+  const head = rule.trim();
+  if ((head.startsWith('$') || head.startsWith('[')) && ctx.json !== undefined) {
+    try {
+      const vals = jsonPath(ctx.json, head);
+      if (vals.length) {
+        return {
+          values: vals.map((v) =>
+            v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+          ),
+          nodes: vals.map((v) => ({ type: 'json', value: v })),
+        };
+      }
+    } catch {
+      /* 落到后面的通用解析 */
+    }
   }
 
   const alternatives = parseRule(rule);

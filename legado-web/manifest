@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.7.16
+version=1.7.17
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=简介补全支持书名模糊匹配（如「三体（全集）」），并逐本抓详情页取简介。
+changelog=解析器增强：支持顶层 JSONPath（$..list[*]）、{{$.x}} 模板字面量、{path} 插值，适配 mgz0227/yuedushuyuan 一类 JSON API 书源。

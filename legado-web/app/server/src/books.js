@@ -49,11 +49,49 @@ function parseUrlWithConfig(raw) {
   return { url: s, config: {} };
 }
 
-function fillTemplate(tpl, vars) {
-  return String(tpl || '').replace(/\{\{\s*([\w.]+)\s*\}\}/g, (m, k) => {
-    const v = vars[k];
-    return v === undefined || v === null ? '' : String(v);
-  });
+function fillTemplate(tpl, vars, ctx) {
+  const text = String(tpl || '');
+  const jsonOf = () => (ctx && (ctx.json !== undefined ? ctx.json : ctx));
+  const interp = (expr) => {
+    const e = String(expr).trim();
+    if (!e) return '';
+    // {{key}} / {{page}} 之类的简单变量
+    if (/^[\w.]+$/.test(e) && !e.startsWith('$')) {
+      const v = vars[e];
+      return v === undefined || v === null ? '' : String(v);
+    }
+    const json = jsonOf();
+    // $.a.b / $..a[*] 之类的 JSONPath
+    if (e.startsWith('$')) {
+      try {
+        const v = jsonPath(json, e);
+        if (Array.isArray(v) && v.length === 1) return v[0] == null ? '' : String(v[0]);
+        if (Array.isArray(v)) return v.map((x) => (x == null ? '' : String(x))).join(',');
+        return v == null ? '' : String(v);
+      } catch {
+        return '';
+      }
+    }
+    // 其余当 JS 表达式跑（含 java.* 调用）
+    try {
+      const out = runJs('return (' + e + ')', {
+        json,
+        java: undefined,
+        result: json,
+        baseUrl: ctx && ctx.baseUrl,
+        book: ctx && ctx.book,
+        source: ctx && ctx.source,
+        key: ctx && ctx.key,
+      });
+      return out == null ? '' : String(out);
+    } catch {
+      return '';
+    }
+  };
+
+  return text
+    .replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (m, e) => interp(e))
+    .replace(/\{\s*(\$(?:\.[^}\s]+|\.\.[^}\s]+)*)\s*\}/g, (m, e) => interp(e));
 }
 
 function sourceId(source) {
@@ -121,9 +159,10 @@ async function searchSource(source, key, page = 1, opts = {}) {
     ).trim();
   }
   const vars = { key: encodeURIComponent(key), page };
-  const url = absoluteUrl(source.bookSourceUrl, fillTemplate(tpl, vars));
+  const tplCtx = { json: null, baseUrl: source.bookSourceUrl, source, key };
+  const url = absoluteUrl(source.bookSourceUrl, fillTemplate(tpl, vars, tplCtx));
   const method = (config.method || 'GET').toUpperCase();
-  const body = method === 'POST' ? fillTemplate(config.body || '', vars) : null;
+  const body = method === 'POST' ? fillTemplate(config.body || '', vars, tplCtx) : null;
 
   // 命中缓存就直接返回（同一个搜索请求 URL 只抓一次）
   const cached = searchCache.get(url, body);
