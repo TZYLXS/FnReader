@@ -1633,6 +1633,15 @@ async function renderSettings() {
         <div class="row"><div class="label">说明<div class="desc">安卓 App 通过 /api/m/* 读取书架、目录与正文，请求头带 X-Api-Token</div></div></div>
       </div>
       <div class="section">
+        <h3>阅读 APK 接入</h3>
+        <div class="row"><div class="label">书源导入链接<div class="desc" id="apk-src-link" style="word-break:break-all">-</div></div>
+          <button class="btn" id="copy-apk-link" style="padding:5px 10px;font-size:12px">复制</button></div>
+        <div class="row"><div class="label">书源 JSON<div class="desc" id="apk-src-json" style="word-break:break-all">-</div></div>
+          <button class="btn ghost" id="copy-apk-json" style="padding:5px 10px;font-size:12px">复制</button></div>
+        <div class="row"><div class="label">APK<div class="desc"><a id="apk-dl" href="https://github.com/TZYLXS/yuedu-android4/releases" target="_blank">下载「阅读」兼容版 APK（Android 4.4–5.1）</a></div></div></div>
+        <div class="row"><div class="label">用法<div class="desc">手机装好 APK 后，复制上面的导入链接，在「阅读」里「我的 → 书源管理 → 网络导入」粘贴即可；之后搜书、目录、正文、封面全部走本机飞牛书库。</div></div></div>
+      </div>
+      <div class="section">
         <h3>下载</h3>
         <a class="row" href="#/downloads" style="text-decoration:none"><div class="label">已下载书籍<div class="desc" id="stat-dl">-</div></div><span style="color:var(--text-2)">›</span></a>
         <div class="row"><div class="label">保存位置<div class="desc" id="stat-dir">-</div></div>
@@ -1910,6 +1919,18 @@ async function renderSettings() {
           toast('重置失败：' + e.message);
         }
       };
+
+    // 阅读 APK 接入：一键生成 legado:// 书源导入链接
+    const apkJsonUrl = `${apiBase}api/m/booksource?token=${encodeURIComponent(cfg.apiToken || '')}`;
+    const apkImportUrl = 'legado://import/bookSource?src=' + encodeURIComponent(apkJsonUrl);
+    const lkEl = $('#apk-src-link');
+    if (lkEl) lkEl.textContent = apkImportUrl;
+    const jEl = $('#apk-src-json');
+    if (jEl) jEl.textContent = apkJsonUrl;
+    const clEl = $('#copy-apk-link');
+    if (clEl) clEl.onclick = () => copy(apkImportUrl, '书源导入链接');
+    const cjEl = $('#copy-apk-json');
+    if (cjEl) cjEl.onclick = () => copy(apkJsonUrl, '书源 JSON 地址');
 
     // 已下载书籍数量 + 保存位置
     try {

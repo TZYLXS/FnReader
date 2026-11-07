@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.7.8
+version=1.7.9
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=文档更新：AI 构建指南新增 8 段可直接复制的提示词（开局上下文、修 bug、加功能、书源规则、调界面、发版、自检）。
+changelog=合并两路更新：阅读页换源、目录补全与缓存命中提示；Android 阅读 APK 书源桥（/api/m/booksource 与 /api/m/legado/*）。

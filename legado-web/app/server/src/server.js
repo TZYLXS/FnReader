@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 const store = require('./store');
 const diskCache = require('./cache');
 const { execFileSync } = require('node:child_process');
-const { normalizeSource } = require('./books');
+const { normalizeSource, sourceId } = require('./books');
 const { searchSource, getBookInfo, getToc, getContent } = require('./books');
 const { request, requestBinary, absoluteUrl } = require('./util');
 const { fetchFeed } = require('./feeds');
@@ -770,9 +770,83 @@ async function handleRefreshToc(book) {
   return chapters;
 }
 
+// ---------- 「阅读」APK 接入：把飞牛书库包装成 Legado 书源 ----------
+// 思路：APK 侧不改代码，由服务端生成一份 Legado 书源（bookSource），
+// 书源把 搜索/详情/目录/正文 四个动作映射到 /api/m/legado/*，正文复用 /api/m/content。
+
+function b64u(s) {
+  return Buffer.from(String(s || ''), 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function unb64u(s) {
+  const t = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+  return Buffer.from(t, 'base64').toString('utf8');
+}
+
+/** 外部可访问的基地址（网关前缀 + host） */
+function externalBase(req, prefix) {
+  const proto = req.headers['x-forwarded-proto'] || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
+  return `${proto}://${host}${prefix || ''}`;
+}
+
+/** 生成 Legado 书源对象（可直接被「阅读」导入） */
+function buildLegadoBookSource(base, token) {
+  const api = `${base}/api/m`;
+  return {
+    bookSourceName: '飞牛书库',
+    bookSourceUrl: `${api}/legado`,
+    bookSourceGroup: '飞牛',
+    bookSourceType: 0,
+    bookSourceComment: '由 FnReader 自动生成：把飞牛书架/书源/缓存包装成阅读书源',
+    enabled: true,
+    enabledCookieJar: false,
+    enabledExplore: false,
+    header: '',
+    searchUrl: `${api}/legado/search?token=${token}&key={{key}}&page={{page}}`,
+    ruleSearch: {
+      checkKeyWord: '',
+      bookList: '$.books[*]',
+      name: '$.name',
+      author: '$.author',
+      bookUrl: '$.bookUrl',
+      coverUrl: '$.coverUrl',
+      kind: '$.kind',
+      introduce: '$.intro',
+      lastChapter: '$.lastChapter',
+    },
+    ruleBookInfo: {
+      init: '',
+      name: '$.book.name',
+      author: '$.book.author',
+      coverUrl: '$.book.coverUrl',
+      kind: '$.book.kind',
+      introduce: '$.book.intro',
+      lastChapter: '$.book.lastChapter',
+      tocUrl: '$.book.tocUrl',
+    },
+    ruleToc: {
+      chapterList: '$.chapters[*]',
+      chapterName: '$.title',
+      chapterUrl: '$.url',
+    },
+    ruleContent: {
+      content: '$.paragraphs[*]',
+    },
+    weight: 1,
+    customOrder: 100,
+  };
+}
+
 async function route(req, res, url) {
   const { pathname, searchParams } = url;
   const method = req.method.toUpperCase();
+  // 记录网关挂载前缀，生成返回给「阅读」APK 的绝对地址时要用
+  const MOUNT_PREFIX = pathname.startsWith(`/app/${APPNAME}`) ? `/app/${APPNAME}` : '';
 
   // 网关会带 /app/<name> 前缀，统一去掉
   let p = pathname.replace(/\/{2,}/g, '/');
@@ -806,7 +880,18 @@ async function route(req, res, url) {
       app: '阅读',
       version: APP_VERSION,
       tokenRequired: true,
-      endpoints: ['/api/m/shelf', '/api/m/search', '/api/m/toc', '/api/m/content', '/api/m/progress', '/api/m/cover'],
+      endpoints: [
+        '/api/m/shelf',
+        '/api/m/search',
+        '/api/m/toc',
+        '/api/m/content',
+        '/api/m/progress',
+        '/api/m/cover',
+        '/api/m/booksource',
+        '/api/m/legado/search',
+        '/api/m/legado/book',
+        '/api/m/legado/toc',
+      ],
     });
   }
 
@@ -1035,6 +1120,121 @@ async function route(req, res, url) {
     } catch (e) {
       return json(res, 502, { error: String(e.message || e) });
     }
+  }
+
+  /* ---------- 「阅读」APK 接入（Legado 书源桥） ---------- */
+
+  // 书源 JSON：GET /api/m/booksource?token=xxx
+  if (p === '/api/m/booksource' && method === 'GET') {
+    const base = externalBase(req, MOUNT_PREFIX);
+    return json(res, 200, buildLegadoBookSource(base, apiToken()));
+  }
+
+  // 书源搜索：返回 Legado 规则可直接 JSONPath 解析的结构
+  if (p === '/api/m/legado/search' && method === 'GET') {
+    const key = String(searchParams.get('key') || '').trim();
+    if (!key) return json(res, 400, { error: '缺少 key' });
+    const base = externalBase(req, MOUNT_PREFIX);
+    const token = apiToken();
+    try {
+      const books = await mobileSearch(key, searchParams.get('group') || '', searchParams.get('limit') || 8);
+      const list = books.map((b) => {
+        const src = store.findSource(b.origin);
+        return {
+          name: b.name,
+          author: b.author || '',
+          kind: b.kind || '',
+          intro: b.intro || '',
+          lastChapter: b.lastChapter || '',
+          coverUrl: b.coverUrl
+            ? `${base}/api/m/cover?token=${token}&url=${encodeURIComponent(b.bookUrl)}`
+            : '',
+          bookUrl: `${base}/api/m/legado/book?token=${token}&u=${b64u(b.bookUrl)}&s=${b64u(
+            src ? src.bookSourceUrl : ''
+          )}&n=${encodeURIComponent(b.name || '')}`,
+        };
+      });
+      return json(res, 200, { key, books: list });
+    } catch (e) {
+      return json(res, 502, { error: String(e.message || e) });
+    }
+  }
+
+  // 书籍详情：首次打开时自动加入书架，修掉「搜到书却打不开」的断链
+  if (p === '/api/m/legado/book' && method === 'GET') {
+    const base = externalBase(req, MOUNT_PREFIX);
+    const token = apiToken();
+    const bookUrl = unb64u(searchParams.get('u'));
+    const srcUrl = unb64u(searchParams.get('s'));
+    if (!bookUrl) return json(res, 400, { error: '缺少 u 参数' });
+    let book = store.findBook(bookUrl);
+    if (!book) {
+      const source = store.findSource(srcUrl);
+      if (!source) return json(res, 404, { error: '书源不存在，请回到阅读重新搜索' });
+      book = {
+        name: String(searchParams.get('n') || ''),
+        author: '',
+        bookUrl,
+        origin: sourceId(source),
+        originName: source.bookSourceName,
+        coverUrl: '',
+        intro: '',
+        kind: '',
+        lastChapter: '',
+        tocUrl: '',
+        chapters: [],
+        durChapterIndex: 0,
+        durChapterPos: 0,
+        durChapterTitle: '',
+        durChapterTime: 0,
+        totalChapterNum: 0,
+        group: 0,
+        order: Date.now(),
+        addedBy: 'apk',
+      };
+      try {
+        await getBookInfo(source, book);
+      } catch {
+        /* 详情抓不到也先入架，目录页还能重试 */
+      }
+      store.upsertBook(book);
+    }
+    return json(res, 200, {
+      book: {
+        name: book.name,
+        author: book.author || '',
+        kind: book.kind || '',
+        intro: book.intro || '',
+        lastChapter: book.lastChapter || '',
+        coverUrl: book.coverUrl
+          ? `${base}/api/m/cover?token=${token}&url=${encodeURIComponent(book.bookUrl)}`
+          : '',
+        tocUrl: `${base}/api/m/legado/toc?token=${token}&u=${b64u(book.bookUrl)}`,
+      },
+    });
+  }
+
+  // 目录：章节地址直接指向 /api/m/content，正文返回 {"paragraphs":[...]}
+  if (p === '/api/m/legado/toc' && method === 'GET') {
+    const base = externalBase(req, MOUNT_PREFIX);
+    const token = apiToken();
+    const book = store.findBook(unb64u(searchParams.get('u')));
+    if (!book) return json(res, 404, { error: '书籍不在书架中，请从阅读里重新搜索打开' });
+    if (!book.chapters || !book.chapters.length) {
+      try {
+        await handleRefreshToc(book);
+      } catch (e) {
+        return json(res, 502, { error: String(e.message || e) });
+      }
+    }
+    return json(res, 200, {
+      name: book.name,
+      author: book.author || '',
+      chapters: book.chapters.map((c, i) => ({
+        title: c.title,
+        url: `${base}/api/m/content?token=${token}&url=${encodeURIComponent(book.bookUrl)}&index=${i}`,
+      })),
+    });
   }
 
   if (p === '/api/sources' && method === 'GET') {
