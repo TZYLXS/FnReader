@@ -204,10 +204,16 @@ node test/e2e.js
 
 每次改动都走同一条流程——递增版本号、写更新日志、同步静态资源指纹、打包：
 
+每次改动都要推源码 + 发版，一条命令搞定：
+
 ```bash
-python tools/release.py "修复了 xxx；新增了 yyy" --build
-python tools/release.py "说明" --dry-run   # 只看计划，不落盘
+bash tools/publish.sh "修复了 xxx；新增了 yyy"
 ```
+
+它会：升版本 → 写更新日志 → 打包 fpk → 提交并推送 main → 打 `v<版本>` tag。
+推 tag 后 GitHub Actions 自动构建并发布 Release（附 `legado-web.fpk`）。
+
+只看计划不落盘：`python tools/release.py "说明" --dry-run`。
 
 ## 项目结构
 

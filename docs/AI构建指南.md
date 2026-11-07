@@ -118,9 +118,14 @@ updates/       下载的更新包
 # 依赖
 cd legado-web/app/server && npm install && cd -
 
-bash tools/build-fpk.sh                  # 产物 dist/legado-web.fpk
-python tools/release.py "改了什么；另一条" --build   # 版本+1、写日志、改资源版本号、打包
 node test/e2e.js                         # 端到端测试（35 条断言，内置模拟站）
+bash tools/build-fpk.sh                  # 只打包，产物 dist/legado-web.fpk
+```
+
+**每次改动都要走这一条**（升版本 → 写日志 → 打包 → 推源码 → 打 tag → CI 自动发 Release）：
+
+```bash
+bash tools/publish.sh "修复了 xxx；新增了 yyy"
 ```
 
 `build-fpk.sh` 做的事：esbuild 打包 → 组装 `build/legado-web/` → 校验关键文件 → `fnpack build` → 拷到 `dist/`。
@@ -278,3 +283,22 @@ FnReader 前端是原生 JS，没有构建步骤。
 这是 FnReader 的源码（飞牛 fnOS 上的 Legado 阅读器）。先读 docs/AI构建指南.md，
 然后帮我：<你的需求>。改完跑 node test/e2e.js，全绿再来找我。
 ```
+
+---
+
+## 10. 发版纪律（约定）
+
+**每次改动都要：推送源码到 GitHub + 打 tag 发版**，不做「只改本地不推」的改动。
+
+```bash
+bash tools/publish.sh "一句话说明；第二条"
+```
+
+这条命令会：
+
+1. `python tools/release.py` 递增版本号、写 `docs/更新日志.txt/.md`、同步 `app.js` 与 `index.html` 的版本显示
+2. `tools/build-fpk.sh` 打包出 `dist/legado-web.fpk`
+3. `git commit` 并推送 `main`
+4. 打 `v<版本>` tag 并推送 → GitHub Actions 构建 + 发布 Release（带 fpk 产物）
+
+装到飞牛：应用中心 → 手动安装，升级先卸载（`appcenter-cli install-fpk` 覆盖安装不生效），数据目录 `/vol2/@appdata/legado-web` 会保留。

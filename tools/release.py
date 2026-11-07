@@ -13,11 +13,11 @@ import sys
 from datetime import date
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MANIFEST = os.path.join(BASE, "legado-web", "manifest")
-APPJS = os.path.join(BASE, "legado-web", "app", "web", "app.js")
-INDEX = os.path.join(BASE, "legado-web", "app", "web", "index.html")
-TXT = os.path.join(BASE, "docs", "更新日志.txt")
-MD = os.path.join(BASE, "docs", "更新日志.md")
+MANIFEST = os.path.join(BASE, "fnos-legado", "manifest")
+APPJS = os.path.join(BASE, "fnos-legado", "app", "web", "app.js")
+INDEX = os.path.join(BASE, "fnos-legado", "app", "web", "index.html")
+TXT = os.path.join(BASE, "dist", "更新日志.txt")
+MD = os.path.join(BASE, "dist", "更新日志.md")
 
 NL = "\n"
 
