@@ -1160,6 +1160,28 @@ async function route(req, res, url) {
     return json(res, 200, { books: books.map(sanitizeBook) });
   }
 
+  // 书籍详情（搜索结果点进去）
+  if (p === '/api/detail' && method === 'GET') {
+    const url = String(searchParams.get('url') || '');
+    const origin = String(searchParams.get('origin') || '');
+    if (!/^https?:/i.test(url)) return json(res, 400, { error: '缺少书籍地址' });
+    const inShelf = store.findBook(url);
+    const book = inShelf
+      ? { ...inShelf, chapters: undefined, totalChapterNum: (inShelf.chapters || []).length || inShelf.totalChapterNum }
+      : { bookUrl: url, name: '', author: '', coverUrl: '', intro: '', kind: '', origin, originName: '' };
+    if (!inShelf && origin) {
+      const source = store.sources.find((x) => x.bookSourceUrl === origin);
+      if (source) {
+        try {
+          await getBookInfo(source, book);
+        } catch {
+          /* 详情抓不到就把搜索里的信息返回 */
+        }
+      }
+    }
+    return json(res, 200, { book, inShelf: !!inShelf });
+  }
+
   if (p === '/api/books' && method === 'POST') {
     const body = await readJson(req);
     if (!body || !body.bookUrl) return json(res, 400, { error: '缺少书籍信息' });

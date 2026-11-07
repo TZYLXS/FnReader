@@ -97,6 +97,7 @@ async function router() {
   if (path === '/search') return renderSearch();
   if (path === '/sources') return renderSources();
   if (path === '/settings') return renderSettings();
+  if (path === '/detail') return renderDetail();
   if (path === '/feeds') return renderFeeds();
   if (path === '/downloads') return renderDownloads();
   if (path.startsWith('/read')) return openReader(params.get('url'));
@@ -464,6 +465,71 @@ async function renderSearch() {
   }
 }
 
+async function renderDetail() {
+  const { params } = parseHash();
+  const url = params.get('url') || '';
+  const origin = params.get('origin') || '';
+  if (!url) {
+    view.innerHTML = '<div class="empty">缺少书籍地址</div>';
+    return;
+  }
+
+  const cached = state.detail && state.detail.bookUrl === url ? state.detail : null;
+  view.innerHTML = `
+    <header class="topbar"><button class="icon-btn" id="detail-back">‹</button><h1>书籍详情</h1></header>
+    <div id="detail-body">${cached ? '' : '<div class="empty"><span class="spinner"></span> 加载中…</div>'}</div>`;
+
+  $('#detail-back').onclick = () => history.length > 1 ? history.back() : (location.hash = '#/search');
+
+  let data = cached ? { book: cached, inShelf: state.books.some((b) => b.bookUrl === url) } : null;
+  if (!data) {
+    try {
+      data = await api(`/detail?url=${encodeURIComponent(url)}&origin=${encodeURIComponent(origin)}`);
+    } catch (e) {
+      $('#detail-body').innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+      return;
+    }
+  }
+
+  const b = data.book;
+  const inShelf = data.inShelf;
+  const cover = b.coverUrl ? `<img src="${esc(coverSrc(b.coverUrl, b.bookUrl))}" onerror="this.remove()" />` : `<span class="ph">${esc((b.name || '?').slice(0, 1))}</span>`;
+
+  $('#detail-body').innerHTML = `
+    <div class="detail-head">
+      <div class="detail-cover">${cover}</div>
+      <div class="detail-meta">
+        <h2>${esc(b.name || '未知书名')}</h2>
+        <div class="line">${esc(b.author || '未知作者')}</div>
+        ${b.kind ? `<div class="line">${esc(b.kind)}</div>` : ''}
+        ${b.lastChapter ? `<div class="line">最新：${esc(b.lastChapter)}</div>` : ''}
+        <div class="line">来源：${esc(b.originName || b.origin || '未知')}</div>
+      </div>
+    </div>
+    <div class="detail-actions">
+      <button class="btn ${inShelf ? 'primary' : 'primary'}" id="detail-add">${inShelf ? '开始阅读' : '加入书架'}</button>
+      <button class="btn" id="detail-download" ${inShelf ? '' : 'disabled'}>下载 TXT</button>
+    </div>
+    <div class="section" style="margin:12px 14px">
+      <h3>简介</h3>
+      <div class="detail-intro">${esc(b.intro || '暂无简介')}</div>
+    </div>`;
+
+  $('#detail-add').onclick = async () => {
+    if (inShelf) {
+      location.hash = '#/read?url=' + encodeURIComponent(url);
+      return;
+    }
+    const btn = $('#detail-add');
+    await addBook(b, btn);
+    btn.textContent = '开始阅读';
+    btn.onclick = () => (location.hash = '#/read?url=' + encodeURIComponent(url));
+    $('#detail-download').disabled = false;
+  };
+
+  $('#detail-download').onclick = () => startDownloadFlow(url, b.name);
+}
+
 function renderSearchResults() {
   const box = $('#results');
   if (!box) return;
@@ -491,10 +557,19 @@ function renderSearchResults() {
 
   box.onclick = async (e) => {
     const btn = e.target.closest('.add');
-    if (!btn) return;
-    e.stopPropagation();
-    const book = state.search.results[Number(btn.dataset.i)];
-    await addBook(book, btn);
+    if (btn) {
+      e.stopPropagation();
+      const book = state.search.results[Number(btn.dataset.i)];
+      await addBook(book, btn);
+      return;
+    }
+    const row = e.target.closest('.result');
+    if (!row) return;
+    const item = state.search.results[Number(row.dataset.i)];
+    if (!item) return;
+    state.detail = item;
+    location.hash =
+      '#/detail?url=' + encodeURIComponent(item.bookUrl) + '&origin=' + encodeURIComponent(item.origin || '');
   };
 }
 
@@ -1501,7 +1576,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.5 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.6 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');

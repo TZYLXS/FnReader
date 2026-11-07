@@ -446,3 +446,19 @@ details.section[open] > summary { border-bottom: 1px solid var(--line); }
   font-variant-numeric: tabular-nums;
 }
 #chapter-list .item.on { color: var(--accent); font-weight: 600; }
+
+/* ---------- 书籍详情页 ---------- */
+.detail-head { display: flex; gap: 14px; padding: 16px 14px 8px; }
+.detail-cover {
+  width: 96px; height: 132px; flex: none; border-radius: 10px; overflow: hidden;
+  background: var(--panel-2, rgba(128,128,128,0.12));
+  display: grid; place-items: center; position: relative;
+}
+.detail-cover img { width: 100%; height: 100%; object-fit: cover; }
+.detail-cover .ph { font-size: 32px; color: var(--text-2); }
+.detail-meta { min-width: 0; flex: 1; }
+.detail-meta h2 { margin: 0 0 6px; font-size: 18px; line-height: 1.35; }
+.detail-meta .line { font-size: 12.5px; color: var(--text-2); margin-top: 4px; word-break: break-all; }
+.detail-actions { display: flex; gap: 10px; padding: 6px 14px 12px; }
+.detail-actions .btn { flex: 1; }
+.detail-intro { padding: 0 2px 12px; font-size: 13.5px; line-height: 1.8; color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
