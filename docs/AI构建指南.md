@@ -173,3 +173,108 @@ PORT=1122 LEGADO_DATA=./data node src/server.js
 - 不把设备密码、GitHub token 写进仓库或提交历史
 - 提交前跑 `node test/e2e.js`，保持全绿
 - 发版必须走 `tools/release.py`（版本号、更新日志、资源指纹三者要同步）
+
+---
+
+## 9. 可直接复制的提示词
+
+把仓库（或 zip）丢给任意 AI，再粘下面第一段，它就能自己上手。
+
+### 9.1 开局：让 AI 建立上下文
+
+```text
+你是 FnReader（飞牛 fnOS 上的 Legado 书源阅读器）的开发者。请先按顺序读这些文件建立上下文：
+1. docs/AI构建指南.md      项目结构、数据流、坑
+2. legado-web/manifest      版本与依赖
+3. legado-web/app/server/src/server.js   路由总入口（很长，先看路由分发部分）
+4. legado-web/app/server/src/books.js    搜索/目录/正文主流程
+5. legado-web/app/web/app.js             前端单页应用（按路由函数划分）
+6. test/e2e.js                            验收标准
+
+读完向我复述：服务端有哪些模块、前端有几个页面、数据存在哪里、怎样才能发一版。
+不要先写代码。
+```
+
+### 9.2 修 bug
+
+```text
+项目：FnReader（Node.js 服务端 + 原生 JS 前端，飞牛 FPK 应用）。
+
+现象：<把报错、截图、复现步骤贴这里>
+
+请：
+1. 先在代码里定位根因（给出文件:行号），说明为什么会这样，不要猜；
+2. 给出最小修复；
+3. 说明这个改动会不会影响已有接口的返回结构；
+4. 按「验收」小节自测。
+```
+
+### 9.3 加一个功能
+
+```text
+在 FnReader 里新增功能：<一句话描述>。
+
+约定（必须遵守）：
+- 服务端接口放 server.js 的 route() 里，路径以 /api/ 开头，出错统一 json(res, 4xx/5xx, {error})
+- 需要鉴权的移动端接口放 /api/m/*，走 checkApiToken
+- 前端：新页面 = 在 app.js 里加一个 renderXxx() + 在 router 里注册 path；样式追加到 style.css 末尾
+- 不要引入前端框架，不要引入新的 npm 依赖（除非我同意）
+- 改完在 test/e2e.js 补一条断言
+
+先给我：改动清单（文件 + 函数 + 大致行数），我确认后再写代码。
+```
+
+### 9.4 适配新的书源规则
+
+```text
+FnReader 的书源规则解析在 legado-web/app/server/src/rules.js，XPath 在 xpath.js。
+
+有个 Legado 书源用了我们还不支持的写法：<贴规则片段>
+
+请：
+1. 对照 Legado 的规则语法文档，说明这条规则的语义；
+2. 判断 rules.js 里哪个函数负责解析（parseSegment / evalString / evalRule）；
+3. 补上支持，并在 test/e2e.js 加一条覆盖该语法的断言。
+```
+
+### 9.5 调界面
+
+```text
+FnReader 前端是原生 JS，没有构建步骤。
+要改的是：<页面/组件>，期望效果：<描述或参考图>。
+
+约束：
+- 只用 CSS 变量（--bg / --panel / --line / --text / --text-2 / --accent），不要写死颜色
+- 移动端优先，宽度 360–500px 不能溢出
+- 现有 class 命名用短横线，新增样式追加到 style.css 末尾，别改旧规则
+- 改完告诉我怎么在本地预览（node test/preview.js）
+```
+
+### 9.6 发版
+
+```text
+请给 FnReader 发一版：
+1. python tools/release.py "一句话说明；第二条" --build
+2. 把 dist/legado-web.fpk 传到 GitHub Release（tag 由 release.py 写入 manifest 的版本决定）
+3. 提醒我：fnOS 覆盖安装无效，必须 uninstall → install-fpk
+
+发版前先跑 node test/e2e.js，必须 35 条全绿。
+```
+
+### 9.7 让 AI 自检（每个任务结尾都加这段）
+
+```text
+完成前请自查：
+1. node test/e2e.js 是否全绿？失败项是哪条？
+2. 有没有改动 /api/books、/api/toc、/api/content 的返回字段？（前端依赖这些字段，改了要同步改前端）
+3. 新增的接口有没有做参数校验和错误处理？
+4. 有没有把密码、token、个人路径写进代码或文档？
+5. 改动是否需要跟着改 docs/更新日志.txt？
+```
+
+### 9.8 一句话版（懒人用）
+
+```text
+这是 FnReader 的源码（飞牛 fnOS 上的 Legado 阅读器）。先读 docs/AI构建指南.md，
+然后帮我：<你的需求>。改完跑 node test/e2e.js，全绿再来找我。
+```
