@@ -6,6 +6,7 @@ const zlib = require('node:zlib');
 const crypto = require('node:crypto');
 const store = require('./store');
 const diskCache = require('./cache');
+const { execFileSync } = require('node:child_process');
 const { normalizeSource } = require('./books');
 const { searchSource, getBookInfo, getToc, getContent } = require('./books');
 const { request, requestBinary, absoluteUrl } = require('./util');
@@ -810,28 +811,51 @@ async function route(req, res, url) {
     const body = await readJson(req);
     const file = body && body.file;
     if (!file || !fs.existsSync(file)) return json(res, 404, { error: '更新包不存在，请先下载' });
-    // fnOS 的应用安装需要 root 权限；应用自身通常没有，失败时引导用户手动安装
-    const attempts = [
-      ['appcenter-cli', 'install-fpk', file],
-      ['sudo', '-n', 'appcenter-cli', 'install-fpk', file],
-    ];
-    for (const args of attempts) {
-      try {
-        const out = require('node:child_process').execFileSync(args[0], args.slice(1), {
-          timeout: 120000,
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        return json(res, 200, { ok: true, output: String(out).slice(0, 2000) });
-      } catch (e) {
-        // 继续尝试下一种方式
-      }
+
+    // 是否授予了免密执行 appcenter-cli 的权限（tools/enable-update-permission.sh）
+    const CLI = '/usr/local/bin/appcenter-cli';
+    let canPrivileged = false;
+    try {
+      execFileSync('sudo', ['-n', CLI, 'list'], { timeout: 15000, stdio: 'ignore' });
+      canPrivileged = true;
+    } catch {
+      canPrivileged = false;
+    }
+
+    if (!canPrivileged) {
+      return json(res, 200, {
+        ok: false,
+        needManual: true,
+        file,
+        message: '应用没有安装系统应用的权限，请在「应用中心 → 手动安装」选择这个 fpk（或在 NAS 上执行 tools/enable-update-permission.sh 授权后重试）',
+      });
+    }
+
+    // 有权限：写一个脚本，后台「停止 → 安装 → 启动」，避免应用自己被中断
+    const script = '/tmp/legado-update.sh';
+    fs.writeFileSync(
+      script,
+      [
+        '#!/bin/sh',
+        'sleep 2',
+        `sudo -n ${CLI} stop ${APPNAME} >> /tmp/legado-update.log 2>&1`,
+        'sleep 3',
+        `sudo -n ${CLI} install-fpk "${file}" >> /tmp/legado-update.log 2>&1`,
+        'sleep 2',
+        `sudo -n ${CLI} start ${APPNAME} >> /tmp/legado-update.log 2>&1`,
+        '',
+      ].join(String.fromCharCode(10)),
+      { mode: 0o755 }
+    );
+    try {
+      require('node:child_process').spawn('sh', [script], { detached: true, stdio: 'ignore' }).unref();
+    } catch (e) {
+      return json(res, 500, { error: '启动安装脚本失败：' + (e.message || e) });
     }
     return json(res, 200, {
-      ok: false,
-      needManual: true,
-      file,
-      message: '应用没有安装系统应用的权限，请在「应用中心 → 手动安装」选择这个 fpk',
+      ok: true,
+      restarting: true,
+      message: '已开始安装，应用会重启，大约 30 秒后刷新页面',
     });
   }
 

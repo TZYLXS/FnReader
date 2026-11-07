@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.6.14
+version=1.6.15
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=修复搜索结果里混入「2026年第X期」这类期刊期号的问题，搜索缓存版本同步升级。
+changelog=应用内更新支持免密安装：授予权限后自动执行停止→安装→启动；新增 tools/enable-update-permission.sh。
