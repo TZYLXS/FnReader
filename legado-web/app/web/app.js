@@ -59,6 +59,9 @@ function applyConfig(cfg) {
   root.setProperty('--font-size', state.config.fontSize + 'px');
   root.setProperty('--line-height', state.config.lineHeight);
   root.setProperty('--page-width', state.config.pageWidth + 'px');
+  // 液态玻璃底栏
+  if (state.config.liquidGlass) document.documentElement.setAttribute('data-glass', '1');
+  else document.documentElement.removeAttribute('data-glass');
 }
 
 async function saveConfig(patch) {
@@ -1633,6 +1636,11 @@ async function renderSettings() {
         </div>
       </div>
       <div class="section">
+        <h3>界面</h3>
+        <div class="row"><div class="label">液态玻璃底栏<div class="desc">底栏改为半透明玻璃质感，随主题自动适配</div></div>
+          <div class="switch ${cfg.liquidGlass ? 'on' : ''}" id="sw-glass"></div></div>
+      </div>
+      <div class="section">
         <h3>手机接入</h3>
         <div class="row"><div class="label">接口地址<div class="desc" id="api-base" style="word-break:break-all">-</div></div>
           <button class="btn" id="copy-base" style="padding:5px 10px;font-size:12px">复制</button></div>
@@ -1686,7 +1694,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.23 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.24 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -1824,6 +1832,16 @@ async function renderSettings() {
         }
       };
     renderRules();
+
+    // 液态玻璃底栏
+    const swGlass = $('#sw-glass');
+    if (swGlass)
+      swGlass.onclick = () => {
+        const on = !swGlass.classList.contains('on');
+        swGlass.classList.toggle('on', on);
+        saveConfig({ liquidGlass: on });
+        toast(on ? '已开启液态玻璃底栏' : '已关闭');
+      };
 
     // 版本更新
     const upBox = $('#update-info');

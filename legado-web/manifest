@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.7.23
+version=1.7.24
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=底栏栅格用 minmax(0,1fr) 防止内容撑宽，窄屏四个标签不会被挤出屏幕。
+changelog=新增液态玻璃底栏开关（设置→界面）；开启后底栏、顶栏与阅读页头部统一为玻璃材质，并带流动高光。
