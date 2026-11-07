@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.7.20
+version=1.7.21
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=搜索页改用下拉菜单选择范围（全部/仅可用/分组），去掉横向滚动的那排按钮，PC 上也正常。
+changelog=布局自适应：内容整体居中限宽，大屏书架多列；搜索范围下拉缩短并居中；底部菜单保持原样。
