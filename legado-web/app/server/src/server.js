@@ -1126,9 +1126,10 @@ async function route(req, res, url) {
   /* ---------- 「阅读」APK 接入（Legado 书源桥） ---------- */
 
   // 书源 JSON：GET /api/m/booksource?token=xxx
+  // 必须返回数组：Legado 的「网络导入」用 GSON.fromJsonArray 解析，单个对象会被判成「格式不对」
   if (p === '/api/m/booksource' && method === 'GET') {
     const base = externalBase(req, MOUNT_PREFIX);
-    return json(res, 200, buildLegadoBookSource(base, apiToken()));
+    return json(res, 200, [buildLegadoBookSource(base, apiToken())]);
   }
 
   // 书源搜索：返回 Legado 规则可直接 JSONPath 解析的结构
