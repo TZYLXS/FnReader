@@ -373,9 +373,9 @@ async function renderSearch() {
     </div>
     <div class="searchbar">
       <input id="kw" type="search" placeholder="书名 / 作者" enterkeyhint="search" />
+      <select id="scope" class="scope-select" aria-label="搜索范围"></select>
       <button class="btn primary" id="go">搜索</button>
     </div>
-    <div class="chips" id="chips"></div>
     <div class="progress-line" id="academic-hint" style="display:none"></div>
     <div class="progress-line" id="search-status"></div>
     <div class="results" id="results"></div>`;
@@ -391,60 +391,40 @@ async function renderSearch() {
   $('#src-count').textContent = sources.length
     ? `${sources.filter((s) => s.enabled).length} 个启用${okCount ? ` · ${okCount} 个可用` : ''}`
     : '';
-  const chips = $('#chips');
-  const onlyChip = okCount ? `<button class="chip on" data-only="1">仅可用 (${okCount})</button>` : '';
-  // 按分组展示，不再把几百个书源全铺在搜索栏下面
+  // 搜索范围下拉：全部书源 / 仅可用 / 按分组（PC 上也不会有横向滚动问题）
+  const scope = $('#scope');
   const groupCount = new Map();
-  for (const s of sources) {
-    const g = s.bookSourceGroup || '未分组';
+  for (const src of sources) {
+    const g = src.bookSourceGroup || '未分组';
     groupCount.set(g, (groupCount.get(g) || 0) + 1);
   }
-  const groupChips = [...groupCount.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([g, n]) => `<button class="chip" data-group="${esc(g)}">${esc(g)} (${n})</button>`)
-    .join('');
-  chips.innerHTML = onlyChip + `<button class="chip ${okCount ? '' : 'on'}" data-all="1">全部书源</button>` + groupChips;
+  const groups = [...groupCount.entries()].sort((a, b) => b[1] - a[1]);
+
+  scope.innerHTML =
+    `<option value="all">全部书源（${sources.filter((x) => x.enabled).length}）</option>` +
+    (okCount ? `<option value="only">仅可用（${okCount}）</option>` : '') +
+    `<optgroup label="按分组">` +
+    groups.map(([g, n]) => `<option value="g:${esc(g)}">${esc(g)}（${n}）</option>`).join('') +
+    `</optgroup>`;
+
   state.search.onlyChecked = !!okCount;
   state.search.group = '';
+  scope.value = okCount ? 'only' : 'all';
 
-  chips.addEventListener('click', (e) => {
-    const chip = e.target.closest('.chip');
-    if (!chip) return;
-    if (chip.dataset.only) {
+  scope.onchange = () => {
+    const v = scope.value;
+    state.search.selected.clear();
+    if (v === 'only') {
       state.search.onlyChecked = true;
       state.search.group = '';
-      state.search.selected.clear();
-      $$('.chip', chips).forEach((c) => c.classList.remove('on'));
-      chip.classList.add('on');
-      return;
-    }
-    if (chip.dataset.all) {
+    } else if (v === 'all') {
       state.search.onlyChecked = false;
       state.search.group = '';
-      state.search.selected.clear();
-      $$('.chip', chips).forEach((c) => c.classList.toggle('on', !!c.dataset.all));
-      return;
-    }
-    if (chip.dataset.group !== undefined) {
+    } else if (v.startsWith('g:')) {
       state.search.onlyChecked = false;
-      state.search.selected.clear();
-      const on = !chip.classList.contains('on');
-      $$('.chip', chips).forEach((c) => c.classList.remove('on'));
-      if (on) {
-        chip.classList.add('on');
-        state.search.group = chip.dataset.group;
-      } else {
-        state.search.group = '';
-      }
-      return;
+      state.search.group = v.slice(2);
     }
-    state.search.onlyChecked = false;
-    $('.chip[data-only]', chips)?.classList.remove('on');
-    $('.chip[data-all]', chips)?.classList.remove('on');
-    chip.classList.toggle('on');
-    if (chip.classList.contains('on')) state.search.selected.add(chip.dataset.id);
-    else state.search.selected.delete(chip.dataset.id);
-  });
+  };
 
   const input = $('#kw');
   input.value = state.search.key || '';
@@ -1706,7 +1686,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.19 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.20 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');

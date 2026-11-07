@@ -475,3 +475,19 @@ details.section[open] > summary { border-bottom: 1px solid var(--line); }
 .switch-meta { flex: 1; min-width: 0; font-size: 13px; }
 .switch-meta b { display: block; font-size: 13.5px; margin-bottom: 2px; word-break: break-all; }
 .switch-meta .desc { font-size: 11.5px; color: var(--text-2); word-break: break-all; }
+
+/* 搜索范围下拉 */
+.scope-select {
+  flex: none;
+  max-width: 42%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+@media (max-width: 380px) {
+  .scope-select { max-width: 38%; font-size: 12px; padding: 8px 6px; }
+}
