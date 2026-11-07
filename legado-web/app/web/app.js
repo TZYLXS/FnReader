@@ -623,7 +623,7 @@ async function openReader(bookUrl) {
   if (!bookUrl) return (location.hash = '#/shelf');
   view.innerHTML = `<div class="reader"><div class="empty"><span class="spinner"></span> 正在打开…</div></div>`;
   try {
-    if (!state.books.length) await loadBooks();
+    if (!Array.isArray(state.books) || !state.books.length) await loadBooks();
     let book = state.books.find((b) => b.bookUrl === bookUrl);
     if (!book) {
       await loadBooks();
@@ -1174,15 +1174,21 @@ async function renderFeeds() {
       body.innerHTML = `<div class="empty"><div class="big">📡</div>还没有订阅<br />添加 RSS / Atom 地址即可，例如博客、新闻、连载更新</div>`;
       return;
     }
+    if (!Array.isArray(state.books) || !state.books.length) await loadBooks();
+    const feedBook = (url) => state.books.find((b) => b.bookUrl === 'feed://' + url);
+
     body.innerHTML = feeds
       .map(
-        (f) => `
+        (f) => {
+        const book = feedBook(f.url);
+        return `
       <div class="section" style="margin:12px 14px">
         <div class="row" style="align-items:flex-start">
           <div class="label">
             <b>${esc(f.title)}</b>
-            <div class="desc">${esc(f.url)} · ${f.items.length} 条 · ${formatDate(f.fetchedAt)}</div>
+            <div class="desc">${esc(f.url)} · ${f.items.length} 条${book ? ' · 书架中 ' + book.chapters.length + ' 章' : ''} · ${formatDate(f.fetchedAt)}</div>
           </div>
+          <button class="btn ${book ? '' : 'primary'}" data-add="${esc(f.id)}" style="padding:5px 10px;font-size:12px">${book ? '已在书架' : '加入书架'}</button>
           <button class="btn" data-refresh="${esc(f.id)}" style="padding:5px 10px;font-size:12px">刷新</button>
           <button class="btn" data-del="${esc(f.id)}" style="padding:5px 10px;font-size:12px;color:var(--danger)">删除</button>
         </div>
@@ -1196,13 +1202,33 @@ async function renderFeeds() {
                </a>`
           )
           .join('')}
-      </div>`
+      </div>`;
+        }
       )
       .join('');
 
     body.onclick = async (e) => {
       const ref = e.target.dataset.refresh;
       const del = e.target.dataset.del;
+      const add = e.target.dataset.add;
+      if (add) {
+        e.preventDefault();
+        const f = feeds.find((x) => x.id === add);
+        const existing = f ? feedBook(f.url) : null;
+        if (existing) {
+          location.hash = '#/read?url=' + encodeURIComponent(existing.bookUrl);
+          return;
+        }
+        try {
+          const r = await api('/feeds/to-book', { method: 'POST', body: { id: add } });
+          toast(r.added ? `已加入书架，合并 ${r.added} 条` : '已在书架');
+          await loadBooks();
+          renderFeeds();
+        } catch (err) {
+          toast('加入失败：' + err.message);
+        }
+        return;
+      }
       if (ref) {
         e.preventDefault();
         toast('刷新中…');
@@ -1466,7 +1492,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.1 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.2 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');

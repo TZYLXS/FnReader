@@ -11,6 +11,15 @@ const { normalizeSource } = require('./books');
 const { searchSource, getBookInfo, getToc, getContent } = require('./books');
 const { request, requestBinary, absoluteUrl } = require('./util');
 const { fetchFeed } = require('./feeds');
+const { getArticle } = require('./article');
+
+// 订阅条目正文的内存缓存（按条目链接）
+const chapterCache = new Map();
+function rememberChapter(key, value) {
+  chapterCache.set(key, value);
+  if (chapterCache.size > 300) chapterCache.delete(chapterCache.keys().next().value);
+}
+
 const { detectAcademic } = require('./academic');
 const { handleDav } = require('./dav');
 const searchCache = require('./searchcache');
@@ -1182,6 +1191,20 @@ async function route(req, res, url) {
     const index = Number(searchParams.get('index') || 0);
     const book = store.findBook(bookUrl);
     if (!book) return json(res, 404, { error: '书籍不存在' });
+
+    // 订阅书：抓取条目原文并转成段落
+    if (String(bookUrl).startsWith('feed://')) {
+      const chapter = (book.chapters || [])[index];
+      if (!chapter) return json(res, 404, { error: '章节不存在' });
+      try {
+        const cached = chapterCache.get(chapter.url);
+        const paragraphs = cached || (await getArticle(chapter.url));
+        if (!cached) rememberChapter(chapter.url, paragraphs);
+        return json(res, 200, { title: chapter.title, paragraphs, cached: !!cached });
+      } catch (e) {
+        return json(res, 502, { error: '抓取原文失败：' + (e.message || e) });
+      }
+    }
     if (!book.chapters || !book.chapters.length) await handleRefreshToc(book);
     if (!book.chapters[index]) return json(res, 404, { error: '章节不存在' });
     let result;
@@ -1294,6 +1317,22 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+/** 把订阅的新条目合并进已加入书架的那本书，返回新增条数 */
+function mergeFeedIntoBook(feed) {
+  const bookUrl = 'feed://' + feed.url;
+  const book = store.books.find((b) => b.bookUrl === bookUrl);
+  if (!book) return 0;
+  const chapters = (feed.items || []).map((it) => ({ title: it.title || '(无标题)', url: it.link || '' }));
+  const seen = new Set((book.chapters || []).map((c) => c.url || c.title));
+  const fresh = chapters.filter((c) => !seen.has(c.url || c.title));
+  if (!fresh.length) return 0;
+  book.chapters = fresh.concat(book.chapters || []);
+  book.totalChapterNum = book.chapters.length;
+  book.name = feed.title || book.name;
+  store.upsertBook(book);
+  return fresh.length;
+}
+
   if (p === '/api/feeds' && method === 'GET') {
     return json(res, 200, { feeds: readJSON(FEEDS_FILE, []) });
   }
@@ -1311,7 +1350,9 @@ async function route(req, res, url) {
         item.items = feed.items;
         item.fetchedAt = feed.fetchedAt;
         writeJSON(FEEDS_FILE, list);
-        return json(res, 200, { ok: true, feed: item });
+        // 已加入书架的订阅，刷新后把新条目合并进同一本书
+        const merged = mergeFeedIntoBook(item);
+        return json(res, 200, { ok: true, feed: item, merged });
       } catch (e) {
         return json(res, 502, { error: String(e.message || e) });
       }
@@ -1337,6 +1378,51 @@ async function route(req, res, url) {
     } catch (e) {
       return json(res, 502, { error: String(e.message || e) });
     }
+  }
+
+  // 订阅加入书架：同一个订阅永远对应同一本书，新条目自动合并
+  if (p === '/api/feeds/to-book' && method === 'POST') {
+    const body = await readJson(req);
+    const list = readJSON(FEEDS_FILE, []);
+    const feed = list.find((x) => x.id === body.id || x.url === body.url);
+    if (!feed) return json(res, 404, { error: '订阅不存在' });
+
+    const bookUrl = 'feed://' + feed.url;
+    const chapters = (feed.items || []).map((it) => ({ title: it.title || '(无标题)', url: it.link || '' }));
+    let book = store.books.find((b) => b.bookUrl === bookUrl);
+    let added = 0;
+
+    if (!book) {
+      book = {
+        bookUrl,
+        name: feed.title || feed.url,
+        author: '订阅',
+        coverUrl: '',
+        intro: '来自订阅：' + feed.url,
+        kind: '订阅',
+        origin: 'feed',
+        originName: feed.title || '订阅',
+        tocUrl: feed.url,
+        chapters,
+        durChapterIndex: 0,
+        durChapterPos: 0,
+        durChapterTitle: chapters[0] ? chapters[0].title : '',
+        durChapterTime: Date.now(),
+        totalChapterNum: chapters.length,
+      };
+      added = chapters.length;
+    } else {
+      const seen = new Set((book.chapters || []).map((c) => c.url || c.title));
+      const fresh = chapters.filter((c) => !seen.has(c.url || c.title));
+      // 新条目排在前面（订阅一般按时间倒序）
+      book.chapters = fresh.concat(book.chapters || []);
+      book.name = feed.title || book.name;
+      book.originName = feed.title || book.originName;
+      book.totalChapterNum = book.chapters.length;
+      added = fresh.length;
+    }
+    store.upsertBook(book);
+    return json(res, 200, { ok: true, bookUrl, name: book.name, added, total: book.chapters.length });
   }
 
   if (p === '/api/feeds' && method === 'DELETE') {
