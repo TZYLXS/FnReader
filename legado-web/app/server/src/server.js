@@ -14,6 +14,7 @@ const { fetchFeed } = require('./feeds');
 const { getArticle } = require('./article');
 const replaceRules = require('./replace');
 const introLookup = require('./intro');
+const { buildSyncPayload } = require('./sync');
 
 // 订阅条目正文的内存缓存（按条目链接）
 const chapterCache = new Map();
@@ -1113,6 +1114,25 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  // 批量回传阅读进度（App 同步用）
+  if (p === '/api/m/progress/batch' && method === 'POST') {
+    const body = await readJson(req);
+    const list = Array.isArray(body) ? body : body && Array.isArray(body.items) ? body.items : [];
+    if (!list.length) return json(res, 400, { error: '请提供进度数组' });
+    let updated = 0;
+    for (const item of list) {
+      const book = store.findBook(item.bookUrl);
+      if (!book) continue;
+      book.durChapterIndex = Number(item.index) || 0;
+      book.durChapterPos = Number(item.pos) || 0;
+      book.durChapterTitle = item.title || book.durChapterTitle || '';
+      book.durChapterTime = Number(item.time) || Date.now();
+      store.upsertBook(book);
+      updated++;
+    }
+    return json(res, 200, { ok: true, updated, total: list.length });
+  }
+
   if (p === '/api/m/cover' && method === 'GET') {
     const book = store.findBook(searchParams.get('url'));
     if (!book || !book.coverUrl) return json(res, 404, { error: '没有封面' });
@@ -1392,6 +1412,23 @@ async function route(req, res, url) {
     } catch (e) {
       return json(res, 502, { error: '换源搜索失败：' + (e.message || e) });
     }
+  }
+
+  // App 同步：一次拉取书架 / 阅读进度 / 书源配置
+  if (p === '/api/m/sync' && method === 'GET') {
+    const payload = buildSyncPayload(store, {
+      since: searchParams.get('since') || 0,
+      full: searchParams.get('full') === '1',
+      version: APP_VERSION,
+    });
+    return json(res, 200, payload);
+  }
+
+  // 书源配置原文件（与 Legado 导出的数组格式一致，可直接导入）
+  if (p === '/api/m/sources.json' && method === 'GET') {
+    const list = store.sources.filter((s) => s.enabled !== false || searchParams.get('all') === '1');
+    res.setHeader('Content-Disposition', 'attachment; filename="sources.json"');
+    return json(res, 200, list);
   }
 
   // 简介补全：本应用无关书源里都没有简介时，去其它书源 / 晋江取

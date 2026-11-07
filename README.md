@@ -188,10 +188,26 @@ legado ALL=(root) NOPASSWD: /usr/local/bin/appcenter-cli
 | 能力 | 路径 | 鉴权 |
 | --- | --- | --- |
 | WebDAV | `/dav/books/`（只读）、`/dav/backup/`（读写）| Basic，密码 = apiToken |
-| 手机 API | `/api/m/shelf`、`/library`、`/toc`、`/content`、`/progress` | `X-Api-Token` |
+| 同步 | `/api/m/sync`（书架 + 进度 + 书源汇总）、`/api/m/sources.json` | `X-Api-Token` |
+| 阅读 | `/api/m/shelf`、`/library`、`/toc`、`/content`、`/progress`（支持批量）| `X-Api-Token` |
 | 书源桥 | `/api/m/booksource`、`/api/m/legado/{search,book,toc}` | `X-Api-Token` |
 
 WebDAV 让 Legado 的「备份与恢复 → WebDAV」直接指向 NAS；书源桥则把书架包装成一条 Legado 书源，安卓端导入后即可读 NAS 上的内容。
+
+### 7.1 App 同步
+
+自建客户端只需一次请求：
+
+```http
+GET  /api/m/sync?token=<令牌>            # 书架 + 阅读进度 + 书源汇总
+GET  /api/m/sync?since=<毫秒时间戳>       # 增量：只返回有变动的书
+GET  /api/m/sync?full=1                   # 书源 items 带完整规则
+GET  /api/m/sources.json?token=<令牌>     # 书源配置文件（Legado 数组格式，可直接导入）
+POST /api/m/progress/batch                # 批量回传阅读进度
+```
+
+`/api/m/sync` 返回 `shelf`（书名/作者/封面/来源/目录总数/阅读进度）、`progress`（可单独做进度同步）、
+`sources`（总数/启用数/分组统计/源列表）。字段与示例响应见 [docs/APP同步接口.md](docs/APP同步接口.md)。
 
 ---
 
