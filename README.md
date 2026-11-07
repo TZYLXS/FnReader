@@ -1,6 +1,7 @@
 # FnReader · 飞牛 fnOS 阅读器
 
 把 [Legado（阅读）](https://github.com/gedoor/legado) 的书源生态带到飞牛 fnOS：不装模拟器，打开就是一个网页书架。
+交流群：778213624
 
 - **书源**：直接导入 Legado 3.x 书源 JSON，规则引擎实现了 CSS / XPath / JSONPath / 正则 / `@js:` 沙箱 / `@` 选择器链 / 索引语法
 - **阅读**：书架、目录、正文、进度同步、主题/字号/行距
