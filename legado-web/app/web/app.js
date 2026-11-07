@@ -1483,6 +1483,15 @@ async function renderSettings() {
         <div class="row"><div class="label">搜索缓存<div class="desc" id="stat-cache">-</div></div><button class="btn" id="clear-cache" style="padding:5px 10px;font-size:12px">清空</button></div>
       </div>
       <div class="section">
+        <h3>屏蔽规则</h3>
+        <div class="row"><div class="label">替换规则<div class="desc" id="rules-count">加载中…</div></div>
+          <input type="file" id="rules-file" accept=".json,application/json" hidden />
+          <button class="btn" id="rules-import" style="padding:5px 10px;font-size:12px">导入文件</button>
+          <button class="btn" id="rules-paste" style="padding:5px 10px;font-size:12px">粘贴</button>
+          <button class="btn ghost" id="rules-clear" style="padding:5px 8px;font-size:12px;color:var(--danger)">清空</button></div>
+        <div id="rules-list"></div>
+      </div>
+      <div class="section">
         <h3>版本更新</h3>
         <div class="row"><div class="label">当前版本<div class="desc">V${esc(APP_VER)}</div></div>
           <button class="btn" id="btn-check-update" style="padding:5px 10px;font-size:12px">检查更新</button></div>
@@ -1492,7 +1501,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.2 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.3 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -1531,6 +1540,105 @@ async function renderSettings() {
     } catch {
       /* 忽略 */
     }
+
+    // 屏蔽 / 替换规则
+    const rulesBox = $('#rules-list');
+    const rulesCount = $('#rules-count');
+    const renderRules = async () => {
+      if (!rulesBox) return;
+      try {
+        const r = await api('/replace-rules');
+        if (rulesCount) rulesCount.textContent = `${r.total} 条 · ${r.enabled} 条启用`;
+        if (!r.total) {
+          rulesBox.innerHTML = '<div class="row"><div class="label">还没有规则<div class="desc">导入 Legado 的 exportReplaceRule.json 即可屏蔽广告</div></div></div>';
+          return;
+        }
+        rulesBox.innerHTML = r.rules
+          .map(
+            (x, i) =>
+              `<div class="row" data-ri="${i}">
+                 <div class="label" style="min-width:0">
+                   <b style="font-size:13px">${esc(x.name)}</b>
+                   <div class="desc" style="word-break:break-all">${esc(x.group || '未分组')} · ${x.isRegex ? '正则' : '文本'}${x.scopeTitle ? ' · 含标题' : ''}</div>
+                 </div>
+                 <div class="switch ${x.isEnabled !== false ? 'on' : ''}" data-rtoggle="${i}"></div>
+                 <button class="btn ghost" data-rdel="${i}" style="padding:6px 8px;color:var(--danger)">删除</button>
+               </div>`
+          )
+          .join('');
+      } catch (e) {
+        rulesBox.innerHTML = `<div class="row"><div class="label">读取规则失败<div class="desc">${esc(e.message)}</div></div></div>`;
+      }
+    };
+
+    const fileInput = $('#rules-file');
+    const btnImport = $('#rules-import');
+    if (btnImport && fileInput) {
+      btnImport.onclick = () => fileInput.click();
+      fileInput.onchange = async () => {
+        const f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        try {
+          const text = await f.text();
+          const arr = JSON.parse(text);
+          const r = await api('/replace-rules', { method: 'POST', body: { rules: arr, mode: 'merge' } });
+          toast(`导入 ${r.imported} 条，共 ${r.total} 条`);
+          renderRules();
+        } catch (e) {
+          toast('导入失败：' + e.message);
+        } finally {
+          fileInput.value = '';
+        }
+      };
+    }
+
+    const btnPaste = $('#rules-paste');
+    if (btnPaste)
+      btnPaste.onclick = async () => {
+        const text = prompt('粘贴 Legado 替换规则 JSON（数组）：');
+        if (!text) return;
+        try {
+          const arr = JSON.parse(text);
+          const r = await api('/replace-rules', { method: 'POST', body: { rules: arr, mode: 'merge' } });
+          toast(`导入 ${r.imported} 条，共 ${r.total} 条`);
+          renderRules();
+        } catch (e) {
+          toast('导入失败：' + e.message);
+        }
+      };
+
+    const btnClearRules = $('#rules-clear');
+    if (btnClearRules)
+      btnClearRules.onclick = async () => {
+        if (!confirm('清空全部替换规则？')) return;
+        await api('/replace-rules?all=1', { method: 'DELETE' });
+        toast('已清空');
+        renderRules();
+      };
+
+    if (rulesBox)
+      rulesBox.onclick = async (e) => {
+        const toggle = e.target.dataset.rtoggle;
+        const del = e.target.dataset.rdel;
+        if (toggle != null) {
+          const on = e.target.classList.contains('on');
+          try {
+            await api('/replace-rules', { method: 'PATCH', body: { index: Number(toggle), isEnabled: !on } });
+            e.target.classList.toggle('on', !on);
+            if (rulesCount) {
+              const r = await api('/replace-rules');
+              rulesCount.textContent = `${r.total} 条 · ${r.enabled} 条启用`;
+            }
+          } catch (err) {
+            toast('操作失败：' + err.message);
+          }
+        } else if (del != null) {
+          if (!confirm('删除这条规则？')) return;
+          await api('/replace-rules?index=' + del, { method: 'DELETE' });
+          renderRules();
+        }
+      };
+    renderRules();
 
     // 版本更新
     const upBox = $('#update-info');

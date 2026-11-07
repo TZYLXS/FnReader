@@ -12,6 +12,7 @@ const { searchSource, getBookInfo, getToc, getContent } = require('./books');
 const { request, requestBinary, absoluteUrl } = require('./util');
 const { fetchFeed } = require('./feeds');
 const { getArticle } = require('./article');
+const replaceRules = require('./replace');
 
 // 订阅条目正文的内存缓存（按条目链接）
 const chapterCache = new Map();
@@ -1217,13 +1218,17 @@ async function route(req, res, url) {
     // 后台预取后面两章，翻页时直接命中
     prefetchChapter(book, index + 1);
     prefetchChapter(book, index + 2);
+    // 应用「替换 / 屏蔽」规则（去掉正文里的广告、推广信息）
+    const rules = replaceRules.load(store.dataDir);
+    const title = replaceRules.applyText(rules, chapter.title, 'title');
+    const paragraphs = replaceRules.applyToParagraphs(rules, result.paragraphs);
     return json(res, 200, {
-      title: chapter.title,
+      title,
       index,
       total: book.chapters.length,
       next: index + 1 < book.chapters.length ? book.chapters[index + 1].title : '',
       prev: index > 0 ? book.chapters[index - 1].title : '',
-      paragraphs: result.paragraphs,
+      paragraphs,
       cached: result.cached,
     });
   }
@@ -1332,6 +1337,70 @@ function mergeFeedIntoBook(feed) {
   store.upsertBook(book);
   return fresh.length;
 }
+
+  // 替换 / 屏蔽规则
+  if (p === '/api/replace-rules' && method === 'GET') {
+    const rules = replaceRules.load(store.dataDir);
+    return json(res, 200, {
+      total: rules.length,
+      enabled: rules.filter((r) => r.isEnabled !== false).length,
+      rules,
+    });
+  }
+
+  if (p === '/api/replace-rules' && method === 'POST') {
+    const body = await readJson(req);
+    const incoming = Array.isArray(body) ? body : body && Array.isArray(body.rules) ? body.rules : null;
+    if (!incoming) return json(res, 400, { error: '请提供规则数组（Legado 导出的 exportReplaceRule.json）' });
+    const mode = (body && body.mode) || 'merge';
+    const clean = incoming
+      .filter((r) => r && typeof r === 'object' && r.pattern)
+      .map((r, i) => ({
+        name: String(r.name || '未命名规则'),
+        group: String(r.group || ''),
+        pattern: String(r.pattern),
+        replacement: r.replacement == null ? '' : String(r.replacement),
+        isRegex: r.isRegex !== false,
+        isEnabled: r.isEnabled !== false,
+        scopeContent: r.scopeContent !== false,
+        scopeTitle: r.scopeTitle === true,
+        order: Number(r.order) || i,
+      }));
+
+    let rules;
+    if (mode === 'replace') {
+      rules = clean;
+    } else {
+      const existing = replaceRules.load(store.dataDir);
+      const seen = new Set(existing.map((r) => r.name + '|' + r.pattern));
+      rules = existing.concat(clean.filter((r) => !seen.has(r.name + '|' + r.pattern)));
+    }
+    replaceRules.save(store.dataDir, rules);
+    return json(res, 200, { ok: true, imported: clean.length, total: rules.length });
+  }
+
+  if (p === '/api/replace-rules' && method === 'PATCH') {
+    const body = await readJson(req);
+    const rules = replaceRules.load(store.dataDir);
+    const rule = rules[Number(body.index)];
+    if (!rule) return json(res, 404, { error: '规则不存在' });
+    if (body.isEnabled != null) rule.isEnabled = !!body.isEnabled;
+    replaceRules.save(store.dataDir, rules);
+    return json(res, 200, { ok: true });
+  }
+
+  if (p === '/api/replace-rules' && method === 'DELETE') {
+    if (searchParams.get('all') === '1') {
+      replaceRules.save(store.dataDir, []);
+      return json(res, 200, { ok: true, total: 0 });
+    }
+    const index = Number(searchParams.get('index'));
+    const rules = replaceRules.load(store.dataDir);
+    if (!rules[index]) return json(res, 404, { error: '规则不存在' });
+    rules.splice(index, 1);
+    replaceRules.save(store.dataDir, rules);
+    return json(res, 200, { ok: true, total: rules.length });
+  }
 
   if (p === '/api/feeds' && method === 'GET') {
     return json(res, 200, { feeds: readJSON(FEEDS_FILE, []) });
