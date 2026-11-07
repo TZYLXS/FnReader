@@ -586,6 +586,62 @@ function startDownload(book) {
   return job;
 }
 
+/* ---------------- 移动端接入 API ---------------- */
+// 供安卓 App / 第三方客户端读取书架、目录、正文
+function apiToken() {
+  if (!store.config.apiToken) store.saveConfig({ apiToken: crypto.randomBytes(12).toString('hex') });
+  return store.config.apiToken;
+}
+
+function checkApiToken(req, url) {
+  const t = req.headers['x-api-token'] || url.searchParams.get('token');
+  return !!t && t === apiToken();
+}
+
+function mobileBook(b) {
+  return {
+    bookUrl: b.bookUrl,
+    name: b.name,
+    author: b.author || '',
+    coverUrl: b.coverUrl || '',
+    intro: b.intro || '',
+    kind: b.kind || '',
+    origin: b.origin,
+    originName: b.originName || '',
+    lastChapter: b.lastChapter || '',
+    durChapterIndex: b.durChapterIndex || 0,
+    durChapterPos: b.durChapterPos || 0,
+    durChapterTitle: b.durChapterTitle || '',
+    durChapterTime: b.durChapterTime || 0,
+    totalChapterNum: b.totalChapterNum || (b.chapters ? b.chapters.length : 0),
+  };
+}
+
+async function mobileSearch(key, group, limit) {
+  let sources = store.sources.filter((s) => s.enabled && s.checkStatus === 'ok');
+  if (group) sources = sources.filter((s) => (s.bookSourceGroup || '') === group);
+  sources = sources.slice(0, Math.max(1, Math.min(30, Number(limit) || 8)));
+  const buckets = await Promise.all(
+    sources.map((s) =>
+      Promise.race([
+        searchSource(s, key, 1, { timeout: 8000 }).catch(() => []),
+        new Promise((r) => setTimeout(() => r([]), 9000)),
+      ])
+    )
+  );
+  const seen = new Set();
+  const out = [];
+  for (const list of buckets) {
+    for (const b of list) {
+      const k = b.bookUrl;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(mobileBook({ ...b, chapters: [] }));
+    }
+  }
+  return out;
+}
+
 async function handleRefreshToc(book) {
   const source = store.findSource(book.origin);
   if (!source) throw new Error('未找到书源，可能已被删除');
@@ -616,6 +672,113 @@ async function route(req, res, url) {
 
   if (p === '/api/health')
     return json(res, 200, { ok: true, app: APPNAME, version: APP_VERSION, build: BUILD_ID });
+
+  if (p === '/api/m/info') {
+    if (!checkApiToken(req, url)) return json(res, 401, { error: 'token 无效' });
+    return json(res, 200, {
+      app: '阅读',
+      version: APP_VERSION,
+      tokenRequired: true,
+      endpoints: ['/api/m/shelf', '/api/m/search', '/api/m/toc', '/api/m/content', '/api/m/progress', '/api/m/cover'],
+    });
+  }
+
+  if (p.startsWith('/api/m/') && !checkApiToken(req, url)) {
+    return json(res, 401, { error: 'token 无效，请在「设置 → 手机接入」查看访问令牌' });
+  }
+
+  if (p === '/api/m/reset-token' && method === 'POST') {
+    if (!checkApiToken(req, url)) return json(res, 401, { error: 'token 无效' });
+    const token = crypto.randomBytes(12).toString('hex');
+    store.saveConfig({ apiToken: token });
+    return json(res, 200, { ok: true, apiToken: token });
+  }
+
+  if (p === '/api/m/shelf' && method === 'GET') {
+    const books = [...store.books].sort((a, b) => (b.durChapterTime || 0) - (a.durChapterTime || 0));
+    return json(res, 200, { books: books.map(mobileBook) });
+  }
+
+  if (p === '/api/m/search' && method === 'GET') {
+    const key = String(searchParams.get('key') || '').trim();
+    if (!key) return json(res, 400, { error: '缺少 key' });
+    try {
+      const books = await mobileSearch(key, searchParams.get('group') || '', searchParams.get('limit') || 8);
+      return json(res, 200, { key, books });
+    } catch (e) {
+      return json(res, 502, { error: String(e.message || e) });
+    }
+  }
+
+  if (p === '/api/m/toc' && method === 'GET') {
+    const book = store.findBook(searchParams.get('url'));
+    if (!book) return json(res, 404, { error: '书籍不在书架中，请先通过 /api/m/shelf 获取' });
+    if (!book.chapters || !book.chapters.length) {
+      try {
+        await handleRefreshToc(book);
+      } catch (e) {
+        return json(res, 502, { error: String(e.message || e) });
+      }
+    }
+    return json(res, 200, {
+      name: book.name,
+      author: book.author || '',
+      chapters: book.chapters.map((c, i) => ({ index: i, title: c.title, url: c.url })),
+    });
+  }
+
+  if (p === '/api/m/content' && method === 'GET') {
+    const book = store.findBook(searchParams.get('url'));
+    if (!book) return json(res, 404, { error: '书籍不在书架中' });
+    const index = Number(searchParams.get('index') || 0);
+    if (!book.chapters || !book.chapters.length) {
+      try {
+        await handleRefreshToc(book);
+      } catch (e) {
+        return json(res, 502, { error: String(e.message || e) });
+      }
+    }
+    if (!book.chapters[index]) return json(res, 404, { error: '章节不存在' });
+    try {
+      const result = await loadChapterContent(book, index);
+      const chapter = book.chapters[index];
+      prefetchChapter(book, index + 1);
+      return json(res, 200, {
+        bookUrl: book.bookUrl,
+        title: chapter.title,
+        index,
+        total: book.chapters.length,
+        prev: index > 0 ? book.chapters[index - 1].title : '',
+        next: index + 1 < book.chapters.length ? book.chapters[index + 1].title : '',
+        paragraphs: result.paragraphs,
+        cached: result.cached,
+      });
+    } catch (e) {
+      return json(res, 502, { error: String(e.message || e) });
+    }
+  }
+
+  if (p === '/api/m/progress' && method === 'POST') {
+    const body = await readJson(req);
+    const book = store.findBook(body.bookUrl);
+    if (!book) return json(res, 404, { error: '书籍不在书架中' });
+    book.durChapterIndex = Number(body.index) || 0;
+    book.durChapterPos = Number(body.pos) || 0;
+    book.durChapterTitle = body.title || (book.chapters && book.chapters[book.durChapterIndex] ? book.chapters[book.durChapterIndex].title : '');
+    book.durChapterTime = Date.now();
+    store.upsertBook(book);
+    return json(res, 200, { ok: true });
+  }
+
+  if (p === '/api/m/cover' && method === 'GET') {
+    const book = store.findBook(searchParams.get('url'));
+    if (!book || !book.coverUrl) return json(res, 404, { error: '没有封面' });
+    try {
+      return await serveImage(res, book.coverUrl, book.bookUrl);
+    } catch (e) {
+      return json(res, 502, { error: String(e.message || e) });
+    }
+  }
 
   if (p === '/api/sources' && method === 'GET') {
     // 已启用排前面，其余按名称排
@@ -1002,7 +1165,7 @@ const server = http.createServer((req, res) => {
     return json(res, 400, { error: 'bad request' });
   }
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type, x-api-token');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -1021,6 +1184,11 @@ server.on('clientError', (err, socket) => {
 
 function main() {
   const sock = process.env.LEGADO_SOCKET || path.join(APP_DEST, 'app.sock');
+
+  // 首次启动生成移动端访问令牌
+  if (!store.config.apiToken) {
+    store.saveConfig({ apiToken: crypto.randomBytes(12).toString('hex') });
+  }
 
   // 启动时清理过期正文缓存，之后每 6 小时一次
   try {
