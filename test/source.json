@@ -1,0 +1,27 @@
+[
+  {
+    "bookSourceName": "本地测试源",
+    "bookSourceUrl": "http://127.0.0.1:18080",
+    "bookSourceGroup": "测试",
+    "bookSourceType": 0,
+    "enabled": true,
+    "searchUrl": "http://127.0.0.1:18080/search?q={{key}}",
+    "ruleSearch": {
+      "bookList": ".result",
+      "name": ".title@text",
+      "author": ".author@text",
+      "kind": ".kind@text",
+      "bookUrl": ".title@href",
+      "coverUrl": "img@src"
+    },
+    "ruleBookInfo": {
+      "name": "#info h1@text",
+      "author": "#info .author@text",
+      "kind": "#info .kind@text",
+      "introduce": "#info .intro@text",
+      "tocUrl": "a.toc@href"
+    },
+    "ruleToc": { "chapterList": "#list li", "chapterName": "a@text", "chapterUrl": "a@href" },
+    "ruleContent": { "content": "#content@html", "nextContentUrl": "#next@href" }
+  }
+]

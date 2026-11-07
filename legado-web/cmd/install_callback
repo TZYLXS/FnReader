@@ -1,0 +1,5 @@
+#!/bin/bash
+# 安装完成后初始化数据目录
+mkdir -p "${TRIM_PKGVAR}" 2>/dev/null
+chmod 755 "${TRIM_PKGVAR}" 2>/dev/null
+exit 0

@@ -1,0 +1,35 @@
+[
+  {
+    "bookSourceName": "OALib 开放获取",
+    "bookSourceUrl": "https://www.oalib.com",
+    "bookSourceGroup": "学术",
+    "bookSourceType": 0,
+    "bookSourceComment": "OALib 开放获取论文库（580 万篇）。搜索出的是论文条目，目录里只有「摘要」一章，正文为摘要全文；需要全文请点开页面里的 Full-Text 链接。",
+    "enabled": true,
+    "searchUrl": "/s?q1={{key}}",
+    "ruleSearch": {
+      "bookList": "td[style*='border-bottom: solid 1px']",
+      "name": "a[href*='/paper/']@text",
+      "author": "span.authorLimit@text",
+      "kind": "a[href*='/journal/']@text",
+      "intro": "span.menuContent@text",
+      "bookUrl": "a[href*='/paper/']@href",
+      "coverUrl": ""
+    },
+    "ruleBookInfo": {
+      "name": "h1@text",
+      "author": ".authors@text",
+      "kind": "p.keyword@text",
+      "intro": "div[style*='line-height:21px']@text",
+      "coverUrl": ""
+    },
+    "ruleToc": {
+      "chapterList": "div[style*='line-height:21px']",
+      "chapterName": "@js:'摘要'",
+      "chapterUrl": "@js:baseUrl"
+    },
+    "ruleContent": {
+      "content": "div[style*='line-height:21px']@html"
+    }
+  }
+]

@@ -1,0 +1,24 @@
+{
+  ".url": {
+    "legado-web.main": {
+      "title": "阅读",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/legado-web",
+      "gatewaySocket": "app.sock",
+      "url": "/app/legado-web/",
+      "allUsers": true
+    },
+    "legado-web.direct": {
+      "title": "阅读（直连端口）",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "http",
+      "port": "1122",
+      "url": "/",
+      "allUsers": true,
+      "noDisplay": true
+    }
+  }
+}

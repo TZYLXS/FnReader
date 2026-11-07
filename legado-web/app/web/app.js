@@ -1,0 +1,1510 @@
+'use strict';
+
+/* ---------------- 基础工具 ---------------- */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const view = $('#view');
+const toastEl = $('#toast');
+
+function coverSrc(url, bookUrl) {
+  if (!url) return '';
+  return './api/image?url=' + encodeURIComponent(url) + (bookUrl ? '&book=' + encodeURIComponent(bookUrl) : '');
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+let toastTimer;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch('./api' + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { error: text };
+  }
+  if (!res.ok || data.error) throw new Error(data.error || `请求失败 (${res.status})`);
+  return data;
+}
+
+const state = {
+  books: [],
+  sources: [],
+  config: { theme: 'light', fontSize: 19, lineHeight: 1.85, pageWidth: 720 },
+  search: { key: '', selected: new Set(), running: false, es: null, results: [] },
+  reader: null,
+};
+
+/* ---------------- 配置 ---------------- */
+function applyConfig(cfg) {
+  state.config = { ...state.config, ...cfg };
+  document.documentElement.setAttribute('data-theme', state.config.theme || 'light');
+  const root = document.documentElement.style;
+  root.setProperty('--font-size', state.config.fontSize + 'px');
+  root.setProperty('--line-height', state.config.lineHeight);
+  root.setProperty('--page-width', state.config.pageWidth + 'px');
+}
+
+async function saveConfig(patch) {
+  applyConfig(patch);
+  try {
+    await api('/config', { method: 'POST', body: patch });
+  } catch (e) {
+    toast('保存设置失败：' + e.message);
+  }
+}
+
+/* ---------------- 路由 ---------------- */
+function parseHash() {
+  const raw = location.hash.replace(/^#/, '') || '/shelf';
+  const [path, qs] = raw.split('?');
+  return { path, params: new URLSearchParams(qs || '') };
+}
+
+async function router() {
+  const { path, params } = parseHash();
+  // 订阅并入「搜索」页，底部只保留 4 个标签
+  const tab = path === '/feeds' ? 'search' : path.split('/')[1] || 'shelf';
+  $$('#tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
+  if (!path.startsWith('/sources')) {
+    const bulk = document.getElementById('source-bulk');
+    if (bulk) bulk.remove();
+  }
+  $('#tabbar').style.display = path.startsWith('/read') ? 'none' : 'grid';
+  if (state.search.es && tab !== 'search') {
+    state.search.es.close();
+    state.search.es = null;
+    state.search.running = false;
+  }
+  window.scrollTo(0, 0);
+  if (path === '/shelf') return renderShelf();
+  if (path === '/search') return renderSearch();
+  if (path === '/sources') return renderSources();
+  if (path === '/settings') return renderSettings();
+  if (path === '/feeds') return renderFeeds();
+  if (path === '/downloads') return renderDownloads();
+  if (path.startsWith('/read')) return openReader(params.get('url'));
+  return renderShelf();
+}
+
+/* ---------------- 书架 ---------------- */
+async function loadBooks() {
+  const { books } = await api('/books');
+  state.books = books;
+  return books;
+}
+
+async function renderShelf() {
+  view.innerHTML = `
+    <header class="topbar"><h1>书架</h1><button class="btn ghost" id="refresh-all">刷新目录</button></header>
+    <div id="shelf-body"><div class="empty"><div class="big">📚</div>正在加载…</div></div>`;
+  const body = $('#shelf-body');
+  $('#refresh-all').onclick = refreshAllTocs;
+  try {
+    const books = await loadBooks();
+    if (!books.length) {
+      body.innerHTML = `<div class="empty"><div class="big">📖</div>书架还是空的<br />去「搜索」里找一本书，或先导入书源</div>`;
+      return;
+    }
+    body.innerHTML = `<div class="shelf">${books
+      .map(
+        (b) => `
+      <div class="book-card" data-url="${esc(b.bookUrl)}">
+        <div class="cover"><span class="ph">${esc((b.name || '?').slice(0, 1))}</span>${
+          b.coverUrl ? `<img loading="lazy" src="${esc(coverSrc(b.coverUrl, b.bookUrl))}" onerror="this.remove()" />` : ''
+        }
+          ${b.durChapterTitle ? `<span class="badge">${esc(b.durChapterTitle)}</span>` : ''}
+        </div>
+        <div class="name">${esc(b.name)}</div>
+        <div class="meta">${esc(b.durChapterIndex ? `读到 ${b.durChapterIndex + 1}/${b.totalChapterNum || '?'} 章` : b.author || '')}</div>
+        <button class="more" data-more="1" aria-label="更多">⋯</button>
+      </div>`
+      )
+      .join('')}</div>`;
+
+    bindShelfEvents(body);
+  } catch (e) {
+    body.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+/**
+ * 书架交互：
+ * - 点封面/书名：继续阅读
+ * - 点右上角「⋯」：打开管理菜单（比长按可靠）
+ * - 长按封面：也打开菜单，并吞掉随后产生的 click，避免“菜单弹出来又跳进阅读页”
+ */
+function bindShelfEvents(body) {
+  let pressTimer = null;
+  let suppressClick = false;
+  let pressedCard = null;
+
+  const clearTimer = () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+    if (pressedCard) pressedCard.classList.remove('pressing');
+    pressedCard = null;
+  };
+
+  body.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const card = e.target.closest('.book-card');
+    if (!card || e.target.closest('[data-more]')) return;
+    suppressClick = false;
+    pressedCard = card;
+    card.classList.add('pressing');
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      suppressClick = true;
+      card.classList.remove('pressing');
+      bookMenu(card.dataset.url);
+    }, 520);
+  });
+
+  body.addEventListener('pointerup', clearTimer);
+  body.addEventListener('pointercancel', clearTimer);
+  body.addEventListener('pointerleave', clearTimer);
+  body.addEventListener('pointermove', (e) => {
+    // 手指滑动（滚动）就取消长按
+    if (pressedCard && (Math.abs(e.movementX) > 6 || Math.abs(e.movementY) > 6)) clearTimer();
+  });
+
+  body.addEventListener('click', (e) => {
+    const more = e.target.closest('[data-more]');
+    if (more) {
+      e.preventDefault();
+      e.stopPropagation();
+      const card = more.closest('.book-card');
+      if (card) bookMenu(card.dataset.url);
+      return;
+    }
+    const card = e.target.closest('.book-card');
+    if (!card) return;
+    if (suppressClick) {
+      suppressClick = false;
+      return;
+    }
+    location.hash = '#/read?url=' + encodeURIComponent(card.dataset.url);
+  });
+
+  // 长按不弹出浏览器自带菜单
+  body.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('.book-card')) e.preventDefault();
+  });
+}
+
+async function refreshAllTocs() {
+  if (!state.books.length) return toast('书架是空的');
+  if (!confirm(`重新获取 ${state.books.length} 本书的目录？书源响应慢时可能需要一会儿。`)) return;
+  let done = 0;
+  for (const book of state.books) {
+    toast(`正在刷新目录 ${done + 1}/${state.books.length}：${book.name}`);
+    try {
+      const r = await fetch('./api/toc?url=' + encodeURIComponent(book.bookUrl) + '&refresh=1').then((x) => x.json());
+      if (r.chapters) book.totalChapterNum = r.chapters.length;
+    } catch {
+      /* 单本失败不影响其他 */
+    }
+    done++;
+  }
+  toast('目录刷新完成');
+  renderShelf();
+}
+
+async function bookMenu(bookUrl) {
+  const book = state.books.find((b) => b.bookUrl === bookUrl);
+  if (!book) return;
+  const modal = $('#modal');
+  const box = $('#modal-box');
+  box.innerHTML = `
+    <h3>${esc(book.name)}</h3>
+    <p style="color:var(--text-2);font-size:13px;margin:-6px 0 14px">${esc(book.author || '')}${book.totalChapterNum ? ' · ' + book.totalChapterNum + ' 章' : ''}</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn" id="act-read">继续阅读</button>
+      <button class="btn" id="act-dl">下载整本为 TXT</button>
+      <button class="btn" id="act-toc">刷新目录</button>
+      <button class="btn" id="act-del" style="color:var(--danger)">从书架删除</button>
+    </div>
+    <div class="modal-actions"><button class="btn primary" id="act-close">取消</button></div>`;
+  modal.classList.remove('hidden');
+  const close = () => modal.classList.add('hidden');
+  $('#act-close').onclick = close;
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+  $('#act-read').onclick = () => {
+    close();
+    location.hash = '#/read?url=' + encodeURIComponent(bookUrl);
+  };
+  $('#act-dl').onclick = () => {
+    close();
+    startDownloadFlow(bookUrl, book.name);
+  };
+  $('#act-toc').onclick = async () => {
+    close();
+    toast('正在刷新目录…');
+    try {
+      const r = await api('/toc?url=' + encodeURIComponent(bookUrl) + '&refresh=1');
+      toast(`目录已更新，共 ${r.chapters ? r.chapters.length : 0} 章`);
+      renderShelf();
+    } catch (e) {
+      toast('刷新失败：' + e.message);
+    }
+  };
+  $('#act-del').onclick = async () => {
+    close();
+    if (!confirm(`确定把《${book.name}》从书架删除？`)) return;
+    try {
+      await api('/books?url=' + encodeURIComponent(bookUrl), { method: 'DELETE' });
+      toast('已删除');
+      renderShelf();
+    } catch (e) {
+      toast('删除失败：' + e.message);
+    }
+  };
+}
+
+/* ---------------- 下载整本 TXT ---------------- */
+let dlTimer = null;
+
+function showDownloadBar(html) {
+  let bar = $('#dl-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'dl-bar';
+    bar.style.cssText =
+      'position:fixed;left:12px;right:12px;bottom:calc(var(--tabbar-h) + 16px);z-index:55;' +
+      'background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;' +
+      'box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:13px;display:flex;align-items:center;gap:10px';
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = html;
+  bar.style.display = 'flex';
+  return bar;
+}
+
+function hideDownloadBar() {
+  const bar = $('#dl-bar');
+  if (bar) bar.style.display = 'none';
+}
+
+async function startDownloadFlow(bookUrl, name) {
+  try {
+    const r = await api('/download', { method: 'POST', body: { url: bookUrl } });
+    toast(`开始下载《${name}》，共 ${r.total} 章`);
+  } catch (e) {
+    return toast('开始下载失败：' + e.message);
+  }
+
+  clearInterval(dlTimer);
+  const poll = async () => {
+    let st;
+    try {
+      st = await api('/download/status?url=' + encodeURIComponent(bookUrl));
+    } catch {
+      return;
+    }
+    if (st.running) {
+      const pct = st.total ? Math.round((st.done / st.total) * 100) : 0;
+      showDownloadBar(
+        `<span class="spinner"></span><span style="flex:1">下载中 ${st.done}/${st.total}（${pct}%）${st.failed ? ' · 失败 ' + st.failed : ''}</span>
+         <button class="btn" id="dl-cancel" style="padding:4px 10px;font-size:12px">取消</button>`
+      );
+      const c = $('#dl-cancel');
+      if (c) c.onclick = () => api('/download/cancel', { method: 'POST', body: { url: bookUrl } }).catch(() => {});
+      return;
+    }
+    clearInterval(dlTimer);
+    dlTimer = null;
+    if (st.file) {
+      hideDownloadBar();
+      toast(`《${name}》已合并为 TXT，开始下载`);
+      const a = document.createElement('a');
+      a.href = './api/download/file?url=' + encodeURIComponent(bookUrl);
+      a.download = st.file;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } else {
+      showDownloadBar(`<span style="flex:1;color:var(--danger)">下载失败：${esc(st.error || '未知错误')}</span>`);
+      setTimeout(hideDownloadBar, 4000);
+    }
+  };
+  poll();
+  dlTimer = setInterval(poll, 1500);
+}
+
+/* ---------------- 搜索 ---------------- */
+async function ensureSources() {
+  if (!state.sources.length) {
+    const { sources } = await api('/sources');
+    state.sources = sources;
+  }
+  return state.sources;
+}
+
+async function renderSearch() {
+  view.innerHTML = `
+    <header class="topbar"><h1>搜索</h1><span class="sub" id="src-count"></span></header>
+    <div class="chips" id="mode-row" style="padding-bottom:0">
+      <button class="chip on" data-mode="book">找书</button>
+      <button class="chip" data-mode="feed">订阅</button>
+    </div>
+    <div class="searchbar">
+      <input id="kw" type="search" placeholder="书名 / 作者" enterkeyhint="search" />
+      <button class="btn primary" id="go">搜索</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="progress-line" id="academic-hint" style="display:none"></div>
+    <div class="progress-line" id="search-status"></div>
+    <div class="results" id="results"></div>`;
+
+  $('#mode-row').onclick = (e) => {
+    const b = e.target.closest('.chip');
+    if (!b) return;
+    if (b.dataset.mode === 'feed') location.hash = '#/feeds';
+  };
+
+  const sources = await ensureSources().catch(() => []);
+  const okCount = sources.filter((s) => s.checkStatus === 'ok').length;
+  $('#src-count').textContent = sources.length
+    ? `${sources.filter((s) => s.enabled).length} 个启用${okCount ? ` · ${okCount} 个可用` : ''}`
+    : '';
+  const chips = $('#chips');
+  const onlyChip = okCount ? `<button class="chip on" data-only="1">仅可用 (${okCount})</button>` : '';
+  // 按分组展示，不再把几百个书源全铺在搜索栏下面
+  const groupCount = new Map();
+  for (const s of sources) {
+    const g = s.bookSourceGroup || '未分组';
+    groupCount.set(g, (groupCount.get(g) || 0) + 1);
+  }
+  const groupChips = [...groupCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([g, n]) => `<button class="chip" data-group="${esc(g)}">${esc(g)} (${n})</button>`)
+    .join('');
+  chips.innerHTML = onlyChip + `<button class="chip ${okCount ? '' : 'on'}" data-all="1">全部书源</button>` + groupChips;
+  state.search.onlyChecked = !!okCount;
+  state.search.group = '';
+
+  chips.addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    if (chip.dataset.only) {
+      state.search.onlyChecked = true;
+      state.search.group = '';
+      state.search.selected.clear();
+      $$('.chip', chips).forEach((c) => c.classList.remove('on'));
+      chip.classList.add('on');
+      return;
+    }
+    if (chip.dataset.all) {
+      state.search.onlyChecked = false;
+      state.search.group = '';
+      state.search.selected.clear();
+      $$('.chip', chips).forEach((c) => c.classList.toggle('on', !!c.dataset.all));
+      return;
+    }
+    if (chip.dataset.group !== undefined) {
+      state.search.onlyChecked = false;
+      state.search.selected.clear();
+      const on = !chip.classList.contains('on');
+      $$('.chip', chips).forEach((c) => c.classList.remove('on'));
+      if (on) {
+        chip.classList.add('on');
+        state.search.group = chip.dataset.group;
+      } else {
+        state.search.group = '';
+      }
+      return;
+    }
+    state.search.onlyChecked = false;
+    $('.chip[data-only]', chips)?.classList.remove('on');
+    $('.chip[data-all]', chips)?.classList.remove('on');
+    chip.classList.toggle('on');
+    if (chip.classList.contains('on')) state.search.selected.add(chip.dataset.id);
+    else state.search.selected.delete(chip.dataset.id);
+  });
+
+  const input = $('#kw');
+  input.value = state.search.key || '';
+  const start = () => startSearch(input.value.trim());
+  $('#go').onclick = start;
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') start();
+  });
+
+  if (state.search.key) {
+    renderSearchResults();
+    input.focus();
+  }
+
+  const pre = parseHash().params.get('key');
+  if (pre) {
+    input.value = pre;
+    startSearch(pre);
+  }
+}
+
+function renderSearchResults() {
+  const box = $('#results');
+  if (!box) return;
+  if (!state.search.results.length) {
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = state.search.results
+    .map(
+      (item, i) => `
+    <div class="result" data-i="${i}">
+      <div class="thumb">${item.coverUrl ? `<img loading="lazy" src="${esc(coverSrc(item.coverUrl, item.bookUrl))}" onerror="this.remove()" />` : ''}</div>
+      <div class="info">
+        <div class="title">${esc(item.name)}</div>
+        <div class="line2">${esc(item.author || '未知作者')}${item.kind ? ' · ' + esc(item.kind) : ''}</div>
+        <div class="line2">${item.lastChapter ? '最新：' + esc(item.lastChapter) : esc(item.intro || '')}</div>
+        <div class="actions">
+          <span class="tag">${esc(item.originName || '')}</span>
+          <button class="btn primary add" data-i="${i}" style="margin-left:auto;padding:5px 12px;font-size:13px">加入书架</button>
+        </div>
+      </div>
+    </div>`
+    )
+    .join('');
+
+  box.onclick = async (e) => {
+    const btn = e.target.closest('.add');
+    if (!btn) return;
+    e.stopPropagation();
+    const book = state.search.results[Number(btn.dataset.i)];
+    await addBook(book, btn);
+  };
+}
+
+async function addBook(book, btn) {
+  btn.disabled = true;
+  btn.textContent = '添加中…';
+  try {
+    await api('/books', { method: 'POST', body: book });
+    btn.textContent = '已在书架';
+    toast('已加入书架，正在获取目录…');
+    // 后台拉目录，失败不影响加入
+    fetch('./api/toc?url=' + encodeURIComponent(book.bookUrl))
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.chapters) toast(`《${book.name}》共 ${d.chapters.length} 章`);
+      })
+      .catch(() => {});
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '加入书架';
+    toast('添加失败：' + e.message);
+  }
+}
+
+function startSearch(key, opts = {}) {
+  if (!key) return toast('请输入关键字');
+  if (state.search.running) return toast('正在搜索中…');
+  state.search.key = key;
+  state.search.results = [];
+  state.search.running = true;
+  renderSearchResults();
+
+  const status = $('#search-status');
+  const ids = [...state.search.selected];
+  const params = new URLSearchParams({ key });
+  if (ids.length) params.set('sources', ids.join(','));
+  else if (state.search.onlyChecked) params.set('only', 'checked');
+  else if (state.search.group) params.set('group', state.search.group);
+  if (opts.auto === false) params.set('auto', '0');
+  const hint = $('#academic-hint');
+  if (hint) hint.style.display = 'none';
+  status.innerHTML = `<span class="spinner"></span> 正在搜索…`;
+  const goBtn = $('#go');
+  if (goBtn) {
+    goBtn.textContent = '停止';
+    goBtn.classList.remove('primary');
+    goBtn.onclick = stopSearch;
+  }
+
+  const es = new EventSource('./api/search?' + params.toString());
+  state.search.es = es;
+  let done = 0;
+  let total = 0;
+
+  es.onmessage = (ev) => {
+    let msg;
+    try {
+      msg = JSON.parse(ev.data);
+    } catch {
+      return;
+    }
+    if (msg.type === 'start') {
+      total = msg.total;
+      status.innerHTML = `<span class="spinner"></span> 搜索 ${total} 个书源…`;
+    } else if (msg.type === 'academic') {
+      const h = $('#academic-hint');
+      if (h) {
+        h.style.display = 'block';
+        h.innerHTML = `🎓 识别为学术查询${msg.hits && msg.hits.length ? '（' + msg.hits.map(esc).join('、') + '）' : ''}，只搜 ${msg.total} 个学术书源　<a href="javascript:void 0" id="acad-all" style="color:var(--accent)">改搜全部</a>`;
+        const a = $('#acad-all');
+        if (a) a.onclick = () => startSearch(state.search.key, { auto: false });
+      }
+    } else if (msg.type === 'source-start') {
+      status.innerHTML = `<span class="spinner"></span> ${done}/${total || '?'} · 正在搜索：${esc(msg.source)}`;
+    } else if (msg.type === 'result') {
+      const fresh = msg.books.filter((b) => !state.search.results.some((x) => x.bookUrl === b.bookUrl));
+      state.search.results.push(...fresh);
+      renderSearchResults();
+    } else if (msg.type === 'source-done') {
+      done = msg.done || done + 1;
+      if (msg.total) total = msg.total;
+      status.textContent = `已搜索 ${done}/${total || '?'} 个书源，找到 ${state.search.results.length} 本`;
+    } else if (msg.type === 'done') {
+      status.textContent = state.search.results.length
+        ? `搜索完成：${state.search.results.length} 本（${total} 个书源）`
+        : '没有找到结果：可能是书源失效，或该源需要 WebView/加密接口。可在「书源」里只选几个源重试';
+      finishSearch();
+    } else if (msg.type === 'error') {
+      status.textContent = msg.message;
+      finishSearch();
+    }
+  };
+  es.onerror = () => {
+    if (state.search.running) {
+      status.textContent = '搜索连接中断';
+      finishSearch();
+    }
+  };
+}
+
+function stopSearch() {
+  finishSearch();
+  const st = $('#search-status');
+  if (st) st.textContent = `已停止，共找到 ${state.search.results.length} 本`;
+}
+
+function finishSearch() {
+  state.search.running = false;
+  const goBtn = $('#go');
+  if (goBtn) {
+    goBtn.textContent = '搜索';
+    goBtn.classList.add('primary');
+    goBtn.onclick = () => {
+      const kw = $('#kw');
+      if (kw) startSearch(kw.value.trim());
+    };
+  }
+  if (state.search.es) {
+    state.search.es.close();
+    state.search.es = null;
+  }
+}
+
+/* ---------------- 阅读器 ---------------- */
+async function openReader(bookUrl) {
+  if (!bookUrl) return (location.hash = '#/shelf');
+  view.innerHTML = `<div class="reader"><div class="empty"><span class="spinner"></span> 正在打开…</div></div>`;
+  try {
+    if (!state.books.length) await loadBooks();
+    let book = state.books.find((b) => b.bookUrl === bookUrl);
+    if (!book) {
+      await loadBooks();
+      book = state.books.find((b) => b.bookUrl === bookUrl);
+    }
+    if (!book) throw new Error('书籍不在书架中');
+    const { chapters } = await api('/toc?url=' + encodeURIComponent(bookUrl));
+    if (!chapters || !chapters.length) throw new Error('目录为空');
+    book.chapters = chapters;
+    book.totalChapterNum = chapters.length;
+    state.reader = { book, chapters, index: Math.min(book.durChapterIndex || 0, chapters.length - 1) };
+    renderReaderShell();
+    await loadChapter(state.reader.index);
+  } catch (e) {
+    view.innerHTML = `<div class="reader"><div class="empty">打开失败：${esc(e.message)}<br /><br /><a class="btn" href="#/shelf">返回书架</a></div></div>`;
+  }
+}
+
+function renderReaderShell() {
+  const { book } = state.reader;
+  view.innerHTML = `
+    <div class="reader">
+      <header class="reader-head">
+        <button class="icon-btn" id="back">‹</button>
+        <div class="title" id="chapter-title">${esc(book.name)}</div>
+        <button class="icon-btn" id="catalog">☰</button>
+        <button class="icon-btn" id="reader-settings">Aa</button>
+      </header>
+      <article class="article" id="article"></article>
+      <div class="reader-foot">
+        <button class="btn" id="prev">上一章</button>
+        <button class="btn primary" id="next">下一章</button>
+      </div>
+    </div>
+    <div class="drawer hidden" id="drawer">
+      <div class="mask" id="drawer-mask"></div>
+      <div class="panel">
+        <h3 id="drawer-title">目录</h3>
+        <div class="list" id="chapter-list"></div>
+      </div>
+    </div>`;
+
+  $('#back').onclick = () => (location.hash = '#/shelf');
+  $('#catalog').onclick = toggleDrawer;
+  $('#drawer-mask').onclick = toggleDrawer;
+  $('#prev').onclick = () => gotoChapter(state.reader.index - 1);
+  $('#next').onclick = () => gotoChapter(state.reader.index + 1);
+  $('#reader-settings').onclick = openReaderSettings;
+
+  const list = $('#chapter-list');
+  list.innerHTML = state.reader.chapters
+    .map((c, i) => `<div class="item" data-i="${i}">${i + 1}. ${esc(c.title)}</div>`)
+    .join('');
+  list.onclick = (e) => {
+    const item = e.target.closest('.item');
+    if (!item) return;
+    toggleDrawer();
+    gotoChapter(Number(item.dataset.i));
+  };
+}
+
+function toggleDrawer() {
+  const d = $('#drawer');
+  if (!d) return;
+  d.classList.toggle('hidden');
+  if (!d.classList.contains('hidden')) {
+    const on = $('#chapter-list .item.on');
+    if (on) on.scrollIntoView({ block: 'center' });
+  }
+}
+
+async function loadChapter(index) {
+  const r = state.reader;
+  if (!r) return;
+  if (index < 0 || index >= r.chapters.length) return;
+  r.index = index;
+  const article = $('#article');
+  article.innerHTML = `<div class="loading"><span class="spinner"></span> 正在加载…</div>`;
+  $('#chapter-title').textContent = r.chapters[index].title;
+  $$('#chapter-list .item').forEach((el) => el.classList.toggle('on', Number(el.dataset.i) === index));
+  $('#prev').disabled = index === 0;
+  $('#next').disabled = index >= r.chapters.length - 1;
+
+  const data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}`).catch((e) => ({ error: e.message }));
+  if (r.index !== index) return;
+  if (data.error) {
+    article.innerHTML = `<div class="loading">加载失败：${esc(data.error)}</div>`;
+    return;
+  }
+  article.innerHTML = '';
+  for (const p of data.paragraphs) {
+    const el = document.createElement('p');
+    el.textContent = p;
+    article.appendChild(el);
+  }
+  window.scrollTo(0, 0);
+  saveProgress();
+}
+
+function gotoChapter(index) {
+  const r = state.reader;
+  if (!r || index < 0 || index >= r.chapters.length) return;
+  if (state.reader.index === index) return;
+  loadChapter(index);
+}
+
+let progressTimer;
+function saveProgress() {
+  const r = state.reader;
+  if (!r) return;
+  clearTimeout(progressTimer);
+  progressTimer = setTimeout(() => {
+    api('/progress', {
+      method: 'POST',
+      body: { bookUrl: r.book.bookUrl, index: r.index, pos: 0, title: r.chapters[r.index].title },
+    }).catch(() => {});
+    const shelfBook = state.books.find((b) => b.bookUrl === r.book.bookUrl);
+    if (shelfBook) {
+      shelfBook.durChapterIndex = r.index;
+      shelfBook.durChapterTitle = r.chapters[r.index].title;
+    }
+  }, 600);
+}
+
+function openReaderSettings() {
+  const cfg = state.config;
+  const modal = $('#modal');
+  const box = $('#modal-box');
+  box.innerHTML = `
+    <h3>阅读设置</h3>
+    <div class="row"><div class="label">主题</div>
+      <div class="seg" id="seg-theme">
+        ${['light', 'sepia', 'dark'].map((t) => `<button data-v="${t}" class="${cfg.theme === t ? 'on' : ''}">${{ light: '浅色', sepia: '羊皮纸', dark: '深色' }[t]}</button>`).join('')}
+      </div>
+    </div>
+    <div class="row"><div class="label">字号 <span class="desc">${cfg.fontSize}px</span></div>
+      <div class="seg">
+        <button data-font="-1">A-</button><button data-font="1">A+</button>
+      </div>
+    </div>
+    <div class="row"><div class="label">行距</div>
+      <div class="seg">
+        <button data-lh="-0.1">紧</button><button data-lh="0.1">松</button>
+      </div>
+    </div>
+    <div class="row" style="border-top:1px solid var(--line)">
+      <div class="label">整本下载<div class="desc">抓取全部章节，合并为一个 TXT</div></div>
+      <button class="btn" id="dl-book">下载</button>
+    </div>
+    <div class="modal-actions"><button class="btn primary" id="modal-close">完成</button></div>`;
+
+  modal.classList.remove('hidden');
+  const close = () => modal.classList.add('hidden');
+  $('#modal-close').onclick = close;
+  const dlBtn = $('#dl-book');
+  if (dlBtn)
+    dlBtn.onclick = () => {
+      close();
+      const b = state.reader && state.reader.book;
+      if (b) startDownloadFlow(b.bookUrl, b.name);
+    };
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+  $('#seg-theme').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    saveConfig({ theme: b.dataset.v });
+    $$('#seg-theme button').forEach((x) => x.classList.toggle('on', x === b));
+  };
+  box.querySelectorAll('[data-font]').forEach((b) => {
+    b.onclick = () => {
+      const v = Math.max(14, Math.min(30, cfg.fontSize + Number(b.dataset.font)));
+      saveConfig({ fontSize: v });
+      box.querySelector('.row .desc').textContent = v + 'px';
+    };
+  });
+  box.querySelectorAll('[data-lh]').forEach((b) => {
+    b.onclick = () => {
+      const v = Math.max(1.3, Math.min(2.6, Math.round((cfg.lineHeight + Number(b.dataset.lh)) * 100) / 100));
+      saveConfig({ lineHeight: v });
+    };
+  });
+}
+
+/* ---------------- 书源管理 ---------------- */
+const CHECK_LABEL = { ok: '可用', empty: '无结果', fail: '不可用' };
+let checkTimer = null;
+
+const sourceUI = { select: false, picked: new Set() };
+
+function sourceRow(s) {
+  const st = s.checkStatus || '';
+  const dot = st === 'ok' ? '#34c759' : st === 'empty' ? '#9a9aa0' : st === 'fail' ? '#ff3b30' : 'rgba(128,128,128,0.25)';
+  const picked = sourceUI.picked.has(s.bookSourceUrl);
+  const left = sourceUI.select
+    ? `<span class="cb ${picked ? 'on' : ''}" data-check="1">${picked ? '✓' : ''}</span>`
+    : `<span style="width:8px;height:8px;border-radius:50%;flex:none;background:${dot}"></span>`;
+  const right = sourceUI.select
+    ? ''
+    : `<div class="switch ${s.enabled ? 'on' : ''}" data-toggle="1"></div>
+       <button class="btn ghost" data-del="1" style="padding:6px 8px;color:var(--danger)">删除</button>`;
+  return `<div class="source-item ${picked ? 'picked' : ''}" data-id="${esc(s.bookSourceUrl)}">
+    ${left}
+    <div class="name"><b>${esc(s.bookSourceName)}</b><span>${esc(s.bookSourceUrl)}${s.bookSourceGroup ? ' · ' + esc(s.bookSourceGroup) : ''}${st ? ' · ' + CHECK_LABEL[st] : ''}</span></div>
+    ${right}
+  </div>`;
+}
+
+function renderSourceList(filter = '') {
+  const box = $('#source-list');
+  if (!box) return;
+  const list = state.sources.filter(
+    (s) => !filter || (s.bookSourceName + ' ' + s.bookSourceUrl + ' ' + (s.bookSourceGroup || '')).toLowerCase().includes(filter)
+  );
+  if (!list.length) {
+    box.innerHTML = '<div class="empty">没有匹配的书源</div>';
+    return;
+  }
+  // 按书源分组展示，避免几百个源堆成一条长列表
+  const groups = new Map();
+  for (const s of list) {
+    const g = s.bookSourceGroup || '未分组';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(s);
+  }
+  const sorted = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+  box.innerHTML = sorted
+    .map(
+      ([g, arr], i) => `<details class="section" style="margin-top:10px" ${filter || i === 0 || sourceUI.select ? 'open' : ''}>
+        <summary style="padding:12px 16px;cursor:pointer;font-size:13px;color:var(--text-2);list-style:none;display:flex;align-items:center;gap:8px">
+          <span style="flex:1">${esc(g)}</span>
+          <span>${arr.length} 个</span>
+        </summary>
+        ${arr.map(sourceRow).join('')}
+      </details>`
+    )
+    .join('');
+  renderBulkBar();
+}
+
+function renderBulkBar() {
+  let bar = $('#source-bulk');
+  if (!sourceUI.select) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'source-bulk';
+    bar.style.cssText =
+      'position:fixed;left:12px;right:12px;bottom:calc(var(--tabbar-h) + 12px);z-index:55;' +
+      'display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);' +
+      'border-radius:12px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:13px';
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = `
+    <span style="flex:1">已选 <b>${sourceUI.picked.size}</b> 个</span>
+    <button class="btn" id="bulk-all" style="padding:6px 10px;font-size:12px">全选</button>
+    <button class="btn" id="bulk-none" style="padding:6px 10px;font-size:12px">清空</button>
+    <button class="btn" id="bulk-del" style="padding:6px 10px;font-size:12px;background:var(--danger);color:#fff;border-color:transparent">删除</button>`;
+  const all = () => {
+    sourceUI.picked.clear();
+    state.sources.forEach((s) => sourceUI.picked.add(s.bookSourceUrl));
+    renderSourceList($('#src-filter') ? $('#src-filter').value.trim().toLowerCase() : '');
+  };
+  $('#bulk-all').onclick = all;
+  $('#bulk-none').onclick = () => {
+    sourceUI.picked.clear();
+    renderSourceList($('#src-filter') ? $('#src-filter').value.trim().toLowerCase() : '');
+  };
+  $('#bulk-del').onclick = async () => {
+    const urls = [...sourceUI.picked];
+    if (!urls.length) return toast('还没有选择书源');
+    if (!confirm(`删除选中的 ${urls.length} 个书源？\n（会先备份到应用数据目录的 backup/）`)) return;
+    try {
+      const r = await api('/sources/batch-delete', { method: 'POST', body: { urls } });
+      toast(`已删除 ${r.removed} 个，剩余 ${r.remaining} 个`);
+      sourceUI.picked.clear();
+      sourceUI.select = false;
+      renderSources();
+    } catch (e) {
+      toast('删除失败：' + e.message);
+    }
+  };
+}
+
+async function renderSources() {
+  // 支持 #/sources?manage=1 直接进入多选模式
+  if (parseHash().params.get('manage') === '1') sourceUI.select = true;
+  view.innerHTML = `
+    <header class="topbar"><h1>书源</h1>
+      <button class="btn" id="check-src">检测</button>
+      <button class="btn" id="manage-src">${sourceUI.select ? '完成' : '管理'}</button>
+      <button class="btn primary" id="import">导入</button>
+    </header>
+    <div class="progress-line" id="check-line"></div>
+    <div class="searchbar" style="padding:0 14px 6px"><input id="src-filter" placeholder="筛选书源（名称 / 地址）" /></div>
+    <div id="source-list"><div class="empty">加载中…</div></div>`;
+
+  $('#import').onclick = openImport;
+  $('#check-src').onclick = startSourceCheck;
+  $('#manage-src').onclick = () => {
+    sourceUI.select = !sourceUI.select;
+    sourceUI.picked.clear();
+    renderSources();
+  };
+  $('#src-filter').oninput = (e) => renderSourceList(e.target.value.trim().toLowerCase());
+
+  try {
+    const { sources } = await api('/sources');
+    state.sources = sources;
+    if (!sources.length) {
+      sourceUI.select = false;
+      sourceUI.picked.clear();
+      renderBulkBar();
+      $('#source-list').innerHTML = `<div class="empty"><div class="big">🧩</div>还没有书源<br />支持粘贴 Legado 书源 JSON、书源链接，或导入 .json 文件</div>`;
+      return;
+    }
+    renderSourceList();
+    renderCheckBar();
+    $('#source-list').onclick = async (e) => {
+      const item = e.target.closest('.source-item');
+      if (!item) return;
+      const id = item.dataset.id;
+      const src = state.sources.find((s) => s.bookSourceUrl === id);
+      if (!src) return;
+
+      // 多选模式：整行点击切换勾选
+      if (sourceUI.select) {
+        if (sourceUI.picked.has(id)) sourceUI.picked.delete(id);
+        else sourceUI.picked.add(id);
+        renderSourceList($('#src-filter') ? $('#src-filter').value.trim().toLowerCase() : '');
+        return;
+      }
+
+      if (e.target.dataset.toggle) {
+        const enabled = !(src.enabled !== false);
+        await api('/sources/' + encodeURIComponent(id), { method: 'PATCH', body: { enabled } });
+        src.enabled = enabled;
+        e.target.classList.toggle('on', enabled);
+      } else if (e.target.dataset.del) {
+        if (!confirm(`删除书源「${src.bookSourceName}」？`)) return;
+        await api('/sources/' + encodeURIComponent(id), { method: 'DELETE' });
+        renderSources();
+      }
+    };
+  } catch (e) {
+    $('#source-list').innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function renderCheckBar(st) {
+  const line = $('#check-line');
+  if (!line) return;
+  const checked = state.sources.filter((s) => s.checkStatus);
+  const ok = state.sources.filter((s) => s.checkStatus === 'ok').length;
+  if (st && st.running) {
+    line.innerHTML = `<span class="spinner"></span> 检测中 ${st.done}/${st.total} · 可用 ${st.ok} · 无结果 ${st.empty} · 失败 ${st.fail}`;
+    return;
+  }
+  if (checked.length) {
+    line.innerHTML = `已检测 ${checked.length} 个 · 可用 <b style="color:var(--accent)">${ok}</b> 个
+      <button class="btn" id="disable-bad" style="margin-left:8px;padding:4px 10px;font-size:12px">停用未通过</button>`;
+    const btn = $('#disable-bad');
+    if (btn)
+      btn.onclick = async () => {
+        if (!confirm('将停用所有「不可用 / 无结果」的书源，只保留可用书源。继续？')) return;
+        const r = await api('/sources/check/disable-unavailable', { method: 'POST' });
+        toast(`已停用 ${r.disabled} 个书源`);
+        renderSources();
+      };
+  } else {
+    line.textContent = '书源很多时建议先「检测」，会自动标记哪些能用';
+  }
+}
+
+async function startSourceCheck() {
+  const filter = ($('#src-filter')?.value || '').trim().toLowerCase();
+  const visible = state.sources.filter(
+    (s) => !filter || (s.bookSourceName + ' ' + s.bookSourceUrl + ' ' + (s.bookSourceGroup || '')).toLowerCase().includes(filter)
+  );
+  if (!visible.length) return toast('没有可检测的书源');
+  if (!confirm(`将检测当前列表里的 ${visible.length} 个书源，可能耗时较久，继续？`)) return;
+  const key = prompt('用哪个关键字检测书源？建议用热门书名', '斗破') || '';
+  if (!key.trim()) return;
+  try {
+    const r = await api('/sources/check', {
+      method: 'POST',
+      body: { key: key.trim(), ids: visible.map((s) => s.bookSourceUrl) },
+    });
+    if (!r.started && !r.running) return toast('检测启动失败');
+    toast('开始检测书源，可能需要几分钟');
+  } catch (e) {
+    return toast('检测失败：' + e.message);
+  }
+  clearInterval(checkTimer);
+  const poll = async () => {
+    try {
+      const st = await api('/sources/check');
+      renderCheckBar(st);
+      if (!st.running) {
+        clearInterval(checkTimer);
+        const { sources } = await api('/sources');
+        state.sources = sources;
+        renderSourceList($('#src-filter') ? $('#src-filter').value.trim().toLowerCase() : '');
+        renderCheckBar(st);
+        toast(`检测完成：可用 ${st.ok} 个`);
+      }
+    } catch {
+      clearInterval(checkTimer);
+    }
+  };
+  poll();
+  checkTimer = setInterval(poll, 2500);
+}
+
+function openImport() {
+  const modal = $('#modal');
+  const box = $('#modal-box');
+  box.innerHTML = `
+    <h3>导入书源</h3>
+    <p class="desc" style="color:var(--text-2);font-size:13px;margin:0 0 10px">
+      支持 Legado 书源 JSON（数组或单个对象），也可以填入书源订阅链接。
+    </p>
+    <textarea class="import" id="import-text" placeholder='[{"bookSourceName":"示例","bookSourceUrl":"https://..."}]'></textarea>
+    <div class="row" style="padding:12px 0 0;border:0">
+      <input type="file" id="import-file" accept=".json,application/json" style="font-size:13px" />
+    </div>
+    <div class="row" style="padding:10px 0 0;border:0">
+      <input id="import-url" placeholder="https://example.com/sources.json" style="flex:1;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg);outline:none" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="import-cancel">取消</button>
+      <button class="btn primary" id="import-ok">导入</button>
+    </div>`;
+  modal.classList.remove('hidden');
+  const close = () => modal.classList.add('hidden');
+  $('#import-cancel').onclick = close;
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+  $('#import-file').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    $('#import-text').value = await file.text();
+  };
+  $('#import-ok').onclick = async () => {
+    const text = $('#import-text').value.trim();
+    const url = $('#import-url').value.trim();
+    try {
+      if (text) {
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          throw new Error('JSON 格式不正确');
+        }
+        const sources = Array.isArray(parsed) ? parsed : [parsed];
+        const r = await api('/sources', { method: 'POST', body: { sources } });
+        toast(`已导入 ${r.imported} 个书源`);
+      } else if (url) {
+        const r = await api('/sources', { method: 'POST', body: { url } });
+        toast(`已导入 ${r.imported} 个书源`);
+      } else {
+        return toast('请粘贴书源内容或填写链接');
+      }
+      close();
+      renderSources();
+    } catch (e) {
+      toast('导入失败：' + e.message);
+    }
+  };
+}
+
+/* ---------------- 订阅 ---------------- */
+function formatDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function renderFeeds() {
+  view.innerHTML = `
+    <header class="topbar"><h1>搜索</h1>
+      <button class="btn" id="feed-refresh-all">刷新</button>
+      <button class="btn primary" id="feed-add">添加</button>
+    </header>
+    <div class="chips" id="mode-row" style="padding-bottom:0">
+      <button class="chip" data-mode="book">找书</button>
+      <button class="chip on" data-mode="feed">订阅</button>
+    </div>
+    <div id="feeds-body"><div class="empty">加载中…</div></div>`;
+
+  $('#mode-row').onclick = (e) => {
+    const b = e.target.closest('.chip');
+    if (!b) return;
+    if (b.dataset.mode === 'book') location.hash = '#/search';
+  };
+
+  $('#feed-add').onclick = openAddFeed;
+  $('#feed-refresh-all').onclick = async () => {
+    toast('正在刷新订阅…');
+    try {
+      const { feeds } = await api('/feeds');
+      for (const f of feeds) await api('/feeds', { method: 'POST', body: { refresh: f.id } }).catch(() => {});
+      toast('订阅已刷新');
+      renderFeeds();
+    } catch (e) {
+      toast('刷新失败：' + e.message);
+    }
+  };
+
+  try {
+    const { feeds } = await api('/feeds');
+    const body = $('#feeds-body');
+    if (!feeds.length) {
+      body.innerHTML = `<div class="empty"><div class="big">📡</div>还没有订阅<br />添加 RSS / Atom 地址即可，例如博客、新闻、连载更新</div>`;
+      return;
+    }
+    body.innerHTML = feeds
+      .map(
+        (f) => `
+      <div class="section" style="margin:12px 14px">
+        <div class="row" style="align-items:flex-start">
+          <div class="label">
+            <b>${esc(f.title)}</b>
+            <div class="desc">${esc(f.url)} · ${f.items.length} 条 · ${formatDate(f.fetchedAt)}</div>
+          </div>
+          <button class="btn" data-refresh="${esc(f.id)}" style="padding:5px 10px;font-size:12px">刷新</button>
+          <button class="btn" data-del="${esc(f.id)}" style="padding:5px 10px;font-size:12px;color:var(--danger)">删除</button>
+        </div>
+        ${f.items
+          .slice(0, 30)
+          .map(
+            (it) =>
+              `<a class="feed-item" href="${esc(it.link || '#')}" target="_blank" rel="noopener">
+                 <div class="feed-title">${esc(it.title)}</div>
+                 <div class="feed-meta">${formatDate(it.date)}</div>
+               </a>`
+          )
+          .join('')}
+      </div>`
+      )
+      .join('');
+
+    body.onclick = async (e) => {
+      const ref = e.target.dataset.refresh;
+      const del = e.target.dataset.del;
+      if (ref) {
+        e.preventDefault();
+        toast('刷新中…');
+        try {
+          await api('/feeds', { method: 'POST', body: { refresh: ref } });
+          renderFeeds();
+        } catch (err) {
+          toast('刷新失败：' + err.message);
+        }
+      } else if (del) {
+        e.preventDefault();
+        if (!confirm('删除这个订阅？')) return;
+        await api('/feeds?id=' + encodeURIComponent(del), { method: 'DELETE' });
+        renderFeeds();
+      }
+    };
+  } catch (e) {
+    $('#feeds-body').innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function openAddFeed() {
+  const modal = $('#modal');
+  const box = $('#modal-box');
+  box.innerHTML = `
+    <h3>添加订阅</h3>
+    <p style="color:var(--text-2);font-size:13px;margin:0 0 10px">支持 RSS 2.0 / Atom 地址</p>
+    <input id="feed-url" placeholder="https://example.com/feed.xml"
+      style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--bg);outline:none" />
+    <div class="modal-actions">
+      <button class="btn" id="feed-cancel">取消</button>
+      <button class="btn primary" id="feed-ok">添加</button>
+    </div>`;
+  modal.classList.remove('hidden');
+  const close = () => modal.classList.add('hidden');
+  $('#feed-cancel').onclick = close;
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+  $('#feed-ok').onclick = async () => {
+    const url = $('#feed-url').value.trim();
+    if (!url) return toast('请输入订阅地址');
+    try {
+      await api('/feeds', { method: 'POST', body: { url } });
+      close();
+      toast('订阅已添加');
+      renderFeeds();
+    } catch (e) {
+      toast('添加失败：' + e.message);
+    }
+  };
+}
+
+/* ---------------- 已下载 ---------------- */
+function formatSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+async function renderDownloads() {
+  view.innerHTML = `
+    <header class="topbar"><h1>已下载</h1><a class="btn ghost" href="#/settings">设置</a></header>
+    <div id="dl-body"><div class="empty">加载中…</div></div>`;
+  try {
+    const { items } = await api('/downloads');
+    const body = $('#dl-body');
+    if (!items.length) {
+      body.innerHTML = `<div class="empty"><div class="big">📥</div>还没有下载过书籍<br />在书架长按书封，选「下载整本为 TXT」</div>`;
+      return;
+    }
+    body.innerHTML = `<div class="section" style="margin-top:12px">${items
+      .map(
+        (it) => `<div class="source-item">
+        <div class="name">
+          <b>${esc(it.name)}</b>
+          <span>${esc(it.author || '')} · ${it.chapters} 章 · ${formatSize(it.size)} · ${formatDate(it.time)}${it.exists ? '' : ' · 文件已丢失'}</span>
+          <span style="color:var(--text-2)">${esc(String(it.file || '').replace(/\/[^/]*$/, '') || '')}</span>
+        </div>
+        ${
+          it.exists
+            ? `<a class="btn" download style="padding:6px 10px;font-size:12px" href="./api/download/file?url=${encodeURIComponent(it.bookUrl)}">保存</a>`
+            : ''
+        }
+        <button class="btn ghost" data-del="${esc(it.bookUrl)}" style="padding:6px 8px;color:var(--danger);font-size:12px">删除</button>
+      </div>`
+      )
+      .join('')}</div>`;
+    body.onclick = async (e) => {
+      const bookUrl = e.target.dataset.del;
+      if (!bookUrl) return;
+      if (!confirm('删除这本书的 TXT 文件？')) return;
+      try {
+        await api('/downloads?url=' + encodeURIComponent(bookUrl), { method: 'DELETE' });
+        toast('已删除');
+        renderDownloads();
+      } catch (err) {
+        toast('删除失败：' + err.message);
+      }
+    };
+  } catch (e) {
+    $('#dl-body').innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+/* ---------------- 使用帮助 ---------------- */
+const HELP_KEY = 'legado-help-v1';
+
+function showHelp(manual = false) {
+  const modal = $('#modal');
+  const box = $('#modal-box');
+  box.innerHTML = `
+    <h3 style="margin-bottom:2px">欢迎使用 阅读</h3>
+    <p style="color:var(--text-2);font-size:12.5px;margin:0 0 6px">在飞牛里读书 · 兼容 Legado 3.x 书源</p>
+
+    <div class="help-item">
+      <div class="help-ico">书</div>
+      <div><b>书架</b><p>点封面继续阅读；点右上角「⋯」或长按封面可下载整本 TXT、刷新目录、从书架删除。</p></div>
+    </div>
+    <div class="help-item">
+      <div class="help-ico">搜</div>
+      <div><b>搜索（找书 / 订阅）</b><p>「找书」按书名或作者搜，可只搜「仅可用」书源，也能按分组搜；「订阅」添加 RSS / Atom 地址。</p></div>
+    </div>
+    <div class="help-item">
+      <div class="help-ico">源</div>
+      <div><b>书源</b><p>粘贴或导入 Legado 书源 JSON。书源很多时先点「检测」，跑完点「停用未通过」，之后搜索会快很多。</p></div>
+    </div>
+    <div class="help-item">
+      <div class="help-ico">设</div>
+      <div><b>设置</b><p>阅读主题 / 字号 / 行距；下载位置（可选 fnOS 授权目录）、已下载书籍列表。</p></div>
+    </div>
+    <div class="help-item">
+      <div class="help-ico">读</div>
+      <div><b>阅读页</b><p>底部「上一章 / 下一章」翻页；右上角「☰」是目录、「Aa」调主题和字号，整本下载也在里面。进度自动保存。</p></div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn primary" id="help-ok">知道了</button>
+    </div>`;
+  modal.classList.remove('hidden');
+  const close = () => {
+    modal.classList.add('hidden');
+    try {
+      localStorage.setItem(HELP_KEY, '1');
+    } catch {
+      /* 隐私模式下可能不可写 */
+    }
+  };
+  $('#help-ok').onclick = close;
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+}
+
+function maybeShowFirstRunHelp() {
+  if (parseHash().params.get('log') === '1') return;
+  let seen = false;
+  try {
+    seen = localStorage.getItem(HELP_KEY) === '1';
+  } catch {
+    seen = true;
+  }
+  if (!seen)
+    setTimeout(() => {
+      const m = $('#modal');
+      // 已经有别的弹窗（比如更新日志）就先不打扰
+      if (m && !m.classList.contains('hidden')) return;
+      showHelp();
+    }, 400);
+}
+
+/* ---------------- 更新日志 ---------------- */
+async function showChangelog() {
+  const modal = $('#modal');
+  const box = $('#modal-box');
+  box.innerHTML = `
+    <h3 style="margin-bottom:10px">更新日志</h3>
+    <div id="log-body" style="max-height:60vh;overflow:auto;font-size:12.5px;color:var(--text-2)">正在加载…</div>
+    <div class="modal-actions">
+      <a class="btn" href="./docs/changelog.txt" target="_blank" rel="noopener">纯文本版</a>
+      <button class="btn primary" id="log-ok">关闭</button>
+    </div>`;
+  modal.classList.remove('hidden');
+  const close = () => modal.classList.add('hidden');
+  $('#log-ok').onclick = close;
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+
+  // 直接读安装包里随附的更新日志，避免应用内写死一份、发版后忘记同步
+  try {
+    const res = await fetch('./docs/changelog.txt?v=' + Date.now());
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    const body = $('#log-body');
+    if (body) {
+      body.innerHTML = `<pre style="white-space:pre-wrap;word-break:break-word;font-family:inherit;line-height:1.75;margin:0;color:var(--text-2)">${esc(text)}</pre>`;
+    }
+  } catch (e) {
+    const body = $('#log-body');
+    if (body) body.innerHTML = `<div style="color:var(--danger)">读取更新日志失败：${esc(e.message)}</div>`;
+  }
+}
+
+/* ---------------- 设置 ---------------- */
+async function renderSettings() {
+  // 支持 #/settings?log=1 直接打开更新日志
+  if (parseHash().params.get('log') === '1') setTimeout(() => showChangelog(), 300);
+  view.innerHTML = `
+    <header class="topbar"><h1>设置</h1></header>
+    <div id="settings-body"><div class="empty">加载中…</div></div>`;
+  try {
+    const cfg = await api('/config');
+    applyConfig(cfg);
+    $('#settings-body').innerHTML = `
+      <div class="section">
+        <h3>阅读</h3>
+        <div class="row"><div class="label">主题</div>
+          <div class="seg" id="set-theme">
+            ${['light', 'sepia', 'dark'].map((t) => `<button data-v="${t}" class="${cfg.theme === t ? 'on' : ''}">${{ light: '浅色', sepia: '羊皮纸', dark: '深色' }[t]}</button>`).join('')}
+          </div>
+        </div>
+        <div class="row"><div class="label">字号</div>
+          <input type="number" id="set-font" min="14" max="30" value="${cfg.fontSize}" style="width:72px" />
+        </div>
+        <div class="row"><div class="label">行距</div>
+          <input type="number" id="set-lh" min="1.3" max="2.6" step="0.05" value="${cfg.lineHeight}" style="width:72px" />
+        </div>
+      </div>
+      <div class="section">
+        <h3>下载</h3>
+        <a class="row" href="#/downloads" style="text-decoration:none"><div class="label">已下载书籍<div class="desc" id="stat-dl">-</div></div><span style="color:var(--text-2)">›</span></a>
+        <div class="row"><div class="label">保存位置<div class="desc" id="stat-dir">-</div></div>
+          <select id="set-dir" style="max-width:46%;font-size:12px"></select>
+        </div>
+      </div>
+      <div class="section">
+        <h3>数据</h3>
+        <div class="row"><div class="label">书源数量<div class="desc" id="stat-src">-</div></div></div>
+        <div class="row"><div class="label">书籍数量<div class="desc" id="stat-book">-</div></div></div>
+        <div class="row"><div class="label">搜索缓存<div class="desc" id="stat-cache">-</div></div><button class="btn" id="clear-cache" style="padding:5px 10px;font-size:12px">清空</button></div>
+      </div>
+      <div class="section">
+        <h3>关于</h3>
+        <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
+        <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.6.10 · 兼容 Legado 3.x 书源规则</div></div></div>
+      </div>`;
+
+    const helpRow = $('#open-help');
+    if (helpRow) helpRow.onclick = () => showHelp(true);
+    const logVer = $('#log-row-ver');
+    if (logVer) {
+      const mv = document.querySelector('meta[name="app-version"]');
+      logVer.textContent = (mv ? 'v' + mv.getAttribute('content') + ' · ' : '') + '查看历史版本';
+    }
+    const logRow = $('#open-log');
+    if (logRow) logRow.onclick = () => showChangelog();
+
+    $('#set-theme').onclick = (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      saveConfig({ theme: b.dataset.v });
+      $$('#set-theme button').forEach((x) => x.classList.toggle('on', x === b));
+    };
+    $('#set-font').onchange = (e) => saveConfig({ fontSize: Number(e.target.value) || 19 });
+    $('#set-lh').onchange = (e) => saveConfig({ lineHeight: Number(e.target.value) || 1.85 });
+
+    const [{ sources }, { books }] = await Promise.all([api('/sources'), api('/books')]);
+    $('#stat-src').textContent = `${sources.length} 个（${sources.filter((s) => s.enabled).length} 个启用）`;
+    $('#stat-book').textContent = `${books.length} 本`;
+
+    // 搜索缓存统计
+    try {
+      const cs = await api('/searchcache');
+      $('#stat-cache').textContent = `${cs.entries} 条 · ${formatSize(cs.bytes)}`;
+      $('#clear-cache').onclick = async () => {
+        if (!confirm('清空搜索结果缓存？')) return;
+        await api('/searchcache', { method: 'DELETE' });
+        $('#stat-cache').textContent = '0 条';
+        toast('缓存已清空');
+      };
+    } catch {
+      /* 忽略 */
+    }
+
+    // 已下载书籍数量 + 保存位置
+    try {
+      const [{ items }, dirs] = await Promise.all([api('/downloads'), api('/download/dirs')]);
+      $('#stat-dl').textContent = `${items.length} 本，点击查看`;
+      const sel = $('#set-dir');
+      const cur = dirs.current || '';
+      sel.innerHTML = dirs.dirs
+        .map((d) => `<option value="${esc(d.path)}" ${d.path === cur ? 'selected' : ''}>${esc(d.label)}</option>`)
+        .join('');
+      const wanted = cfg.downloadDir || '';
+      $('#stat-dir').textContent = (cur.replace(/^.*\//, '') || '默认') + (wanted && wanted !== cur ? '（原目录不可写，已回退）' : '');
+      sel.onchange = async () => {
+        try {
+          await api('/config', { method: 'POST', body: { downloadDir: sel.value } });
+          toast('下载位置已更新');
+          $('#stat-dir').textContent = sel.value.replace(/^.*\//, '');
+        } catch (e) {
+          toast('设置失败：' + e.message);
+        }
+      };
+    } catch {
+      /* 下载信息可选 */
+    }
+  } catch (e) {
+    $('#settings-body').innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+/* ---------------- 启动 ---------------- */
+window.addEventListener('hashchange', router);
+window.addEventListener('pagehide', () => {
+  if (state.reader) saveProgress();
+});
+document.addEventListener('keydown', (e) => {
+  if (!state.reader || location.hash.indexOf('/read') < 0) return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'ArrowLeft') gotoChapter(state.reader.index - 1);
+  if (e.key === 'ArrowRight') gotoChapter(state.reader.index + 1);
+});
+
+(async function boot() {
+  try {
+    const cfg = await api('/config');
+    applyConfig(cfg);
+  } catch {
+    applyConfig({});
+  }
+  router();
+  maybeShowFirstRunHelp();
+})();

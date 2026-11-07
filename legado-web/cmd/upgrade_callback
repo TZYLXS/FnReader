@@ -1,0 +1,4 @@
+#!/bin/bash
+# 升级后停止旧进程，下次启动时使用新文件
+"/var/apps/${TRIM_APPNAME}/cmd/main" stop >/dev/null 2>&1
+exit 0

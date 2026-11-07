@@ -1,0 +1,62 @@
+[
+  {
+    "bookSourceName": "Project Gutenberg",
+    "bookSourceUrl": "https://www.gutenberg.org",
+    "bookSourceGroup": "公版书",
+    "bookSourceType": 0,
+    "bookSourceComment": "古登堡计划，7 万余本公版书（英文为主）。整本书作为一章载入，正文为纯文本并已去掉版权头尾；大部头首次打开会稍慢。",
+    "enabled": true,
+    "searchUrl": "/ebooks/search/?query={{key}}",
+    "ruleSearch": {
+      "bookList": "li.booklink",
+      "name": ".title@text",
+      "author": ".subtitle@text",
+      "kind": ".extra@text",
+      "bookUrl": "a.link@href",
+      "coverUrl": "img.cover-thumb@src"
+    },
+    "ruleBookInfo": {
+      "name": "h1#book_title@text",
+      "author": ".subtitle@text",
+      "coverUrl": "img.cover-thumb@src"
+    },
+    "ruleToc": {
+      "chapterList": "h1#book_title",
+      "chapterName": "@js:'全文'",
+      "chapterUrl": "@js:baseUrl"
+    },
+    "ruleContent": {
+      "content": "@js:(function(){var i=baseUrl.indexOf('/ebooks/');if(i<0)return '';var id=baseUrl.slice(i+8).split(/[^0-9]/)[0];var t=java.ajax('https://www.gutenberg.org/ebooks/'+id+'.txt.utf-8');var a=t.indexOf('*** START OF');var b=t.indexOf('*** END OF');var nl=String.fromCharCode(10);if(a>0&&b>a)t=t.slice(t.indexOf(nl,a)+1,b);return t;})()"
+    }
+  },
+  {
+    "bookSourceName": "arXiv 预印本",
+    "bookSourceUrl": "https://arxiv.org",
+    "bookSourceGroup": "学术",
+    "bookSourceType": 0,
+    "bookSourceComment": "arXiv 预印本库。搜索返回论文，目录只有「摘要」一章，正文为摘要；全文请点页面里的 PDF。",
+    "enabled": true,
+    "searchUrl": "https://export.arxiv.org/api/query?search_query=all:{{key}}&start=0&max_results=20",
+    "ruleSearch": {
+      "bookList": "entry",
+      "name": "title@text",
+      "author": "author>name@text",
+      "kind": "category@term",
+      "intro": "summary@text",
+      "bookUrl": "id@text##^http://##https://"
+    },
+    "ruleBookInfo": {
+      "name": "h1.title@text",
+      "author": ".authors@text",
+      "intro": "blockquote.abstract@text"
+    },
+    "ruleToc": {
+      "chapterList": "blockquote.abstract",
+      "chapterName": "@js:'摘要'",
+      "chapterUrl": "@js:baseUrl"
+    },
+    "ruleContent": {
+      "content": "blockquote.abstract@html"
+    }
+  }
+]

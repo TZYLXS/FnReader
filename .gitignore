@@ -1,0 +1,8 @@
+node_modules/
+build/
+data/
+*.log
+.DS_Store
+Thumbs.db
+legado-web/app/server/server.bundle.js
+test/tmp-data*/

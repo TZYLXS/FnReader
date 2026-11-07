@@ -1,0 +1,16 @@
+appname=legado-web
+version=1.6.10
+display_name=阅读
+desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
+source=thirdparty
+platform=all
+maintainer=legado-web
+maintainer_url=https://github.com/gedoor/legado
+distributor=legado-web
+desktop_uidir=ui
+desktop_applaunchname=legado-web.main
+install_dep_apps=nodejs_v22
+service_port=1122
+checkport=false
+ctl_stop=true
+changelog=修复设置页「更新日志」副标题写死 v1.4.0 的问题，改为跟随当前版本；版本自检增加防死循环保护。
