@@ -123,11 +123,25 @@ async function handleDav(ctx, req, res, url, p, method) {
             const name = (e.name || 'book') + '.txt';
             return propResponse('/dav/books/' + hrefOf(name), { dir: false, size: e.size || 0, mtime: e.time || Date.now() });
           });
+        entries.unshift(
+          propResponse('/dav/books/manifest.json', {
+            dir: false,
+            size: Buffer.byteLength(JSON.stringify(ctx.manifest())),
+          })
+        );
         return listing('/dav/books/', entries);
       }
       return sendXml(res, 200, '<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:"/>');
     }
     const want = decodeURIComponent(parts.slice(1).join('/'));
+
+    // 书架清单 JSON：给 App 一键同步用
+    if (want === 'manifest.json' && (method === 'GET' || method === 'HEAD')) {
+      const body = JSON.stringify(ctx.manifest(), null, 2);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body) });
+      if (method === 'HEAD') return res.end();
+      return res.end(body);
+    }
     const entry = list.find((e) => (e.name || 'book') + '.txt' === want);
     if (!entry || !entry.file || !fs.existsSync(entry.file)) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

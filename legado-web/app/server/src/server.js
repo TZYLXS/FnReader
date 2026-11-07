@@ -623,6 +623,34 @@ function semverGt(a, b) {
   return false;
 }
 
+/** 已缓存书籍清单：书名 + 来源 + 章节数（供 App 同步书架） */
+function buildLibraryManifest() {
+  const list = readJSON(DOWNLOAD_INDEX, []);
+  const books = list
+    .filter((e) => e.file && fs.existsSync(e.file))
+    .map((e) => ({
+      name: e.name,
+      origin: e.author ? `${e.author}` : '',
+      source: e.source || '',
+      chapters: e.chapters || 0,
+      failed: e.failed || 0,
+      size: e.size || 0,
+      bookUrl: e.bookUrl,
+      path: '/dav/books/' + encodeURIComponent(e.name + '.txt'),
+    }));
+  const data = {
+    generatedAt: new Date().toISOString(),
+    count: books.length,
+    books,
+  };
+  try {
+    fs.writeFileSync(path.join(store.dataDir, 'library.json'), JSON.stringify(data, null, 2), 'utf8');
+  } catch {
+    /* ignore */
+  }
+  return data;
+}
+
 async function fetchLatestRelease(force) {
   if (!force && updateCache.data && Date.now() - updateCache.at < UPDATE_CACHE_MS) return updateCache.data;
   const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
@@ -719,7 +747,7 @@ async function route(req, res, url) {
 
   if (p === '/dav' || p.startsWith('/dav/')) {
     return handleDav(
-      { apiToken, readJSON, DOWNLOAD_INDEX, dataDir: store.dataDir },
+      { apiToken, readJSON, DOWNLOAD_INDEX, dataDir: store.dataDir, manifest: buildLibraryManifest },
       req,
       res,
       url,
@@ -788,7 +816,9 @@ async function route(req, res, url) {
       try {
         const target = resolveDownloadDir();
         if (target) {
-          const dest = path.join(target, `legado-web-${rel.version}.fpk`);
+          const dir2 = path.join(target, '更新包');
+          fs.mkdirSync(dir2, { recursive: true });
+          const dest = path.join(dir2, `legado-web-${rel.version}.fpk`);
           fs.copyFileSync(file, dest);
           try {
             fs.chmodSync(dest, 0o644);
@@ -868,6 +898,10 @@ async function route(req, res, url) {
     const token = crypto.randomBytes(12).toString('hex');
     store.saveConfig({ apiToken: token });
     return json(res, 200, { ok: true, apiToken: token });
+  }
+
+  if (p === '/api/m/library' && method === 'GET') {
+    return json(res, 200, buildLibraryManifest());
   }
 
   if (p === '/api/m/shelf' && method === 'GET') {
@@ -1347,7 +1381,7 @@ const server = http.createServer((req, res) => {
     // WebDAV 客户端需要 DAV 头，交给 dav 处理器
     if (url.pathname === '/dav' || url.pathname.startsWith('/dav/')) {
       return handleDav(
-        { apiToken, readJSON, DOWNLOAD_INDEX, dataDir: store.dataDir },
+        { apiToken, readJSON, DOWNLOAD_INDEX, dataDir: store.dataDir, manifest: buildLibraryManifest },
         req,
         res,
         url,

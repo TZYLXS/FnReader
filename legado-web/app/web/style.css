@@ -304,3 +304,145 @@ details.section[open] > summary { border-bottom: 1px solid var(--line); }
 }
 .cb.on { background: var(--accent); border-color: var(--accent); }
 .source-item.picked { background: var(--accent-soft); }
+
+/* ---------- Kindle 风格阅读页 ---------- */
+.reader.kindle {
+  background: var(--bg);
+  min-height: 100vh;
+  padding: 0 0 64px;
+}
+
+.reader.kindle .reader-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.reader.kindle .reader-head .title {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reader.kindle .icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 18px;
+  color: var(--text);
+  background: transparent;
+}
+
+.reader.kindle .icon-btn:active { background: color-mix(in srgb, var(--line) 40%, transparent); }
+
+.reader.kindle .article-wrap {
+  max-width: var(--page-width, 720px);
+  margin: 0 auto;
+  padding: 28px 22px 40px;
+}
+
+.reader.kindle .article {
+  font-family: "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", Georgia, serif;
+  font-size: var(--font-size, 19px);
+  line-height: var(--line-height, 1.85);
+  color: var(--text);
+  letter-spacing: 0.02em;
+  word-break: break-word;
+}
+
+.reader.kindle .article .chapter-head {
+  font-family: inherit;
+  font-size: calc(var(--font-size, 19px) * 0.82);
+  font-weight: 500;
+  color: var(--text-2);
+  text-align: center;
+  margin: 4px 0 26px;
+  letter-spacing: 0.08em;
+}
+
+.reader.kindle .article p {
+  margin: 0 0 0.9em;
+  text-indent: 2em;
+  text-align: justify;
+}
+
+.reader.kindle .article p:empty { display: none; }
+
+.reader.kindle .reader-foot {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.reader.kindle .foot-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.reader.kindle .foot-btn:disabled { opacity: 0.35; }
+.reader.kindle .foot-btn:active { background: color-mix(in srgb, var(--line) 40%, transparent); }
+
+.reader.kindle .foot-info {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.reader.kindle .foot-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--line) 45%, transparent);
+  display: block;
+}
+.reader.kindle .foot-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+/* 目录抽屉 */
+.drawer-head { display: flex; align-items: baseline; gap: 8px; padding: 16px 16px 8px; }
+.drawer-head h3 { margin: 0; font-size: 15px; }
+.drawer-sub { font-size: 12px; color: var(--text-2); }
+#chapter-list .item { display: flex; gap: 10px; align-items: baseline; }
+#chapter-list .item .no {
+  flex: none;
+  min-width: 26px;
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+#chapter-list .item.on { color: var(--accent); font-weight: 600; }

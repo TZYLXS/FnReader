@@ -645,23 +645,30 @@ async function openReader(bookUrl) {
 function renderReaderShell() {
   const { book } = state.reader;
   view.innerHTML = `
-    <div class="reader">
-      <header class="reader-head">
+    <div class="reader kindle">
+      <header class="reader-head" id="reader-head">
         <button class="icon-btn" id="back">‹</button>
-        <div class="title" id="chapter-title">${esc(book.name)}</div>
+        <div class="title" id="book-title">${esc(book.name)}</div>
         <button class="icon-btn" id="catalog">☰</button>
         <button class="icon-btn" id="reader-settings">Aa</button>
       </header>
-      <article class="article" id="article"></article>
-      <div class="reader-foot">
-        <button class="btn" id="prev">上一章</button>
-        <button class="btn primary" id="next">下一章</button>
-      </div>
+      <main class="article-wrap">
+        <article class="article" id="article"></article>
+      </main>
+      <footer class="reader-foot" id="reader-foot">
+        <button class="foot-btn" id="prev">‹ 上一章</button>
+        <span class="foot-info" id="foot-info"></span>
+        <button class="foot-btn" id="next">下一章 ›</button>
+        <span class="foot-progress"><i id="foot-progress-bar"></i></span>
+      </footer>
     </div>
     <div class="drawer hidden" id="drawer">
       <div class="mask" id="drawer-mask"></div>
       <div class="panel">
-        <h3 id="drawer-title">目录</h3>
+        <div class="drawer-head">
+          <h3 id="drawer-title">目录</h3>
+          <span class="drawer-sub" id="drawer-sub"></span>
+        </div>
         <div class="list" id="chapter-list"></div>
       </div>
     </div>`;
@@ -675,7 +682,7 @@ function renderReaderShell() {
 
   const list = $('#chapter-list');
   list.innerHTML = state.reader.chapters
-    .map((c, i) => `<div class="item" data-i="${i}">${i + 1}. ${esc(c.title)}</div>`)
+    .map((c, i) => `<div class="item" data-i="${i}"><span class="no">${i + 1}</span>${esc(c.title)}</div>`)
     .join('');
   list.onclick = (e) => {
     const item = e.target.closest('.item');
@@ -683,6 +690,9 @@ function renderReaderShell() {
     toggleDrawer();
     gotoChapter(Number(item.dataset.i));
   };
+
+  const sub = $('#drawer-sub');
+  if (sub) sub.textContent = `共 ${state.reader.chapters.length} 章`;
 }
 
 function toggleDrawer() {
@@ -702,10 +712,10 @@ async function loadChapter(index) {
   r.index = index;
   const article = $('#article');
   article.innerHTML = `<div class="loading"><span class="spinner"></span> 正在加载…</div>`;
-  $('#chapter-title').textContent = r.chapters[index].title;
   $$('#chapter-list .item').forEach((el) => el.classList.toggle('on', Number(el.dataset.i) === index));
   $('#prev').disabled = index === 0;
   $('#next').disabled = index >= r.chapters.length - 1;
+  updateReaderMeta();
 
   const data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}`).catch((e) => ({ error: e.message }));
   if (r.index !== index) return;
@@ -714,13 +724,32 @@ async function loadChapter(index) {
     return;
   }
   article.innerHTML = '';
+  const h = document.createElement('h2');
+  h.className = 'chapter-head';
+  h.textContent = r.chapters[index].title;
+  article.appendChild(h);
   for (const p of data.paragraphs) {
     const el = document.createElement('p');
     el.textContent = p;
     article.appendChild(el);
   }
+  updateReaderMeta();
   window.scrollTo(0, 0);
   saveProgress();
+}
+
+/** 顶部书名、底部进度、进度条 */
+function updateReaderMeta() {
+  const r = state.reader;
+  if (!r) return;
+  const total = r.chapters.length || 1;
+  const pct = Math.round(((r.index + 1) / total) * 100);
+  const bt = $('#book-title');
+  if (bt) bt.textContent = r.book.name;
+  const info = $('#foot-info');
+  if (info) info.textContent = `${r.index + 1} / ${total} · ${pct}%`;
+  const bar = $('#foot-progress-bar');
+  if (bar) bar.style.width = pct + '%';
 }
 
 function gotoChapter(index) {
@@ -1331,6 +1360,7 @@ function showHelp(manual = false) {
 
 function maybeShowFirstRunHelp() {
   if (parseHash().params.get('log') === '1') return;
+  if (parseHash().params.get('help') === '0') return;
   let seen = false;
   try {
     seen = localStorage.getItem(HELP_KEY) === '1';
@@ -1436,7 +1466,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.6.15 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.0 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
