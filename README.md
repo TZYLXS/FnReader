@@ -1,256 +1,295 @@
-# FnReader · 飞牛 fnOS 阅读器
+# FnReader：把 Legado 书源生态移植到飞牛 fnOS 的 Web 阅读器
 
-把 [Legado（阅读）](https://github.com/gedoor/legado) 的书源生态带到飞牛 fnOS：不装模拟器，打开就是一个网页书架。
-交流群：778213624
+**摘要**　Legado（阅读）是 Android 上最完整的开源阅读器，它的价值不在界面，而在积累下来的数千条社区书源规则。但这套规则只能在 Android 客户端里执行，桌面上没有等价实现，飞牛 fnOS 这类 NAS 系统更无从使用。本文把 Legado 的书源能力重做成一个跑在 NAS 上的 Web 应用：服务端用 Node.js 重新实现规则引擎（CSS、XPath、JSONPath、正则、`@` 选择器链、索引语法、`@js:` 沙箱），客户端是零构建步骤的原生 JS 单页应用，整体按飞牛 FPK 应用格式打包，通过系统统一网关暴露。移植过程中真正花时间的不是把规则跑通，而是三类摩擦：一是 Legado 规则里的 PCRE 写法与 JavaScript 正则的语义差异，二是书源站点普遍存在的「最新章节」与「完整目录」两套结构，三是 fnOS 平台自身的约束——覆盖安装不生效、WebView 缓存旧页面、应用没有系统安装权限。全文记录了这些问题的现象、定位依据与处理方式。当前版本 1.7.11，安装包 588 KB，端到端测试 35 条断言全绿，实测导入书源 1062 条，缓存命中的翻页约 20 ms，整本导出 TXT 单本 860 KB。
 
-- **书源**：直接导入 Legado 3.x 书源 JSON，规则引擎实现了 CSS / XPath / JSONPath / 正则 / `@js:` 沙箱 / `@` 选择器链 / 索引语法
-- **阅读**：书架、目录、正文、进度同步、主题/字号/行距
-- **搜索**：多书源并发 + 结果流式返回；命中学术词时自动只搜学术源
-- **订阅**：内置 RSS / Atom 阅读
-- **下载**：整本抓取并合并为 TXT，可选保存到 fnOS 授权目录
-- **离线加速**：章节正文磁盘缓存 + 后台预取，翻页约 20ms
-- **手机接入**：`/api/m/*` 接口（令牌鉴权）供安卓 App 读取书架、目录、正文、进度
-- **「阅读」APK 接入**：一键生成 Legado 书源导入链接，老安卓设备（4.4–5.1）装 [yuedu-android4](https://github.com/TZYLXS/yuedu-android4) 即可直连飞牛书库
-- **WebDAV**：`/dav/` 把书架挂进文件管理器，也可直接给 Legado 的 WebDAV 备份用（客户端零改动）
-- **应用内更新**：设置页检查 GitHub Release、下载 fpk 并给出安装指引
-- **AI 友好**：结构扁平、无构建步骤，README 内附可直接复制的提示词，方便用 AI 继续开发
-
-![书架](docs/screenshots/shelf.png)
-
+**关键词**　Legado 书源；规则引擎；飞牛 fnOS；FPK；WebDAV；Node.js
 
 ---
 
-## 安装
+## 1 引言
 
-1. 从 [Releases](https://github.com/TZYLXS/FnReader/releases) 下载最新的 `legado-web.fpk`（打 tag 时由 CI 从源码构建，仓库不再提交旧包）
-2. 飞牛「应用中心 → 手动安装」选择该文件
-3. 桌面出现「阅读」图标，点击即可（走统一网关 `/app/legado-web/`）
+Legado 的书源是一份 JSON 描述：搜索地址、列表选择器、各字段抽取规则、目录与正文规则。规则里可以嵌 CSS 选择器、XPath、正则替换，也能写 `@js:` 调用脚本。这套机制让同一个客户端适配了几千个站点，但执行环境被绑死在 Android —— 规则解析器是 Kotlin 写的，`java.ajax` 之类的 API 只在安卓运行时里存在。
 
-依赖系统应用 `nodejs_v22`，安装时会自动拉起。
+NAS 用户的实际诉求很朴素：不想为了看小说再开一台设备。飞牛 fnOS 提供了应用商店与一键安装的 FPK 格式，缺的只是一个能跑规则的阅读器。于是有了本文的工作：**用 Node.js 重写规则引擎，把 Legado 的书源直接搬进 NAS 的浏览器**。
 
-> **升级注意**：fnOS 的 `appcenter-cli install-fpk` 不支持覆盖升级（会提示成功但文件不变）。
-> 升级请先卸载再安装；数据目录 `/vol2/@appdata/legado-web` 会保留。
-> 也可以打开应用内「设置 → 版本更新」检查新版本并下载更新包。
+移植路线上有两个约束是硬的，先摆出来。其一，Legado 的规则语法没有正式规范，只能对着社区书源反推语义，所以引擎必须「宽容」——遇到不认识的写法要降级而不是崩溃。其二，fnOS 的更新链路与 Linux 包管理完全不同：`appcenter-cli install-fpk` 对已安装应用返回成功但不替换文件，应用本身也没有系统安装权限。后文的设计选择大多由这两点推出来。
 
-## 使用
+---
 
-1. **书源** → 导入 Legado 书源 JSON（粘贴 / 链接 / 文件），或使用 [dist/](dist/) 里的示例源
-2. 书源很多时先点「检测」，跑完点「停用未通过」，之后搜索会快很多
-3. **搜索** → 找书 / 订阅；结果边搜边出，可随时停止
-4. 书架点封面继续阅读；右上角「⋯」或长按封面可下载 TXT、刷新目录、删除
+## 2 系统约束与总体架构
 
-详细说明见 [docs/使用说明.md](docs/使用说明.md)，版本记录见 [docs/更新日志.md](docs/更新日志.md)。
+### 2.1 运行环境
 
-## 手机 / 其他客户端接入
+| 项 | 取值 |
+| --- | --- |
+| 宿主 | 飞牛 fnOS（Debian 系），应用以 `legado` 用户运行 |
+| 运行时 | `nodejs_v22`（平台依赖应用，安装时自动拉起）|
+| 入口 | 统一网关 `/app/legado-web/`，同时监听 `:1122` 与 `app.sock` |
+| 数据目录 | `/vol2/@appdata/legado-web`（升级保留）|
+| 包格式 | FPK（`manifest` + `config/privilege` + `cmd/main` + `app/`）|
+| 产物大小 | 588 KB（含前端、服务端 bundle 与更新日志）|
 
-应用自带两种接入方式，客户端无需改代码：
+### 2.2 分层
 
-**WebDAV**（给 Legado 的备份/恢复用，或挂进文件管理器）
+服务端按职责拆成 12 个模块，彼此单向依赖：
+
+| 模块 | 职责 |
+| --- | --- |
+| `server.js` | HTTP 路由、SSE 搜索、下载任务、更新检查、手机 API、生命周期 |
+| `books.js` | 搜索 / 详情 / 目录 / 正文的完整流程，结果过滤与目录补全 |
+| `rules.js` | 规则解析与求值（`@` 链、`class./text.` 前缀、索引、`##替换##`）|
+| `xpath.js` | 精简 XPath 引擎（`//a/@href`、`text()`、`position()`）|
+| `jsrules.js` | `@js:` 规则沙箱（`node:vm`），模拟少量 `java.*` API |
+| `util.js` | 出站请求：超时、重试、全局并发信号量（4）|
+| `store.js` / `minidb.js` | 书源 / 书架 / 配置落盘；JSONL 键值库 |
+| `cache.js` / `searchcache.js` | 章节正文磁盘缓存；搜索结果缓存（键带版本前缀）|
+| `replace.js` | 替换 / 屏蔽规则（兼容 Legado `exportReplaceRule.json`）|
+| `article.js` | 订阅条目正文抽取 |
+| `dav.js` | WebDAV：`/dav/books` 只读、`/dav/backup` 读写 |
+
+---
+
+## 3 书源规则引擎
+
+### 3.1 规则语法的还原
+
+Legado 的规则没有规范文档，这里按社区书源的实际用法归纳出四层：
+
+1. **选择器层**：`class.xx`、`tag.xx`、`id.xx`、`text.xx`，对应 CSS 的 `.xx`、`xx`、`#xx` 与文本匹配；
+2. **链式层**：`@` 分隔多级选择，例如 `id.chapterlist@p@a`；
+3. **索引层**：`a.0`（第 0 个）、`p!0`（倒数第 0 个）、`li.1:2:3`（多个下标）；
+4. **后处理层**：`##正则##替换` 与 `:正则` 提取。
+
+其中 `@` 链与索引是移植重点——它们不是标准 CSS，必须自己解析。实现上把规则切成段落（`parseSegment`），逐段求值并把结果集传给下一段，遇到属性写法（`@href`、`@text`）直接在当前节点上取值。
+
+### 3.2 PCRE 与 JavaScript 正则的差异
+
+书源里的正则大量使用 PCRE 特性，直接 `new RegExp` 会报错。实测一份 38 条规则的 `exportReplaceRule.json`，其中 20 条是正则，有 5 条在 JS 里无法直接编译：
+
+| PCRE 写法 | JS 处理 |
+| --- | --- |
+| `(?i)` / `(?mi)` 内联修饰符 | 提取为 `i` / `m` flag，出现在中间的删掉 |
+| `\h`（水平空白） | 改写为 `[ \t]` |
+| `\R`（任意换行） | 改写为 `\n` |
+| 变长后行断言 | V8 支持，直接保留 |
+
+改写后 20/20 全部编译通过。单条规则失败被 `try/catch` 吞掉，不影响其余规则。
+
+### 3.3 `@js:` 沙箱
+
+规则里的 `replacement` 允许写 `@js:` 脚本，Legado 里这些脚本能调 `java.ajax`、`base64Decode` 等。移植时用 `node:vm` 建沙箱，提供 `result`、`getString`、`base64Encode/Decode`、`md5Encode` 等常用函数；`java.ajax` 用同步 HTTP 兜底并要求显式超时——早期版本正是因为在下载线程里同步执行 `java.ajax` 导致应用假死。
+
+### 3.4 结果过滤
+
+期刊杂志类站点会把「2026年第11期」这类期号当成书名返回。判定规则分三档：
 
 ```
-http://<飞牛IP>:1122/dav/
-用户名：任意        密码：设置页里的访问令牌
+^\d{4}年\s*(第)?\d{1,2}期                 → 期刊期号，丢弃
+^\d{4}[-./年]\d{1,2}([-./月]\d{1,2})?$    → 纯日期，丢弃
+第\d{1,3}期$ 且作者为「未知作者」           → 丢弃
 ```
 
-- `/dav/books/` 书架里已下载的书籍（只读，.txt）
-- `/dav/backup/` 可读写，接 Legado「备份与恢复 → WebDAV」
+单纯含「第…期」但作者正常的结果保留，避免误杀正经书名。
 
-**HTTP API**（给自建客户端用）
+### 3.5 目录补全
+
+书源站点常见两套结构：书页顶部「最新章节」（十几条）与单独的完整目录页。若 `ruleToc.chapterList` 命中的是前者，用户看到的就是「这本书只有 12 章」。
+
+处理方式是补全后校验：
+
+1. 目录少于 30 章时，先在书页上找「全部章节 / 完整目录」链接；
+2. 再尝试 `<书页>/index.html`、`<书页>/all.html`；
+3. 新目录必须比原目录多 50% 以上、且包含原目录至少一半的章节才采用。
+
+实测某书源的书页只暴露 12 章（第 38–49 章），换到另一个书源后为 **497 章**（首章「后记」，末章「李檀斯」）——这也正是「换源」功能存在的意义。
+
+---
+
+## 4 数据与缓存
+
+数据全部落在 `/vol2/@appdata/legado-web`，升级不丢：
+
+| 文件 | 内容 |
+| --- | --- |
+| `sources.json` | 书源数组（实测 1062 条）|
+| `books.json` | 书架（含阅读进度）|
+| `config.json` | 设置、`apiToken`、保存目录 |
+| `downloads.json` | 下载索引 |
+| `library.json` | 已缓存书籍清单（书名 / 来源 / 章节数）|
+| `db/search-cache.jsonl` | 搜索结果缓存 |
+| `cache/` | 章节正文缓存 |
+| `webdav/backup/` | WebDAV 备份区 |
+
+两级缓存各管一段：
+
+- **搜索结果缓存**：键为「最终请求 URL + 请求体」的 SHA1（带 `v3` 版本前缀，改逻辑就换前缀）。命中直接返回，空结果只缓存 10 分钟。实测同一关键词连搜两次，缓存条目数不变，说明全部命中。
+- **章节缓存**：正文落盘并按章节索引预取后两章，缓存命中的翻页约 20 ms。
+
+---
+
+## 5 客户端与阅读体验
+
+前端是单个 `app.js`（约 1900 行）+ `style.css`，按 `renderXxx()` 划分页面，无框架、无构建步骤。
+
+### 5.1 阅读页
+
+采用类 Kindle 的排版（图 3）：顶栏半透明毛玻璃、衬线正文、首行缩进 2em、两端对齐；底部固定条显示 `4 / 50 · 8%` 与一条 2 px 进度线。顶栏右侧的 `⇄` 为换源入口，`☰` 为目录抽屉（带章节序号与「共 N 章」）。
+
+### 5.2 搜索、详情与换源
+
+搜索结果流式返回（SSE），可按「仅可用 / 全部书源 / 分组」筛选，并显示「其中 N 个命中缓存」（图 2）。点卡片进入详情页（图 4），详情页可直接加入书架，或在书架中直接开始阅读。
+
+换源按书名跨源重搜，按「完全一致 → 包含 → 被包含」排序，最多 30 条；切换后按**章节标题**定位，尽量停在原来那一章。
+
+### 5.3 订阅
+
+RSS / Atom 条目可一键「加入书架」，同一订阅永远映射到同一本书（`bookUrl = feed://<订阅地址>`），刷新时按条目链接去重，只把新条目插到最前。正文按条目链接抓取原文，抽取优先级为 `article` → `.post-content` → `#content` → `main`，结果进内存缓存（上限 300 条）。
+
+---
+
+## 6 打包、部署与更新
+
+### 6.1 FPK 打包
+
+`tools/build-fpk.sh` 做四件事：esbuild 把服务端打成单文件 bundle → 组装 `build/legado-web/` → 校验关键文件 → `fnpack build` 产出 588 KB 安装包。更新日志随后打进 `app/web/docs/changelog.txt`，应用内「更新日志」弹窗直接读这个文件。
+
+### 6.2 缓存与版本自愈
+
+静态资源带 `?v=<版本>` 指纹，服务端对 `.html/.js/.css/.txt` 下发 `no-cache`。早期版本给 `app.js` 设了 `max-age=86400`，结果用户端缓存了旧页面、界面一直显示旧版本号——这个坑的解法是**页面自校验**：
+
+```js
+fetch('./api/health?ts=' + Date.now(), { cache: 'no-store' })
+  .then(r => r.json())
+  .then(d => {
+    if (d.version !== meta.content) location.replace(url + '?b=' + d.version);
+  });
+```
+
+带 `b=` 参数时不再重载，避免服务端与页面版本不一致时的死循环。
+
+### 6.3 更新链路
+
+`/api/update/check` 读 GitHub Release 并比对版本；`/api/update/download` 把 fpk 下到 `更新包/` 子目录。国内网络下 `github.com` 的 release 资源会跳转到 `release-assets.githubusercontent.com`，该域名直连超时，因此下载按顺序回退四个通道（直链 + 三个镜像），并校验文件大小（<10 KB 视为失败）。
+
+自动安装需要免密权限。`tools/enable-update-permission.sh` 写入一条 sudoers 规则：
 
 ```
-GET /api/m/shelf | /api/m/toc | /api/m/content | /api/m/cover
-GET /api/m/search?key=...      POST /api/m/progress
-请求头：X-Api-Token: <访问令牌>
+legado ALL=(root) NOPASSWD: /usr/local/bin/appcenter-cli
 ```
 
-详见 [docs/WebDAV接入.md](docs/WebDAV接入.md) 与 [docs/手机接入API.md](docs/手机接入API.md)。
+有权限时后台执行 `stop → install-fpk → start`（应用会被自己停掉，所以必须 detach），无权限则回退为手动安装指引。
 
-## 用 AI 继续开发
+---
 
-这个项目刻意做成了「AI 友好」的结构：没有构建步骤、没有前端框架、目录扁平、测试自带模拟站点。
-把仓库丢给任意 AI，粘一段下面的提示词，它就能自己上手改。
+## 7 对外接口
 
-### 先让它建立上下文
+| 能力 | 路径 | 鉴权 |
+| --- | --- | --- |
+| WebDAV | `/dav/books/`（只读）、`/dav/backup/`（读写）| Basic，密码 = apiToken |
+| 手机 API | `/api/m/shelf`、`/library`、`/toc`、`/content`、`/progress` | `X-Api-Token` |
+| 书源桥 | `/api/m/booksource`、`/api/m/legado/{search,book,toc}` | `X-Api-Token` |
+
+WebDAV 让 Legado 的「备份与恢复 → WebDAV」直接指向 NAS；书源桥则把书架包装成一条 Legado 书源，安卓端导入后即可读 NAS 上的内容。
+
+---
+
+## 8 测试与结果
+
+`test/e2e.js` 自带模拟书源站，覆盖导入、搜索、加入书架、目录、正文分页、进度、下载、订阅等 35 条断言，全部通过。
+
+| 指标 | 实测值 |
+| --- | --- |
+| 安装包 | 588 KB |
+| 书源导入 | 1062 条（历史最大 1146 条）|
+| 单章翻页 | 约 20 ms（缓存命中）|
+| 搜索（3 源）| 164 本，其中 3 源命中缓存 |
+| 整本 TXT | 单本 860 KB（2494 段）|
+| WebDAV 取书 | 200，860 KB |
+| 替换规则 | 38 条导入，20 条正则全部编译通过 |
+
+---
+
+## 9 已知限制
+
+1. **规则覆盖不全**：书源语法没有规范，冷门写法仍可能失败；
+2. **目录可能不完整**：若站点既无「全部章节」链接、也无 `index.html`，且规则只匹配最新章节区块，则无法补全——此时应换源；
+3. **无法原地覆盖安装**：`appcenter-cli install-fpk` 对已安装应用不替换文件，升级必须 `uninstall → install`（数据目录保留）；
+4. **下载源受网络影响**：release 资源依赖镜像回退，镜像失效时需手动下载；
+5. **反爬与 WebView 规则**：依赖 WebView 执行的规则无法在服务端还原，这类书源会被跳过。
+
+---
+
+## 10 用 AI 继续开发
+
+项目刻意做成「AI 友好」：无构建步骤、无框架、目录扁平、测试自带模拟站。把仓库交给 AI 后粘下面这段即可开工（更细的说明见 [docs/AI构建指南.md](docs/AI构建指南.md)，内含 8 段可直接复制的提示词）。
 
 ```text
-你是 FnReader（飞牛 fnOS 上的 Legado 书源阅读器）的开发者。请先按顺序读这些文件建立上下文：
-1. docs/AI构建指南.md      项目结构、数据流、常见坑
-2. legado-web/manifest      版本与依赖
-3. legado-web/app/server/src/server.js   路由总入口（很长，先看路由分发）
-4. legado-web/app/server/src/books.js    搜索 / 目录 / 正文主流程
-5. legado-web/app/web/app.js             前端单页应用（按 renderXxx 划分）
-6. test/e2e.js              验收标准
+你是 FnReader（飞牛 fnOS 上的 Legado 书源阅读器）的开发者。请先按顺序读：
+1. docs/AI构建指南.md   2. legado-web/manifest
+3. server/src/server.js 4. server/src/books.js
+5. app/web/app.js       6. test/e2e.js
 
 读完向我复述：服务端有哪些模块、前端有几个页面、数据存在哪里、怎样才能发一版。
 不要先写代码。
 ```
 
-### 修 bug
+约定（AI 与人都遵守）：
 
-```text
-项目：FnReader（Node.js 服务端 + 原生 JS 前端，飞牛 FPK 应用）。
+- 服务端接口放 `server.js` 的 `route()`，移动端接口走 `checkApiToken`；
+- 前端新页面 = `renderXxx()` + `router` 注册；样式追加到 `style.css` 末尾；
+- 不引入前端框架与新的 npm 依赖；
+- 改动要补 `test/e2e.js` 断言；
+- **每次改动都要推源码并发版**：`bash tools/publish.sh "说明"`。
 
-现象：<把报错、截图、复现步骤贴这里>
+---
 
-请：
-1. 先在代码里定位根因（给出 文件:行号），说明为什么会这样，不要猜；
-2. 给出最小修复；
-3. 说明会不会影响已有接口的返回结构；
-4. 按「收尾自检」一节自测。
-```
-
-### 加功能
-
-```text
-在 FnReader 里新增功能：<一句话描述>。
-
-约定（必须遵守）：
-- 服务端接口放 server.js 的 route() 里，路径 /api/ 开头，出错统一 json(res, 4xx/5xx, {error})
-- 移动端接口放 /api/m/*，走 checkApiToken
-- 前端：新页面 = app.js 里加 renderXxx() + router 注册 path；样式追加到 style.css 末尾
-- 不引入前端框架，不新增 npm 依赖（除非我同意）
-- 改完在 test/e2e.js 补一条断言
-
-先给我改动清单（文件 + 函数 + 大致行数），确认后再写代码。
-```
-
-### 适配新的书源规则
-
-```text
-书源规则解析在 legado-web/app/server/src/rules.js，XPath 在 xpath.js。
-
-有个 Legado 书源用了我们还不支持的写法：<贴规则片段>
-
-请：1) 对照 Legado 语法说明这条规则的语义；2) 指出 rules.js 里哪个函数负责解析
-（parseSegment / evalString / evalRule）；3) 补上支持并在 test/e2e.js 加断言。
-```
-
-### 调界面
-
-```text
-FnReader 前端是原生 JS，没有构建步骤。
-要改的是：<页面/组件>，期望效果：<描述或参考图>。
-
-约束：
-- 只用 CSS 变量（--bg / --panel / --line / --text / --text-2 / --accent），不要写死颜色
-- 移动端优先，360–500px 不能溢出
-- 新增样式追加到 style.css 末尾，别改旧规则
-- 改完告诉我怎么本地预览（node test/preview.js）
-```
-
-### 收尾自检（每个任务都加这段）
-
-```text
-完成前请自查：
-1. node test/e2e.js 是否全绿？失败项是哪条？
-2. 有没有改动 /api/books、/api/toc、/api/content 的返回字段？（前端依赖，改了要同步）
-3. 新增接口有没有参数校验和错误处理？
-4. 有没有把密码、token、个人路径写进代码或文档？
-5. 是否需要跟着改 docs/更新日志.txt？
-```
-
-### 懒人版
-
-```text
-这是 FnReader 的源码（飞牛 fnOS 上的 Legado 阅读器）。先读 docs/AI构建指南.md，
-然后帮我：<你的需求>。改完跑 node test/e2e.js，全绿再来找我。
-```
-
-### 发版
-
-```text
-请给 FnReader 发一版：
-1. python tools/release.py "一句话说明；第二条" --build
-2. 把 dist/legado-web.fpk 传到 GitHub Release
-3. 提醒我：fnOS 覆盖安装无效，必须 uninstall → install-fpk
-
-发版前先跑 node test/e2e.js，必须全绿。
-```
-
-> 更细的说明（每个服务端文件的职责、数据流、7 条常见坑、改哪里对照表）见
-> [docs/AI构建指南.md](docs/AI构建指南.md)。
-**「阅读」APK 接入**（Android 4.4–5.1 老设备）
-
-设置页 →「阅读 APK 接入」→ 复制 `legado://import/bookSource?src=...` 链接，
-在 [yuedu-android4](https://github.com/TZYLXS/yuedu-android4) 的 APK 里「网络导入」即可搜书看正文。
-详见 [docs/APK接入.md](docs/APK接入.md)。
-
-## 构建
-
-需要 Node.js 18+ 与 [fnpack](https://developer.fnnas.com/docs/cli/fnpack/)。
-
-```bash
-# 安装依赖（服务端用 cheerio + esbuild）
-cd legado-web/app/server && npm install && cd -
-
-# 打包，产物输出到 dist/legado-web.fpk
-bash tools/build-fpk.sh
-```
-
-本地调试服务端：
-
-```bash
-cd legado-web/app/server
-PORT=1122 LEGADO_DATA=./data node src/server.js
-```
-
-端到端测试（内置模拟书源站，无需外网）：
-
-```bash
-node test/e2e.js
-```
-
-## 发版
-
-每次改动都走同一条流程——递增版本号、写更新日志、同步静态资源指纹、打包：
-
-每次改动都要推源码 + 发版，一条命令搞定：
-
-```bash
-bash tools/publish.sh "修复了 xxx；新增了 yyy"
-```
-
-它会：升版本 → 写更新日志 → 打包 fpk → 提交并推送 main → 打 `v<版本>` tag。
-推 tag 后 GitHub Actions 自动构建并发布 Release（附 `legado-web.fpk`）。
-
-只看计划不落盘：`python tools/release.py "说明" --dry-run`。
-
-## 项目结构
+## 附录 A 项目结构
 
 ```
-legado-web/            fnOS 应用包工程
-├── manifest           应用元信息（版本、依赖、端口）
-├── config/            privilege / resource
-├── cmd/               生命周期脚本（start/stop/status）
+legado-web/            FPK 工程
+├── manifest           版本、依赖、端口
+├── config/            privilege（run-as package）、resource
+├── cmd/               start / stop / status 生命周期
 ├── app/ui/            桌面入口与图标
-├── app/web/           前端（原生 JS 单页应用）
-└── app/server/src/    服务端（Node.js）
-    ├── books.js       搜索 / 详情 / 目录 / 正文流程
-    ├── rules.js       书源规则解析与求值
-    ├── xpath.js       精简 XPath 引擎
-    ├── jrules.js      @js: 规则沙箱
-    ├── academic.js    学术关键词识别
-    ├── searchcache.js 搜索结果缓存（嵌入式 KV）
-    └── server.js      HTTP 服务与接口
-
-tools/                 构建、发版、部署脚本
-docs/                  使用说明、更新日志、截图
-dist/                  发布产物（fpk、示例书源）
-test/                  端到端测试与模拟站点
+├── app/web/           前端（index.html / app.js / style.css）
+└── app/server/src/    服务端 12 个模块
+tools/                 build-fpk.sh / publish.sh / release.py / deploy.sh / backup.sh
+docs/                  使用说明、更新日志、AI 构建指南、手机 API、WebDAV
+dist/                  发布产物与示例书源
+test/                  e2e.js、mock-site.js、preview.js
 ```
 
-## 书源与免责
+## 附录 B 图示
 
-本项目只提供**阅读工具**，不附带任何书籍内容，也不内置盗版站点。
+![书架](docs/screenshots/shelf.png)
 
-- `dist/书源-OALib.json`：OALib 开放获取论文库
-- `dist/书源-公版书与学术.json`：Project Gutenberg（公版书）+ arXiv（预印本）
+*图 1　书架：封面、阅读进度与长按菜单*
 
-请自行确认所使用书源的合法性。
+![搜索](docs/screenshots/search.png)
 
-## 技术栈
+*图 2　搜索：多源流式返回，状态栏显示缓存命中数*
 
-前端原生 JavaScript（无框架）、服务端 Node.js（cheerio + 自研规则引擎）、打包 esbuild，应用格式为飞牛 FPK。
+![阅读页](docs/screenshots/reader.png)
+
+*图 3　阅读页：类 Kindle 排版，顶栏 `⇄` 为换源，底部为章节进度*
+
+![详情页](docs/screenshots/detail.png)
+
+*图 4　详情页：封面、来源、简介与加入书架*
+
+![书源管理](docs/screenshots/sources.png)
+
+*图 5　书源管理：分组与勾选批量删除*
+
+![设置](docs/screenshots/settings.png)
+
+*图 6　设置：手机接入、屏蔽规则、版本更新*
+
+## 参考
+
+1. gedoor. Legado（阅读）[EB/OL]. https://github.com/gedoor/legado
+2. 飞牛 fnOS 开发者文档：应用开发与 fnpack [EB/OL]. https://developer.fnnas.com/docs/
+3. 本项目源码与发布 [EB/OL]. https://github.com/TZYLXS/FnReader
 
 ## License
 
