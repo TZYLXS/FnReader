@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.7.3
+version=1.7.4
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=新增屏蔽规则：可导入 Legado 的 exportReplaceRule.json，按规则替换/删除正文与标题中的广告；支持开关、单条删除、清空。
+changelog=修复订阅卡片读取章节数时 chapters 为空导致报错的问题，改用 totalChapterNum 兜底。
