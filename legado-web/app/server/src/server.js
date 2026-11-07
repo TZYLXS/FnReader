@@ -816,9 +816,15 @@ async function route(req, res, url) {
       try {
         const target = resolveDownloadDir();
         if (target) {
-          const dir2 = path.join(target, '更新包');
-          fs.mkdirSync(dir2, { recursive: true });
-          const dest = path.join(dir2, `legado-web-${rel.version}.fpk`);
+          // 统一收在「更新包」子目录；子目录建不了就退回根目录，别让用户找不到文件
+          let dest;
+          try {
+            const dir2 = path.join(target, '更新包');
+            fs.mkdirSync(dir2, { recursive: true });
+            dest = path.join(dir2, `legado-web-${rel.version}.fpk`);
+          } catch {
+            dest = path.join(target, `legado-web-${rel.version}.fpk`);
+          }
           fs.copyFileSync(file, dest);
           try {
             fs.chmodSync(dest, 0o644);
