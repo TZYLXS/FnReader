@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.8.0
+version=1.8.1
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=新增「软总线」：设置里可查看哪些手机在线、可代理解析，支持逐台允许/暂停；新增「优先手机解析」开关：开启后搜索先交给在线设备，8 秒拿不到再本机解析；App 领任务时带 id/name/model 即自动登记为可用解析设备
+changelog=手机解析结果标记 viaPhone：这类书的目录与正文也交给手机，不再出现「搜到但没目录」；修复正文取用时的初始化顺序 bug（手机书正文返回空）；替换规则把正文全过滤时退回原文

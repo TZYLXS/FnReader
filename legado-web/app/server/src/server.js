@@ -68,6 +68,13 @@ async function loadChapterContent(book, index) {
   const chapter = book.chapters[index];
   if (!chapter) throw new Error('章节不存在');
   const key = chapter.url || `${book.bookUrl}#${index}`;
+  if (book.viaPhone) {
+    const paragraphs = await remoteContent(book, chapter).catch(() => null);
+    if (paragraphs && paragraphs.length) {
+      cacheSet(key, paragraphs);
+      return { paragraphs, cached: false };
+    }
+  }
   const mem = cacheGet(key);
   if (mem) return { paragraphs: mem, cached: true };
   const disk = diskCache.get(key);
@@ -314,7 +321,7 @@ async function handleSearchSSE(req, res, params) {
           store.config.preferRemote === true ? 8000 : 15000
         );
         if (!closed && rr.ok && rr.data && Array.isArray(rr.data.books) && rr.data.books.length) {
-          const books = rr.data.books;
+          const books = rr.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
           found += books.length;
           send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books, via: 'phone' });
           doneCount++;
@@ -361,7 +368,7 @@ async function handleSearchSSE(req, res, params) {
             15000
           );
           if (!closed && r.ok && r.data && Array.isArray(r.data.books) && r.data.books.length) {
-            const fromPhone = r.data.books;
+            const fromPhone = r.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
             found += fromPhone.length;
             send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books: fromPhone, via: 'phone' });
             doneCount++;
@@ -826,7 +833,46 @@ async function mobileSearch(key, group, limit) {
   return out;
 }
 
+/** 让手机端解析目录（返回 chapters） */
+async function remoteToc(book) {
+  const r = await remote.request(
+    'toc',
+    { source: book.origin || '', bookUrl: book.bookUrl, name: book.name },
+    20000
+  );
+  if (!r.ok || !r.data || !Array.isArray(r.data.chapters)) return null;
+  return r.data.chapters.map((c, i) => ({
+    index: i,
+    title: String(c.title || `第${i + 1}章`),
+    url: String(c.url || ''),
+  }));
+}
+
+/** 让手机端解析正文（返回段落） */
+async function remoteContent(book, chapter) {
+  const r = await remote.request(
+    'content',
+    { source: book.origin || '', chapterUrl: chapter.url, title: chapter.title, bookUrl: book.bookUrl },
+    25000
+  );
+  if (!r.ok || !r.data) return null;
+  const paras = r.data.paragraphs || r.data.content;
+  if (Array.isArray(paras)) return paras.map(String);
+  if (typeof paras === 'string') return paras.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+  return null;
+}
+
 async function handleRefreshToc(book) {
+  // 手机解析出来的书：目录也交给手机
+  if (book.viaPhone) {
+    const chapters = await remoteToc(book).catch(() => null);
+    if (chapters && chapters.length) {
+      book.chapters = chapters;
+      book.totalChapterNum = chapters.length;
+      store.upsertBook(book);
+      return chapters;
+    }
+  }
   const source = store.findSource(book.origin);
   if (!source) throw new Error('未找到书源，可能已被删除');
   if (!book.tocUrl) await getBookInfo(source, book);
@@ -1869,7 +1915,11 @@ async function route(req, res, url) {
     // 应用「替换 / 屏蔽」规则（去掉正文里的广告、推广信息）
     const rules = replaceRules.load(store.dataDir);
     const title = replaceRules.applyText(rules, chapter.title, 'title');
-    const paragraphs = replaceRules.applyToParagraphs(rules, result.paragraphs);
+    let paragraphs = replaceRules.applyToParagraphs(rules, result.paragraphs);
+    // 兜底：规则把内容全过滤掉时，退回原文，避免「正文为空」
+    if ((!paragraphs || !paragraphs.length) && result.paragraphs && result.paragraphs.length) {
+      paragraphs = result.paragraphs;
+    }
     return json(res, 200, {
       title,
       index,

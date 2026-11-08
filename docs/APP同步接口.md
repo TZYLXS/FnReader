@@ -405,3 +405,32 @@ POST /api/bus/toggle
 | 开启 | 先问在线设备（最多等 8 秒），拿不到再本机解析 |
 
 返回结果里 `via: "phone"` 表示这条来自手机，网页上会标「📱 手机解析」。
+
+### 11.5 手机解析的书，目录和正文也走手机
+
+搜索阶段由手机返回的书会带上 `viaPhone: true`。这类书加入书架后：
+
+| 操作 | 服务端行为 |
+| --- | --- |
+| 打开目录 | 发 `toc` 任务给手机，等 `chapters` 回传后写进书架（`totalChapterNum` 同步） |
+| 阅读正文 | 发 `content` 任务给手机，等 `paragraphs` 回传后进缓存 |
+
+任务载荷：
+
+```json
+// toc
+{ "source": "https://…", "bookUrl": "https://…", "name": "书名" }
+// 回传
+{ "chapters": [ { "title": "第一章", "url": "https://…" } ] }
+
+// content
+{ "source": "https://…", "chapterUrl": "https://…", "title": "第一章" }
+// 回传
+{ "paragraphs": ["第一段", "第二段"] }
+```
+
+超时（目录 20 秒 / 正文 25 秒）或手机不在线时，服务端会退回本地书源解析；
+本地也没有该源时书架会显示「目录为空」。
+
+> 所以 App 端必须实现 `toc` 与 `content` 两种任务，只回 `search` 会导致
+> 「书能搜到、点开没目录」。
