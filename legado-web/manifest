@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.8.1
+version=1.8.2
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=手机解析结果标记 viaPhone：这类书的目录与正文也交给手机，不再出现「搜到但没目录」；修复正文取用时的初始化顺序 bug（手机书正文返回空）；替换规则把正文全过滤时退回原文
+changelog=书源规则补齐官方写法：@css:/@xpath:/@json:/@regex:/@text:/@js: 显式前缀；&& 改为真正的拼接语义，支持括号分组与 @text: 常量片段；新增取值尾缀 @innerText / @length / @outerHTML；新增 test/rule-syntax.js（13 条断言）

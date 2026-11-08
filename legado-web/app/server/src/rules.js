@@ -271,8 +271,14 @@ function getterValue($, node, getter) {
       return el.attr('value') || '';
     case 'html':
       return el.html() || '';
+    case 'outerhtml':
     case 'outerHtml':
       return $.html(node) || '';
+    case 'innertext':
+      return (el.text() || '').replace(/\s+/g, ' ').trim();
+    case 'length':
+    case 'size':
+      return String(el.length);
     case 'ownText': {
       const clone = el.clone();
       clone.children().remove();
@@ -383,6 +389,10 @@ function evalRule(ruleStr, ctx, opts = {}) {
     }
   }
 
+  // 显式前缀（@css: / @text: …）与 && 拼接
+  const prefixed = evalWithPrefixes(rule, ctx, opts);
+  if (prefixed) return prefixed;
+
   const alternatives = parseRule(rule);
   if (!alternatives.length) return { values: [], nodes: [] };
 
@@ -458,6 +468,121 @@ function evalRule(ruleStr, ctx, opts = {}) {
     }
 
     if (values.length) return { values, nodes: outNodes };
+  }
+  return { values: [], nodes: [] };
+}
+
+/** 显式前缀选择器：@text: / @css: / @xpath: / @json: / @regex: / @js: */
+function evalPrefixed(piece, ctx, opts = {}) {
+  let raw = String(piece).trim();
+  // 拆出尾部的 ##正则##替换
+  let clean = null;
+  const cleanMatch = raw.match(/^(.*?)##([^#]+)##(.*)$/);
+  if (cleanMatch) {
+    raw = cleanMatch[1].trim();
+    clean = { pattern: cleanMatch[2], replacement: cleanMatch[3] };
+  }
+  const m = raw.match(/^@(text|css|xpath|json|regex|js):([\s\S]*)$/i);
+  if (!m) return null;
+  const kind = m[1].toLowerCase();
+  let body = m[2];
+
+  if (clean) {
+    const inner = evalPrefixed(raw, ctx, opts);
+    if (!inner) return null;
+    try {
+      const re = new RegExp(clean.pattern, 'g');
+      return {
+        values: inner.values.map((v) => String(v).replace(re, clean.replacement)),
+        nodes: inner.nodes,
+      };
+    } catch {
+      return inner;
+    }
+  }
+
+  if (kind === 'text') return { values: [body], nodes: [] };
+
+  if (kind === 'json') {
+    if (ctx.json === undefined) return { values: [], nodes: [] };
+    const vs = jsonPath(ctx.json, body.trim());
+    return {
+      values: vs.map((v) => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))),
+      nodes: vs.map((v) => ({ type: 'json', value: v })),
+    };
+  }
+
+  if (kind === 'regex') {
+    const src = ctx.doc && ctx.doc.html ? ctx.doc.html : '';
+    let re;
+    try {
+      re = new RegExp(body.trim());
+    } catch {
+      return { values: [], nodes: [] };
+    }
+    const mm = src.match(re);
+    if (!mm) return { values: [], nodes: [] };
+    return { values: [mm.length > 1 && mm[1] !== undefined ? mm[1] : mm[0]], nodes: [] };
+  }
+
+  if (kind === 'xpath') {
+    // 我们的 XPath 支持 // 表达式，交给通用解析处理
+    return evalRule(body.trim(), ctx, opts);
+  }
+
+  if (kind === 'css') {
+    const raw = body.trim();
+    const getterMatch = raw.match(/@([A-Za-z_][\w-]*)$/);
+    const sel = (getterMatch ? raw.slice(0, getterMatch.index) : raw).trim();
+    const getter = getterMatch ? getterMatch[1].toLowerCase() : 'text';
+    if (!sel || !ctx.doc) return { values: [], nodes: [] };
+    let nodes;
+    try {
+      nodes = ctx.doc.$(sel).toArray();
+    } catch {
+      return { values: [], nodes: [] };
+    }
+    const $ = ctx.doc.$;
+    return { values: nodes.map((n) => getterValue($, n, getter)), nodes };
+  }
+
+  if (kind === 'js') {
+    const out = runJs(body, {
+      result: ctx.doc && ctx.doc.html ? ctx.doc.html : '',
+      baseUrl: ctx.baseUrl,
+      book: ctx.book,
+      source: ctx.source,
+      key: ctx.key,
+      page: ctx.page,
+      getString: (r) => evalRule(r, ctx, opts).values.join('\n'),
+    });
+    return { values: [String(out)], nodes: [] };
+  }
+
+  return null;
+}
+
+/** 带 && 拼接与前缀支持的段求值 */
+function evalWithPrefixes(ruleStr, ctx, opts = {}) {
+  const text = String(ruleStr || '');
+  if (!/@(text|css|xpath|json|regex|js):/i.test(text)) return null;
+
+  const alternatives = splitTop(text, '||');
+  for (const alt of alternatives) {
+    const pieces = splitTop(alt, '&&').map((x) => x.trim()).filter(Boolean);
+    const values = [];
+    for (const piece of pieces) {
+      let target = piece;
+      // 去掉外层括号，避免同一表达式被反复求值
+      while (target.startsWith('(') && target.endsWith(')')) target = target.slice(1, -1).trim();
+      // 分组里可能还有 ||，整体交给 evalRule 处理
+      const r = target.includes('||')
+        ? evalRule(target, ctx, opts)
+        : evalPrefixed(target, ctx, opts) || evalRule(target, ctx, opts);
+      const v = (r.values || []).filter((x) => x !== undefined && x !== null && String(x) !== '');
+      values.push(...v);
+    }
+    if (values.length) return { values: [values.join('')], nodes: [] };
   }
   return { values: [], nodes: [] };
 }
