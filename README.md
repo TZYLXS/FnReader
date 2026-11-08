@@ -209,6 +209,8 @@ POST /api/m/progress/batch                # 批量回传阅读进度
 `/api/m/sync` 返回 `shelf`（书名/作者/封面/来源/目录总数/阅读进度）、`progress`（可单独做进度同步）、
 `sources`（总数/启用数/分组统计/源列表）。字段与示例响应见 [docs/APP同步接口.md](docs/APP同步接口.md)。
 
+要把客户端已缓存的书整本推到 NAS，见 [docs/客户端缓存上传指南.md](docs/客户端缓存上传指南.md)（扫描 `.nb` 缓存文件 → `POST /api/m/cache`，服务端负责转码）。
+
 ---
 
 ## 8 测试与结果
