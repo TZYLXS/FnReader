@@ -599,7 +599,7 @@ function renderSearchResults() {
         <div class="line2">${esc(item.author || '未知作者')}${item.kind ? ' · ' + esc(item.kind) : ''}</div>
         <div class="line2">${item.lastChapter ? '最新：' + esc(item.lastChapter) : esc(item.intro || '')}</div>
         <div class="actions">
-          <span class="tag">${esc(item.originName || '')}</span>
+          <span class="tag">${esc(item.originName || '')}</span>${item.viaPhone ? '<span class="tag" style="background:var(--accent-soft);color:var(--accent)">📱 手机解析</span>' : ''}
           <button class="btn primary add" data-i="${i}" style="margin-left:auto;padding:5px 12px;font-size:13px">加入书架</button>
         </div>
       </div>
@@ -1736,7 +1736,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.29 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.30 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
