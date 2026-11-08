@@ -69,6 +69,25 @@ async function loadChapterContent(book, index) {
   const chapter = book.chapters[index];
   if (!chapter) throw new Error('章节不存在');
   const key = chapter.url || `${book.bookUrl}#${index}`;
+  // 手机同步过来的缓存：正文直接读本地文件
+  if (book.cachedDir && chapter.file) {
+    try {
+      const file = path.join(book.cachedDir, chapter.file);
+      if (fs.existsSync(file)) {
+        const text = fs.readFileSync(file, 'utf8');
+        const paragraphs = text
+          .split(/\n{2,}/)
+          .map((x) => x.trim())
+          .filter(Boolean);
+        if (paragraphs.length) {
+          cacheSet(key, paragraphs);
+          return { paragraphs, cached: false, fromCache: true };
+        }
+      }
+    } catch {
+      /* 读盘失败就继续走网络 */
+    }
+  }
   if (book.viaPhone) {
     const paragraphs = await remoteContent(book, chapter).catch(() => null);
     if (paragraphs && paragraphs.length) {
@@ -1281,52 +1300,108 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
-  // App 同步已缓存的小说：章节目录 + 正文 + 封面 + 来源，落到 <下载目录>/cache/<书名>/
+  // App 同步已缓存小说：直接接收 Legado 的缓存文件结构，服务端自己转成本站格式
+  //   目录：<下载目录>/cache/<书名>/
+  //     raw/      原样保存 App 的 .nb（保留原始格式，便于回传 App）
+  //     images/   章节图片
+  //     0001 标题.txt   转好的正文（段落之间空行），网页阅读直接读它
+  //     cover.jpg / meta.json
   if (p === '/api/m/cache' && method === 'POST') {
     const body = await readJson(req);
     const book = body && body.book;
     if (!book || !book.bookUrl) return json(res, 400, { error: '缺少 book.bookUrl' });
 
+    const layout = String(body.layout || 'legado').toLowerCase();
     const root = path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache');
-    const safe = String(book.name || '未命名')
-      .replace(/[\\/:*?"<>|\r\n\t]/g, '_')
-      .replace(/^\.+/, '')
-      .slice(0, 80)
-      .trim() || '未命名';
+    const safe =
+      String(book.name || '未命名')
+        .replace(/[\\/:*?"<>|\r\n\t]/g, '_')
+        .replace(/^\.+/, '')
+        .slice(0, 80)
+        .trim() || '未命名';
 
     let dir = path.join(root, safe);
     for (let i = 2; fs.existsSync(dir); i++) dir = path.join(root, `${safe} (${i})`);
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(path.join(dir, 'raw'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'images'), { recursive: true });
 
     const chapters = Array.isArray(body.chapters) ? body.chapters : [];
     const saved = [];
     let bytes = 0;
+    let imageCount = 0;
 
     chapters.forEach((ch, i) => {
       const idx = String(i + 1).padStart(4, '0');
       const title = String(ch.title || `第${i + 1}章`).replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 60);
-      let text = '';
-      if (Array.isArray(ch.paragraphs)) text = ch.paragraphs.join('\n\n');
-      else if (typeof ch.content === 'string') text = ch.content;
-      else if (typeof ch.text === 'string') text = ch.text;
+
+      // 原始内容：Legado 传 raw / content / paragraphs
+      let rawText = '';
+      if (typeof ch.raw === 'string') rawText = ch.raw;
+      else if (Array.isArray(ch.paragraphs)) rawText = ch.paragraphs.join('\n');
+      else if (typeof ch.content === 'string') rawText = ch.content;
+
+      let paragraphs = [];
+      let imgs = [];
+      if (layout === 'legado') {
+        const parsed = legadoToParagraphs(rawText);
+        paragraphs = parsed.paragraphs;
+        imgs = parsed.images;
+      } else {
+        paragraphs = rawText.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+      }
+
+      // 原始文件（有文件名就按 App 的命名存）
+      let rawName = '';
+      if (rawText) {
+        rawName = String(ch.file || `${idx}-${title}.nb`).replace(/[\\/:*?"<>|]/g, '_');
+        fs.writeFileSync(path.join(dir, 'raw', rawName), rawText, 'utf8');
+        bytes += Buffer.byteLength(rawText, 'utf8');
+      }
+
+      const text = paragraphs.join('\n\n');
       const file = `${idx} ${title}.txt`;
       if (text) {
         fs.writeFileSync(path.join(dir, file), text, 'utf8');
         bytes += Buffer.byteLength(text, 'utf8');
       }
-      saved.push({ index: i, title: String(ch.title || ''), url: String(ch.url || ''), file: text ? file : '' });
+
+      saved.push({
+        index: i,
+        title: String(ch.title || ''),
+        url: String(ch.url || ''),
+        file: text ? file : '',
+        raw: rawName,
+        images: imgs,
+        imageFile: '',
+      });
     });
 
-    // 封面
-    let coverFile = '';
+    // 章节图片：{name, data(base64)} 或 {src, data}
+    if (Array.isArray(body.images)) {
+      for (const img of body.images) {
+        try {
+          const buf = Buffer.from(String(img.data || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
+          if (!buf.length) continue;
+          const name = String(img.name || `${crypto.createHash('md5').update(String(img.src || Date.now())).digest('hex').slice(0, 16)}.jpg`)
+            .replace(/[\\/:*?"<>|]/g, '_');
+          fs.writeFileSync(path.join(dir, 'images', name), buf);
+          imageCount++;
+          bytes += buf.length;
+        } catch {
+          /* 忽略坏图 */
+        }
+      }
+    }
+
+    // 封面：存到公共 covers 目录，网页能直接访问
+    let coverUrl = '';
     if (body.coverData) {
       try {
         const buf = Buffer.from(String(body.coverData).replace(/^data:[^;]+;base64,/, ''), 'base64');
         if (buf.length) {
+          coverUrl = saveCover(book.bookUrl, buf, body.coverMime || 'image/jpeg');
           const ext = /png/i.test(body.coverMime || '') ? 'png' : /webp/i.test(body.coverMime || '') ? 'webp' : 'jpg';
-          coverFile = `cover.${ext}`;
-          fs.writeFileSync(path.join(dir, coverFile), buf);
-          bytes += buf.length;
+          fs.writeFileSync(path.join(dir, `cover.${ext}`), buf);
         }
       } catch {
         /* 忽略坏图 */
@@ -1334,6 +1409,7 @@ async function route(req, res, url) {
     }
 
     const meta = {
+      layout,
       name: String(book.name || ''),
       author: String(book.author || ''),
       bookUrl: book.bookUrl,
@@ -1343,23 +1419,23 @@ async function route(req, res, url) {
       totalChapterNum: saved.length || Number(book.totalChapterNum) || 0,
       durChapterIndex: Number(book.durChapterIndex || 0),
       savedAt: Date.now(),
-      cover: coverFile,
+      cover: coverUrl,
       chapters: saved,
     };
     fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
 
-    // 同时登记到书架，网页端可直接读（正文已落盘）
+    // 登记到书架：正文已在本地，读章节直接读文件
     const stored = store.findBook(book.bookUrl) || {};
     store.upsertBook({
       ...stored,
       bookUrl: book.bookUrl,
       name: String(book.name || stored.name || '未命名'),
       author: String(book.author || stored.author || ''),
-      coverUrl: coverFile ? `file://${path.join(dir, coverFile)}` : stored.coverUrl || '',
+      coverUrl: coverUrl || stored.coverUrl || '',
       intro: String(book.intro || stored.intro || ''),
       origin: String(book.origin || stored.origin || ''),
       originName: String(book.originName || stored.originName || '手机缓存'),
-      chapters: saved.map((c) => ({ title: c.title, url: c.url })),
+      chapters: saved.map((c) => ({ title: c.title, url: c.url, file: c.file })),
       totalChapterNum: saved.length,
       cachedDir: dir,
       durChapterIndex: Number(book.durChapterIndex || stored.durChapterIndex || 0),
@@ -1369,11 +1445,13 @@ async function route(req, res, url) {
 
     return json(res, 200, {
       ok: true,
+      layout,
       dir,
       chapters: saved.length,
       withText: saved.filter((c) => c.file).length,
+      images: imageCount,
       bytes,
-      cover: coverFile,
+      cover: coverUrl,
     });
   }
 
@@ -1402,6 +1480,22 @@ async function route(req, res, url) {
     events.broadcast({ type: 'sources', action: 'import', added, updated, via: 'app' });
     return json(res, 200, { ok: true, added, updated, total: store.sources.length });
   }
+
+/** Legado 缓存正文 → 我们的段落数组；顺带取出图片地址 */
+function legadoToParagraphs(rawText) {
+  const text = String(rawText || '');
+  const images = [];
+  const stripped = text.replace(/<img[^>]*\ssrc\s*=\s*["']([^"']+)["'][^>]*>/gi, (m, src) => {
+    if (src) images.push(src);
+    return '\n[图片]\n';
+  });
+  const paragraphs = stripped
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.replace(/^[\s\u3000]+/, '').replace(/[\s\u3000]+$/, ''))
+    .filter((line) => line.length > 0);
+  return { paragraphs, images };
+}
 
 /** 保存封面文件并返回可访问地址 */
 function saveCover(target, buf, mime) {

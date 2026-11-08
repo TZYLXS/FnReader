@@ -670,16 +670,16 @@ POST /api/m/books
 
 ---
 
-## 16 缓存同步：把手机里已缓存的书整本推到 NAS
+## 16 缓存同步：直接搬客户端缓存文件
 
-App 本地缓存了章节正文时，可以连同**目录、封面、来源**一起推上来，
-NAS 那边落成文件，网页端离线也能读。
+App 不需要自己解析正文再重排版，**把缓存文件原样发上来**即可：服务端自己转码成网页端可读的格式。
 
-### 16.1 接口
+### 16.1 请求
 
 ```http
 POST /api/m/cache      X-Api-Token: …
 {
+  "layout": "legado",
   "book": {
     "bookUrl": "https://…",
     "name": "书名",
@@ -689,58 +689,88 @@ POST /api/m/cache      X-Api-Token: …
     "intro": "简介",
     "durChapterIndex": 12
   },
-  "coverData": "<base64 或 data:image/jpeg;base64,…>",
+  "coverData": "<base64>",
   "coverMime": "image/jpeg",
   "chapters": [
-    { "title": "第一章 开端", "url": "https://…", "paragraphs": ["第一段", "第二段"] },
-    { "title": "第二章 继续", "url": "https://…", "content": "整章文本…" }
-  ]
+    {
+      "index": 12,
+      "title": "第十二章 雾",
+      "file": "00012-9f86d081884c7d65.nb",
+      "raw": "　　浓雾在窗外翻滚……
+　　他转过身，看到了<img src=\"https://…/1.jpg\">挂在墙上。"
+    }
+  ],
+  "images": [ { "name": "1.jpg", "data": "<base64>" } ]
 }
 ```
 
-- `chapters[].paragraphs` 或 `.content` 二选一；只传目录不传正文也允许
-- 章节顺序以数组顺序为准，`index` 由服务端重新编号
+字段说明：
 
-响应：
+| 字段 | 说明 |
+| --- | --- |
+| `layout` | 固定 `legado`（客户端缓存的原始格式） |
+| `chapters[].file` | 客户端缓存文件名，如 `00012-<titleMD5>.nb`，原样保存 |
+| `chapters[].raw` | 该文件**原文**（直接 `File.readText()` 的内容，不要预处理） |
+| `images[]` | 章节里的图片文件（`name` 建议用客户端里的文件名，如 `<md5>.jpg`）|
+| `coverData` | 封面 base64（可选） |
 
-```json
-{ "ok": true, "dir": "/vol3/1000/DownLoad/cache/书名",
-  "chapters": 3, "withText": 2, "bytes": 133, "cover": "cover.png" }
-```
+`raw` 里的特征（服务端会处理，App 不用管）：
 
-### 16.2 落盘规则
+- 段首两个全角空格 `　　`
+- 段落用 `
+` 分隔
+- 可能夹着 `<img src="…">` 单标签
 
-统一写到**用户设置的下载目录**下的 `cache/`，以书名建子目录：
+### 16.2 服务端做什么
+
+1. **原样存一份**：`raw/<客户端文件名>`，方便以后回传 App 或排查
+2. **转码一份**：去标签、去段首缩进、按行拆成段落，`<img>` 换成 `[图片]`，
+   段落间空一行，写成 `0001 第十二章 雾.txt`
+3. **图片**：存 `images/<name>`
+4. **封面**：存公共 `covers/` 目录，并写回书架该书的封面
+5. **登记书架**：`book.chapters` 带上 `file` 字段，`cachedDir` 指向本目录
+6. 之后 `/api/content` 直接读本地文件，不再访问网络
+
+### 16.3 落盘结构
 
 ```
 <下载目录>/cache/<书名>/
-    meta.json            # 书名/作者/来源/简介/目录/保存时间
-    cover.jpg|png        # 封面（有就存）
-    0001 第一章 开端.txt
-    0002 第二章 继续.txt
-    ...
+    meta.json
+    cover.jpg
+    0001 第十二章 雾.txt      ← 转码后，网页阅读读这个
+    0002 第十三章 墙.txt
+    raw/
+        00012-9f86d081884c7d65.nb   ← 客户端原文
+        00013-0a1b2c3d4e5f6a7b.nb
+    images/
+        1.jpg
 ```
 
-- 书名里的 `\ / : * ? " < > |` 换成 `_`，最长 80 字
-- 重名自动加后缀：`书名 (2)`、`书名 (3)`
-- 同名书重复推送会新建目录（不覆盖旧的），需要覆盖请先删旧目录
+### 16.4 响应
 
-### 16.3 推完之后
+```json
+{ "ok": true, "layout": "legado", "dir": "/vol3/1000/DownLoad/cache/书名",
+  "chapters": 2, "withText": 2, "images": 1, "bytes": 484,
+  "cover": "http://192.168.5.114:1122/api/covers/b0ca563fe607eede.png" }
+```
 
-- 这本书会登记进书架（`origin` 保留，`originName` 缺省写「手机缓存」）
-- 目录已写入 `book.chapters`，网页端点开就有目录
-- 正文已落盘，`/api/content` 直接读文件，不再走网络
-- 收到 `{type:'shelf', action:'cache'}` 事件后网页书架自动刷新
-
-### 16.4 App 侧建议
+### 16.5 App 侧实现
 
 ```text
-用户点「同步到飞牛」或批量同步时：
-  for book in 已缓存书:
-      chapters = 本地按 index 排序，取 title/url/(paragraphs)
-      POST /api/m/cache { book, coverData, chapters }
-      # 大书分批：一次 50 章，第二次带同样的 book 会新建目录，
-      # 所以建议先只推一次、或自己控制全书在一个请求里
+书目录 = /Android/data/io.legado.pro/files/book_cache/<book.getFolderName()>
+chapters = 遍历该目录下 *.nb：
+    { index: 从文件名前 5 位解析,
+      title: 从 DB 的 BookChapter 取,
+      file:  文件名,
+      raw:   File.readText() }
+
+images = 遍历 <书目录>/images/*：{ name, data: base64 }
+POST /api/m/cache { layout:'legado', book, coverData, chapters, images }
 ```
 
-一次请求体上限 32 MB；整本几千章建议只推「已缓存的前 N 章」或分卷推。
+要点：
+
+- **不要**在 App 里做去标签、补缩进等处理，原样传 `raw`
+- 一次请求体上限 32 MB，整本几千章建议分批（每批 50 章，`book` 相同、`chapters` 不同）
+  分批会新建目录，所以更推荐**一次推完整本**；后续可加增量参数
+- 重名书目录自动加 `(2)`

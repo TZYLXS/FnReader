@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.10.1
+version=1.10.2
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=新增 POST /api/m/cache：把已缓存小说（目录/正文/封面/来源）同步到 <下载目录>/cache/<书名>/；主题改为下拉菜单（设置页与阅读设置面板一致）；文档新增第 16 章「缓存同步」
+changelog=缓存同步改为直接接收客户端缓存文件（Legado .nb 原文），服务端自动转码成段落文本；原文另存 raw/，图片存 images/，封面进公共 covers 目录；阅读正文直接读本地文件；文档第 16 章重写为「把客户端缓存文件原样上传」协议
