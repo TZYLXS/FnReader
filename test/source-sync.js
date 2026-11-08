@@ -25,6 +25,8 @@ async function getList() {
 }
 
 (async () => {
+  // 先清掉上次残留
+  await fetch(BASE + '/api/sources/' + encodeURIComponent(URL_KEY), { method: 'DELETE', headers: H });
   let ok = 0;
   let fail = 0;
   const check = (label, cond, extra = '') => {
