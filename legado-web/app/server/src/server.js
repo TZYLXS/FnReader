@@ -911,6 +911,13 @@ function externalBase(req, prefix) {
 }
 
 /** 本机局域网 IPv4（跳过 docker / 虚拟网卡） */
+/** 请求是否来自本机（fnOS 网关走 app.sock/loopback，直连 :1122 的局域网设备不算） */
+function isLocalRequest(req) {
+  const addr = (req.socket && req.socket.remoteAddress) || '';
+  if (!addr) return true; // unix socket
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
 function lanIp() {
   const skip = /^(docker|br-|veth|virbr|lo|tun|tap|zt|tailscale)/i;
   const cands = [];
@@ -2210,13 +2217,21 @@ function mergeFeedIntoBook(feed) {
     return json(res, 200, { ok: true });
   }
 
-  if (p === '/api/config' && method === 'GET')
-    return json(res, 200, {
+  if (p === '/api/config' && method === 'GET') {
+    const cfg = {
       ...store.config,
       directBase: directBase(),
       lanIp: lanIp(),
       lanIps: allLanIps().map((ip) => `http://${ip}:${process.env.TRIM_SERVICE_PORT || process.env.PORT || 1122}`),
-    });
+    };
+    // 令牌只给本机（fnOS 网关）或已带令牌的请求，避免局域网里随手读走
+    const trusted = isLocalRequest(req) || checkApiToken(req, url);
+    if (!trusted) {
+      delete cfg.apiToken;
+      cfg.tokenRequired = true;
+    }
+    return json(res, 200, cfg);
+  }
   if (p === '/api/config' && method === 'POST') {
     const body = await readJson(req);
     if (body && body.downloadDir) {

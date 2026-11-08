@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.8.3
+version=1.8.4
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=修复 @css: 列表规则拿不到节点（搜「@css 语法源」返回 0 条）；字段规则在列表项内查找：@css: 现在按当前节点选，不再取到第一本；NAS 实测：@css 源搜索 25 条、目录 858 章、正文 48 段
+changelog=安全修复：/api/config 不再向非本机请求下发 apiToken（直连读配置拿不到令牌）；本机（飞牛网关）或已带正确令牌的请求仍可读取完整配置；设置页在直连访问时提示「请通过飞牛桌面查看令牌」

@@ -1815,7 +1815,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.8.3 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.8.4 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -2074,7 +2074,11 @@ async function renderSettings() {
       altEl.textContent = '其它可用地址：' + cfg.lanIps.filter((x) => x !== apiBase).join('  ');
     }
     const tokenEl = $('#api-token');
-    if (tokenEl) tokenEl.textContent = cfg.apiToken || '';
+    const tokenMissing = !cfg.apiToken;
+    if (tokenEl)
+      tokenEl.textContent = tokenMissing
+        ? '（直连访问时不下发令牌，请通过飞牛桌面打开本应用查看）'
+        : cfg.apiToken;
     const copy = (text, label) => {
       if (!text) return toast('没有可复制的内容');
       if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast(label + '已复制')).catch(() => toast('复制失败'));
@@ -2083,7 +2087,9 @@ async function renderSettings() {
     const cb = $('#copy-base');
     if (cb) cb.onclick = () => copy(apiBase, '接口地址');
     const ct = $('#copy-token');
-    if (ct) ct.onclick = () => copy(cfg.apiToken || '', '令牌');
+    if (ct)
+      ct.onclick = () =>
+        tokenMissing ? toast('请通过飞牛桌面打开本应用查看令牌') : copy(cfg.apiToken || '', '令牌');
     const rt = $('#reset-token');
     if (rt)
       rt.onclick = async () => {
