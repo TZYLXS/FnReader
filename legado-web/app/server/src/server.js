@@ -480,6 +480,7 @@ const downloadJobs = new Map(); // bookUrl -> job
 const DOWNLOAD_INDEX = path.join(store.dataDir, 'downloads.json');
 const FEEDS_FILE = path.join(store.dataDir, 'feeds.json');
 const IMG_DIR = path.join(store.dataDir, 'cache', 'img');
+const COVER_DIR = path.join(store.dataDir, 'covers');
 
 function readJSON(file, fallback) {
   try {
@@ -1279,6 +1280,81 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  // App 上传书源：与「导入书源」同格式，按 bookSourceUrl 合并
+  if (p === '/api/m/sources' && method === 'POST') {
+    const body = await readJson(req);
+    const list = Array.isArray(body) ? body : body && Array.isArray(body.sources) ? body.sources : [];
+    if (!list.length) return json(res, 400, { error: '请提供书源数组' });
+    const existing = new Map(store.sources.map((s) => [s.bookSourceUrl, s]));
+    let added = 0;
+    let updated = 0;
+    for (const item of list) {
+      if (!item || !item.bookSourceUrl) continue;
+      const hit = existing.get(item.bookSourceUrl);
+      if (hit) {
+        Object.assign(hit, item, { enabled: item.enabled !== undefined ? item.enabled : hit.enabled });
+        updated++;
+      } else {
+        const created = { ...item, enabled: item.enabled !== false };
+        store.sources.push(created);
+        existing.set(item.bookSourceUrl, created);
+        added++;
+      }
+    }
+    store.saveSources(store.sources);
+    events.broadcast({ type: 'sources', action: 'import', added, updated, via: 'app' });
+    return json(res, 200, { ok: true, added, updated, total: store.sources.length });
+  }
+
+  // App 上传封面：JSON {bookUrl, data(base64)} 或 raw image + ?bookUrl=
+  if (p === '/api/m/cover' && method === 'POST') {
+    const bookUrl = searchParams.get('bookUrl') || '';
+    const ctype = String(req.headers['content-type'] || '');
+    let buf = null;
+    let mime = 'image/jpeg';
+    let target = bookUrl;
+
+    if (ctype.includes('application/json')) {
+      const body = await readJson(req);
+      if (!body || !body.data) return json(res, 400, { error: '缺少 data' });
+      target = body.bookUrl || target;
+      mime = body.mime || 'image/jpeg';
+      buf = Buffer.from(String(body.data).replace(/^data:[^;]+;base64,/, ''), 'base64');
+    } else {
+      buf = await new Promise((resolve, reject) => {
+        const chunks = [];
+        let size = 0;
+        req.on('data', (c) => {
+          size += c.length;
+          if (size > 8 * 1024 * 1024) {
+            reject(new Error('封面过大'));
+            req.destroy();
+            return;
+          }
+          chunks.push(c);
+        });
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+      });
+      mime = ctype.split(';')[0] || 'image/jpeg';
+    }
+
+    if (!buf || !buf.length) return json(res, 400, { error: '封面为空' });
+    const ext = /png/i.test(mime) ? 'png' : /webp/i.test(mime) ? 'webp' : /gif/i.test(mime) ? 'gif' : 'jpg';
+    const name = crypto.createHash('sha1').update(target || buf).digest('hex').slice(0, 16) + '.' + ext;
+    fs.mkdirSync(COVER_DIR, { recursive: true });
+    fs.writeFileSync(path.join(COVER_DIR, name), buf);
+
+    const coverUrl = `${directBase()}/api/covers/${name}`;
+    const book = target ? store.findBook(target) : null;
+    if (book) {
+      book.coverUrl = coverUrl;
+      store.upsertBook(book);
+      events.broadcast({ type: 'cover', bookUrl: book.bookUrl, via: 'app' });
+    }
+    return json(res, 200, { ok: true, coverUrl, size: buf.length, book: !!book });
+  }
+
   // App 上传书籍：把手机本地加的书推到 NAS 书架
   if (p === '/api/m/books' && method === 'POST') {
     const body = await readJson(req);
@@ -1698,6 +1774,17 @@ async function route(req, res, url) {
     const body = await readJson(req);
     const ok = remote.setEnabled(String(body.id || ''), body.enabled !== false);
     return json(res, ok ? 200 : 404, ok ? { ok: true } : { error: '设备不存在' });
+  }
+
+  // 封面文件
+  if (p.startsWith('/api/covers/') && method === 'GET') {
+    const name = path.basename(p.replace('/api/covers/', ''));
+    const file = path.join(COVER_DIR, name);
+    if (!fs.existsSync(file)) return json(res, 404, { error: '封面不存在' });
+    const ext = path.extname(name).slice(1).toLowerCase();
+    const type = { png: 'image/png', webp: 'image/webp', gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg' }[ext] || 'image/jpeg';
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=604800' });
+    return res.end(fs.readFileSync(file));
   }
 
   if (p === '/api/remote/stats' && method === 'GET') {

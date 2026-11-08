@@ -464,3 +464,72 @@ App 不要把「读配置」当成取令牌的手段。正确流程：
 - `POST /api/config`（改设置）目前不校验令牌：能访问 `:1122` 的局域网设备可以改主题/下载目录等，
   但改不了令牌本身（重置令牌需要令牌）
 - 因此**不要把 1122 直接映射到公网**；外网请用组网或反向代理 + HTTPS，见第 10 章
+
+---
+
+## 13 App 上传：封面与书源
+
+App 除了回传进度，还可以把**封面图片**和**书源**一并推到 NAS，两边保持同一套数据。
+
+### 13.1 上传封面
+
+两种方式，都返回本地封面地址：
+
+**A. JSON + base64**（适合从网络取到图片后再转）
+
+```http
+POST /api/m/cover      X-Api-Token: …
+{ "bookUrl": "https://…", "mime": "image/jpeg", "data": "<base64>" }
+```
+
+**B. 直接传二进制**（更省内存）
+
+```http
+POST /api/m/cover?bookUrl=https%3A%2F%2F…   X-Api-Token: …
+Content-Type: image/png
+<二进制图片>
+```
+
+响应：
+
+```json
+{ "ok": true, "coverUrl": "http://192.168.5.114:1122/api/covers/5c1490be35afe31c.png",
+  "size": 70, "book": true }
+```
+
+- 图片存到应用数据目录 `covers/`，文件名是 `bookUrl` 的 SHA1 前 16 位
+- `bookUrl` 命中书架里的书时，自动把该书的 `coverUrl` 改成这个本地地址（`book: true`）
+- 单张上限 8 MB；支持 png / jpeg / webp / gif
+
+封面读取：`GET /api/covers/<文件名>`（无需令牌，带 7 天缓存）。
+
+### 13.2 上传书源
+
+```http
+POST /api/m/sources      X-Api-Token: …
+[ { "bookSourceName": "…", "bookSourceUrl": "…", "ruleSearch": { … } }, … ]
+```
+
+也接受 `{ "sources": [ … ] }`。按 `bookSourceUrl` 去重：
+
+```json
+{ "ok": true, "added": 1, "updated": 0, "total": 1253 }
+```
+
+- 已存在的源用新字段覆盖（`enabled` 不传则保留原值）
+- 新源默认启用，导入后网页端书源列表立刻可见
+
+### 13.3 App 侧建议
+
+```text
+同步时：
+  for book in 本地新增的书:
+      POST /api/m/books            # 书架
+      if 有封面: POST /api/m/cover  # 封面
+  if 本地书源有更新:
+      POST /api/m/sources          # 只传变化的即可（按 bookSourceUrl 合并）
+  POST /api/m/progress/batch       # 进度
+```
+
+与 yuedu-pro 的「接入飞牛服务器」保持一致：书源仍然是 Legado 数组格式，
+只是方向从「NAS → App」变成「App → NAS」也支持了。
