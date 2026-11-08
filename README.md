@@ -189,6 +189,7 @@ legado ALL=(root) NOPASSWD: /usr/local/bin/appcenter-cli
 | --- | --- | --- |
 | WebDAV | `/dav/books/`（只读）、`/dav/backup/`（读写）| Basic，密码 = apiToken |
 | 同步 | `/api/m/sync`（书架 + 进度 + 书源汇总）、`/api/m/sources.json` | `X-Api-Token` |
+| 书源双向同步 | `GET/POST /api/m/sources/sync`（`lastUpdateTime` 为准，支持删除） | `X-Api-Token` |
 | 阅读 | `/api/m/shelf`、`/library`、`/toc`、`/content`、`/progress`（支持批量）| `X-Api-Token` |
 | 书源桥 | `/api/m/booksource`、`/api/m/legado/{search,book,toc}` | `X-Api-Token` |
 

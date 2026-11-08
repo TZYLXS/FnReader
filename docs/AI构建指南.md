@@ -88,6 +88,13 @@ updates/       下载的更新包
 | `POST /api/m/progress` | 保存进度 |
 | `GET /api/m/cover?url=` | 封面 |
 | `POST /api/m/reset-token` | 重置令牌 |
+| `GET/POST /api/m/sync` | App 一次拉/推书架与进度 |
+| `GET/POST /api/m/sources/sync` | **书源双向同步**（`lastUpdateTime` 为准，LWW）|
+| `POST /api/m/books` / `/cover` / `/sources` / `/cache` | App 上行：加书、传封面、传书源、传缓存文件 |
+
+书源双向同步的约定：客户端每次改书源写 `lastUpdateTime = now`，推送时带上；
+服务端按「时间戳大的赢、相等服务端赢」合并，`pull` 里回传服务端更进的版本。
+详见 `docs/APP同步接口.md` 第 17 章。
 
 **WebDAV**（Basic 认证，用户名随意、密码 = apiToken）
 
