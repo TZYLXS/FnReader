@@ -17,6 +17,7 @@ const replaceRules = require('./replace');
 const introLookup = require('./intro');
 const { buildSyncPayload } = require('./sync');
 const { getDaily } = require('./daily');
+const { mergeSources, pullSince } = require('./sourcesync');
 const events = require('./events');
 const remote = require('./remote');
 
@@ -1822,6 +1823,7 @@ function saveCover(target, buf, mime) {
     for (const s of store.sources) {
       if (s.checkStatus && s.checkStatus !== 'ok' && s.enabled !== false) {
         s.enabled = false;
+        s.lastUpdateTime = Date.now();
         disabled++;
       }
     }
@@ -1890,7 +1892,12 @@ function saveCover(target, buf, mime) {
     const map = new Map(store.sources.map((s) => [s.bookSourceUrl, s]));
     for (const raw of incoming) {
       const s = normalizeSource(raw);
-      map.set(s.bookSourceUrl, { ...(map.get(s.bookSourceUrl) || {}), ...s, enabled: true });
+      map.set(s.bookSourceUrl, {
+        ...(map.get(s.bookSourceUrl) || {}),
+        ...s,
+        enabled: true,
+        lastUpdateTime: Date.now(),
+      });
     }
     store.saveSources([...map.values()]);
     return json(res, 200, { ok: true, imported: incoming.length, total: store.sources.length });
@@ -1904,7 +1911,7 @@ function saveCover(target, buf, mime) {
     if (method === 'DELETE') list.splice(idx, 1);
     else {
       const body = await readJson(req);
-      list[idx] = { ...list[idx], enabled: body.enabled !== false };
+      list[idx] = { ...list[idx], enabled: body.enabled !== false, lastUpdateTime: Date.now() };
     }
     store.saveSources(list);
     return json(res, 200, { ok: true });
@@ -2011,6 +2018,19 @@ function saveCover(target, buf, mime) {
     const body = await readJson(req);
     const ok = remote.setEnabled(String(body.id || ''), body.enabled !== false);
     return json(res, ok ? 200 : 404, ok ? { ok: true } : { error: '设备不存在' });
+  }
+
+  // 书源双向同步（LWW：lastUpdateTime 大的赢）
+  if (p === '/api/m/sources/sync' && method === 'GET') {
+    const data = pullSince(store, searchParams.get('since') || 0);
+    return json(res, 200, { ok: true, ...data, total: store.sources.length });
+  }
+
+  if (p === '/api/m/sources/sync' && method === 'POST') {
+    const body = await readJson(req);
+    const r = mergeSources(store, body || {});
+    events.broadcast({ type: 'sources', action: 'sync', applied: r.applied, via: 'app' });
+    return json(res, 200, { ok: true, ...r, total: store.sources.length });
   }
 
   // 封面文件

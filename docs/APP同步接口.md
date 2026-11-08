@@ -774,3 +774,91 @@ POST /api/m/cache { layout:'legado', book, coverData, chapters, images }
 - 一次请求体上限 32 MB，整本几千章建议分批（每批 50 章，`book` 相同、`chapters` 不同）
   分批会新建目录，所以更推荐**一次推完整本**；后续可加增量参数
 - 重名书目录自动加 `(2)`
+
+---
+
+## 17 书源双向同步（C/S，最后一次修改为准）
+
+客户端和服务端各有一份书源，改动可能发生在任何一边。约定用 **`lastUpdateTime`（毫秒）**
+做「最后写入者赢」（LWW）判定：**谁的时间戳大，谁的版本生效**。
+
+### 17.1 拉取增量：`GET /api/m/sources/sync?since=<毫秒>`
+
+```json
+{
+  "ok": true,
+  "serverTime": 1794149022425,
+  "sources": [ { "bookSourceUrl": "…", "bookSourceName": "…", "lastUpdateTime": 1794149000000, "ruleSearch": {…} } ],
+  "truncated": false
+}
+```
+
+- `since=0` → 全量
+- 只返回 `lastUpdateTime > since` 的源
+- 客户端把返回的每个源存本地，并把 `serverTime` 记为下次的 `since`
+
+### 17.2 推送改动：`POST /api/m/sources/sync`
+
+```json
+{
+  "since": 1794148000000,
+  "updated": [
+    { "bookSourceUrl": "https://…", "bookSourceName": "…", "lastUpdateTime": 1794149100000, "ruleSearch": {…} }
+  ],
+  "deleted": [
+    { "bookSourceUrl": "https://…", "lastUpdateTime": 1794149110000 }
+  ]
+}
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "applied": 2,          // 采纳了多少条（新增/覆盖/删除）
+  "skipped": 1,          // 因为服务端更进而被忽略的条数
+  "pull": [ … ],         // 服务端更进的版本，客户端应以这些为准
+  "pullDeleted": [],
+  "serverTime": 1794149022425,
+  "truncated": false,
+  "total": 1254
+}
+```
+
+### 17.3 判定规则
+
+| 情况 | 结果 |
+| --- | --- |
+| 服务端没有这个源 | 新增 |
+| 客户端 `lastUpdateTime` **大于** 服务端 | 覆盖服务端 |
+| 客户端 `lastUpdateTime` **小于等于** 服务端 | 忽略，并把服务端版本放进 `pull` |
+| 删除且时间戳 ≥ 服务端 | 删除服务端 |
+| 删除但时间戳更旧 | 忽略，`pull` 里带回服务端版本 |
+| 客户端没带 `lastUpdateTime` | 当作「刚刚修改」 |
+
+服务端自己的改动（网页端导入/启停/删除书源）也会自动写 `lastUpdateTime = Date.now()`，
+所以两边都能成为「最后修改者」。
+
+### 17.4 客户端建议流程
+
+```text
+每次启动 / 每 10 分钟 / 用户手动点同步：
+  since = 本地记的 serverTime（首次 0）
+  r = POST /api/m/sources/sync { since, updated: 本地变更队列, deleted: 本地删除队列 }
+  对 r.pull 里的每条：按 bookSourceUrl 覆盖本地（服务端版本更进）
+  对 r.pullDeleted 里的每条：从本地删除
+  本地 serverTime = r.serverTime
+  清空本地变更队列
+```
+
+本地维护「变更队列」：用户新增/编辑/删除书源时，把源（带 `lastUpdateTime = now`）压进队列，
+同步成功后再清空；失败就留着下次重试。
+
+### 17.5 完整导入（批量首次）
+
+第一次接入时如果本地有上千条源，用一次性接口更省事，行为和上面一致（按 URL 合并）：
+
+```http
+POST /api/m/sources        [ … ]        // 见 13.2
+```
