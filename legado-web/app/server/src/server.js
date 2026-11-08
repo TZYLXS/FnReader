@@ -107,8 +107,8 @@ async function loadChapterContent(book, index) {
     const paragraphs = await inflight.get(key);
     return { paragraphs, cached: true };
   }
-  const source = store.findSource(book.origin);
-  if (!source) throw new Error('书源不存在');
+  const source = resolveSource(book);
+  if (!source) throw new Error('该书没有关联书源，且没有本地缓存');
   const promise = getContent(source, book, chapter).then((paragraphs) => {
     cacheSet(key, paragraphs);
     diskCache.set(key, { paragraphs, title: chapter.title });
@@ -895,8 +895,11 @@ async function handleRefreshToc(book) {
       return chapters;
     }
   }
-  const source = store.findSource(book.origin);
-  if (!source) throw new Error('未找到书源，可能已被删除');
+  const source = resolveSource(book);
+  if (!source) {
+    if (book.cachedDir) return book.chapters || [];
+    throw new Error('未找到书源，可能已被删除');
+  }
   if (!book.tocUrl) await getBookInfo(source, book);
   const chapters = await getToc(source, book);
   book.chapters = chapters;
@@ -970,6 +973,46 @@ function allLanIps() {
     }
   }
   return out.length ? out : ['127.0.0.1'];
+}
+
+/** 找一本对应的书源：origin → URL 主机 → 源名 */
+function resolveSource(book) {
+  if (!book) return null;
+  if (book.origin) {
+    const hit = store.findSource(book.origin);
+    if (hit) return hit;
+  }
+  let host = '';
+  try {
+    host = new URL(book.bookUrl).host;
+  } catch {
+    host = '';
+  }
+  if (host) {
+    const cands = store.sources.filter((s) => {
+      try {
+        return new URL(s.bookSourceUrl).host === host;
+      } catch {
+        return false;
+      }
+    });
+    const pick = cands.find((s) => s.enabled !== false) || cands[0];
+    if (pick) {
+      book.origin = pick.bookSourceUrl;
+      book.originName = pick.bookSourceName || book.originName;
+      store.upsertBook(book);
+      return pick;
+    }
+  }
+  if (book.originName) {
+    const hit = store.sources.find((s) => s.bookSourceName === book.originName);
+    if (hit) {
+      book.origin = hit.bookSourceUrl;
+      store.upsertBook(book);
+      return hit;
+    }
+  }
+  return null;
 }
 
 /** 是否有在线的解析设备（软总线） */

@@ -71,4 +71,45 @@ function fixChapterOrder(chapters) {
   return chapters.slice().reverse();
 }
 
-module.exports = { chapterNumber, cnToNumber, fixChapterOrder, normalizeCircled };
+/**
+ * 去重 + 按章节号排序。
+ * 站点常常把「最新章节」区块和「全部目录」拼在一起：前者倒序、后者正序，
+ * 合起来既重复又乱序。这里先按 url / 标题去重，再按章节号稳定排序。
+ */
+function normalizeChapterList(chapters) {
+  if (!Array.isArray(chapters) || chapters.length < 2) return chapters || [];
+
+  const seenUrl = new Set();
+  const seenTitle = new Set();
+  const list = [];
+  for (const c of chapters) {
+    const url = String((c && c.url) || '').trim();
+    const title = String((c && c.title) || '').trim().replace(/\s+/g, '');
+    if (url && seenUrl.has(url)) continue;
+    if (title && seenTitle.has(title)) continue;
+    if (url) seenUrl.add(url);
+    if (title) seenTitle.add(title);
+    list.push(c);
+  }
+
+  // 目录里混进「作者感言/更新通知」这类条目：多数标题以「第X章」开头时，把不像章节的剔掉
+  const looksChapter = (t) => /^\s*第\s*[零一二三四五六七八九十百千万两\d]+\s*[章节回卷回]/.test(String(t || ''));
+  const std = list.filter((c) => looksChapter(c.title)).length;
+  const filtered = std >= list.length * 0.7 ? list.filter((c) => looksChapter(c.title)) : list;
+
+  const nums = filtered.map((c) => chapterNumber(c.title));
+  const known = nums.filter((n) => n > 0).length;
+  if (known < filtered.length * 0.6) return filtered;
+
+  // 稳定排序：已知章节号按号，未知的保持相对位置（用大数保证排到后面）
+  const indexed = filtered.map((c, i) => ({ c, i, n: nums[i] }));
+  indexed.sort((a, b) => {
+    const an = a.n > 0 ? a.n : Number.MAX_SAFE_INTEGER;
+    const bn = b.n > 0 ? b.n : Number.MAX_SAFE_INTEGER;
+    if (an !== bn) return an - bn;
+    return a.i - b.i;
+  });
+  return indexed.map((x) => x.c);
+}
+
+module.exports = { chapterNumber, cnToNumber, fixChapterOrder, normalizeChapterList, normalizeCircled };

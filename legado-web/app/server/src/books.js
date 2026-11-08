@@ -4,7 +4,7 @@ const { request, absoluteUrl, htmlToParagraphs } = require('./util');
 const { makeDoc, evalString, evalRule } = require('./rules');
 const { runJs } = require('./jsrules');
 const searchCache = require('./searchcache');
-const { fixChapterOrder } = require('./chapter-order');
+const { fixChapterOrder, normalizeChapterList } = require('./chapter-order');
 
 const DEFAULT_SEARCH_HEADERS = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -313,7 +313,7 @@ async function parseTocFrom(startUrl, source, book) {
     unique.push(c);
   }
   // 有些站点「最新章节」在最前，翻回正常阅读顺序
-  const ordered = fixChapterOrder(unique);
+  const ordered = normalizeChapterList(fixChapterOrder(unique));
   ordered.forEach((c, i) => {
     c.index = i;
   });
