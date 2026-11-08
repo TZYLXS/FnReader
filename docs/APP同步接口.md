@@ -640,3 +640,30 @@ POST /api/m/books
 ```
 
 网页开着的话书架会自动刷新出这本新书，不用手动点刷新。
+
+---
+
+## 15 每日推荐（`GET /api/daily`）
+
+服务端每天抓一次榜单，缓存在 `daily.json`，网页端「搜索 → 每日推荐」直接展示。
+
+```json
+{
+  "source": "纵横",
+  "url": "https://www.zongheng.com/rank",
+  "updatedAt": 1794132400000,
+  "count": 30,
+  "books": [ { "rank": 1, "name": "无敌天命", "author": "", "score": "15020",
+               "url": "https://www.zongheng.com/detail/1336976", "cover": "", "from": "纵横" } ]
+}
+```
+
+取值顺序：
+
+1. **起点** `https://www.qidian.com/rank/recom/` —— 有反爬（返回 202 挑战页），
+   服务端直连通常拿不到；如果软总线有在线手机，会先让手机抓（任务类型 `rank`）
+2. **纵横** `https://www.zongheng.com/rank` —— 服务端可直连，作为主力来源
+3. **17K** `https://www.17k.com/top/` —— 再兜底
+4. 全都失败 → 返回磁盘里的上一次结果（`stale: true`）
+
+缓存 6 小时；App 也可以直接调这个接口做「今日推荐」页。

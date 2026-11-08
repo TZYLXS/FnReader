@@ -138,6 +138,7 @@ async function router() {
   if (path === '/search') return renderSearch();
   if (path === '/sources') return renderSources();
   if (path === '/settings') return renderSettings();
+  if (path === '/daily') return renderDaily();
   if (path === '/bus') return renderBus();
   if (path === '/detail') return renderDetail();
   if (path === '/feeds') return renderFeeds();
@@ -412,6 +413,7 @@ async function renderSearch() {
       <button class="chip on" data-mode="book">找书</button>
       <button class="chip" data-mode="feed">订阅</button>
       <button class="chip ${state.search.remote ? 'on' : ''}" id="chip-remote" title="用手机端解析器搜索">📱 手机解析</button>
+      <button class="chip" id="chip-daily">每日推荐</button>
     </div>
     <div class="searchbar">
       <input id="kw" type="search" placeholder="书名 / 作者" enterkeyhint="search" />
@@ -425,6 +427,10 @@ async function renderSearch() {
   $('#mode-row').onclick = (e) => {
     const b = e.target.closest('.chip');
     if (!b) return;
+    if (b.id === 'chip-daily') {
+      location.hash = '#/daily';
+      return;
+    }
     if (b.id === 'chip-remote') {
       state.search.remote = !state.search.remote;
       b.classList.toggle('on', state.search.remote);
@@ -492,6 +498,56 @@ async function renderSearch() {
     input.value = pre;
     startSearch(pre);
   }
+}
+
+async function renderDaily() {
+  view.innerHTML = `
+    <header class="topbar"><button class="icon-btn" id="daily-back">‹</button><h1>每日推荐</h1>
+      <button class="btn" id="daily-refresh" style="padding:5px 10px;font-size:12px">换一批</button>
+    </header>
+    <div id="daily-box"><div class="empty"><span class="spinner"></span> 正在取榜单…</div></div>`;
+
+  $('#daily-back').onclick = () => (location.hash = '#/search');
+  $('#daily-refresh').onclick = () => load(true);
+
+  async function load(force) {
+    const box = $('#daily-box');
+    box.innerHTML = '<div class="empty"><span class="spinner"></span> 正在取榜单…</div>';
+    try {
+      const r = await api('/daily' + (force ? '?t=' + Date.now() : ''));
+      const books = r.books || [];
+      if (!books.length) {
+        box.innerHTML = `<div class="empty">${esc(r.error || '榜单为空')}</div>`;
+        return;
+      }
+      const when = r.updatedAt ? new Date(r.updatedAt).toLocaleString('zh-CN', { hour12: false }) : '';
+      box.innerHTML = `
+        <div class="daily-head">
+          <h2>今日推荐</h2>
+          <div class="src">来源：${esc(r.source)} · ${books.length} 本 · ${esc(when)}${r.cached ? ' · 缓存' : ''}</div>
+        </div>
+        <div class="daily-list">
+          ${books
+            .map(
+              (b) => `<div class="daily-item" data-name="${esc(b.name)}">
+                <div class="rk">${b.rank}</div>
+                <div class="nm"><b>${esc(b.name)}</b>${b.author ? `<span class="au">${esc(b.author)}</span>` : ''}</div>
+                ${b.score ? `<div class="sc">${esc(b.score)}</div>` : ''}
+              </div>`
+            )
+            .join('')}
+        </div>`;
+      box.onclick = (e) => {
+        const item = e.target.closest('.daily-item');
+        if (!item) return;
+        location.hash = '#/search?key=' + encodeURIComponent(item.dataset.name);
+      };
+    } catch (e) {
+      box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+    }
+  }
+
+  await load(false);
 }
 
 async function renderBus() {
@@ -1074,7 +1130,7 @@ function openReaderSettings() {
     <h3>阅读设置</h3>
     <div class="row"><div class="label">主题</div>
       <div class="seg" id="seg-theme">
-        ${['light', 'sepia', 'dark'].map((t) => `<button data-v="${t}" class="${cfg.theme === t ? 'on' : ''}">${{ light: '浅色', sepia: '羊皮纸', dark: '深色' }[t]}</button>`).join('')}
+        ${['light', 'sepia', 'dark', 'book'].map((t) => `<button data-v="${t}" class="${cfg.theme === t ? 'on' : ''}">${{ light: '浅色', sepia: '羊皮纸', dark: '深色', book: '旧书' }[t]}</button>`).join('')}
       </div>
     </div>
     <div class="row"><div class="label">字号 <span class="desc">${cfg.fontSize}px</span></div>
@@ -1815,7 +1871,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.9.1 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.10.0 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');

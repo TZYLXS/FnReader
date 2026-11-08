@@ -16,6 +16,7 @@ const { getArticle } = require('./article');
 const replaceRules = require('./replace');
 const introLookup = require('./intro');
 const { buildSyncPayload } = require('./sync');
+const { getDaily } = require('./daily');
 const events = require('./events');
 const remote = require('./remote');
 
@@ -1784,7 +1785,34 @@ function saveCover(target, buf, mime) {
     return json(res, 200, { ok: true, data: result.data });
   }
 
-  // 软总线：当前可用作解析器的设备
+  // 每日推荐（起点榜 → 纵横兜底，6 小时缓存）
+  if (p === '/api/daily' && method === 'GET') {
+    const data = await getDaily(path.join(store.dataDir, 'daily.json'), {
+      remoteRank: busAvailable()
+        ? async () => {
+            const r = await remote.request('rank', { url: 'https://www.qidian.com/rank/recom/' }, 12000);
+            if (!r.ok || !r.data) return null;
+            return r.data;
+          }
+        : null,
+    });
+    const books = (data.books || []).map((b) => ({
+      ...b,
+      from: data.source,
+    }));
+    return json(res, 200, {
+      source: data.source || '',
+      url: data.url || '',
+      updatedAt: data.updatedAt || 0,
+      cached: !!data.cached,
+      stale: !!data.stale,
+      count: books.length,
+      books,
+      error: data.error || '',
+    });
+  }
+
+
   if (p === '/api/bus' && method === 'GET') {
     return json(res, 200, { devices: remote.listDevices(), ...remote.stats() });
   }

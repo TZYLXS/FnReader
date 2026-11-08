@@ -666,3 +666,51 @@ html[data-glass="1"] .reader.kindle .reader-foot {
 
 /* 兜底：任何情况下都不出现横向滚动 */
 html, body { max-width: 100%; overflow-x: hidden; }
+
+/* ---------- 主题：旧书（仿旧书网配色） ---------- */
+html[data-theme="book"] {
+  --bg: #f5efe0;
+  --panel: #fffbf1;
+  --text: #3a2e24;
+  --text-2: #7c6b57;
+  --line: #ddd0b8;
+  --accent: #8c1f28;
+  --accent-soft: #f3e3e0;
+  --shadow: 0 1px 2px rgba(90, 60, 30, 0.06), 0 8px 24px rgba(90, 60, 30, 0.08);
+}
+html[data-theme="book"] body {
+  font-family: "Songti SC", "STSong", "Noto Serif SC", "SimSun", Georgia, serif;
+}
+html[data-theme="book"] .topbar { border-bottom: 1px solid var(--line); background: transparent; }
+html[data-theme="book"] h1 { letter-spacing: 2px; font-weight: 600; }
+html[data-theme="book"] .tabbar { border-top: 2px solid var(--accent); }
+html[data-theme="book"] .section,
+html[data-theme="book"] .result,
+html[data-theme="book"] .book-card .cover { border-radius: 2px; }
+html[data-theme="book"] .section { border: 1px solid var(--line); background: var(--panel); }
+html[data-theme="book"] .btn { border-radius: 2px; }
+html[data-theme="book"] .chip.on { background: var(--accent); color: #fff8ee; }
+
+/* ---------- 每日推荐 ---------- */
+.daily-head {
+  padding: 16px 14px 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+.daily-head h2 { margin: 0 0 4px; font-size: 18px; letter-spacing: 3px; }
+.daily-head .src { font-size: 12px; color: var(--text-2); }
+.daily-list { padding: 4px 14px 24px; }
+.daily-item {
+  display: flex; gap: 12px; align-items: baseline;
+  padding: 10px 0; border-bottom: 1px dashed var(--line);
+  cursor: pointer;
+}
+.daily-item:active { opacity: 0.6; }
+.daily-item .rk {
+  width: 26px; flex: 0 0 26px; text-align: right;
+  color: var(--accent); font-weight: 700; font-family: Georgia, serif;
+}
+.daily-item .nm { flex: 1; min-width: 0; }
+.daily-item .nm b { font-weight: 600; font-size: 15px; }
+.daily-item .nm .au { display: block; font-size: 12px; color: var(--text-2); margin-top: 2px; }
+.daily-item .sc { font-size: 12px; color: var(--text-2); }

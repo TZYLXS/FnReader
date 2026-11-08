@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.9.1
+version=1.10.0
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=POST /api/m/books 支持内嵌 coverData，加书与封面一次请求完成；文档新增第 14 章「自动同步：加书即同步」，含触发点、重试队列与批量建议
+changelog=新增「旧书」主题：米色纸张、朱红点缀、宋体排印，可在设置里切换；新增「每日推荐」页：抓取榜单（起点优先、纵横/17K 兜底），6 小时缓存；支持软总线代抓起点榜单（rank 任务）
