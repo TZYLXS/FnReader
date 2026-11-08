@@ -538,7 +538,8 @@ function evalPrefixed(piece, ctx, opts = {}) {
     if (!sel || !ctx.doc) return { values: [], nodes: [] };
     let nodes;
     try {
-      nodes = ctx.doc.$(sel).toArray();
+      const scoped = opts.scope && opts.scope.type !== 'json' && opts.scope.type !== 'attribute';
+      nodes = scoped ? ctx.doc.$(opts.scope).find(sel).toArray() : ctx.doc.$(sel).toArray();
     } catch {
       return { values: [], nodes: [] };
     }
@@ -571,6 +572,8 @@ function evalWithPrefixes(ruleStr, ctx, opts = {}) {
   for (const alt of alternatives) {
     const pieces = splitTop(alt, '&&').map((x) => x.trim()).filter(Boolean);
     const values = [];
+    const nodes = [];
+    let first = null;
     for (const piece of pieces) {
       let target = piece;
       // 去掉外层括号，避免同一表达式被反复求值
@@ -579,10 +582,14 @@ function evalWithPrefixes(ruleStr, ctx, opts = {}) {
       const r = target.includes('||')
         ? evalRule(target, ctx, opts)
         : evalPrefixed(target, ctx, opts) || evalRule(target, ctx, opts);
+      if (!first) first = r;
       const v = (r.values || []).filter((x) => x !== undefined && x !== null && String(x) !== '');
       values.push(...v);
+      if (r.nodes && r.nodes.length) nodes.push(...r.nodes);
     }
-    if (values.length) return { values: [values.join('')], nodes: [] };
+    // 单段规则（如列表选择器）要保留 nodes，供上层遍历
+    if (pieces.length === 1 && first && (first.values.length || (first.nodes && first.nodes.length))) return first;
+    if (values.length) return { values: [values.join('')], nodes };
   }
   return { values: [], nodes: [] };
 }
