@@ -348,3 +348,60 @@ POST /api/m/books?token=…
 ```
 
 把探测失败的原因区分开提示用户，比一句「连接失败」有用得多。
+
+---
+
+## 11 软总线：哪台设备能代理解析
+
+服务端维护一份「解析设备」清单，App 只要在轮询任务时自报身份，就会出现在网页的
+「设置 → 软总线 → 手机解析待命」里。
+
+### 11.1 设备报到（跟着领任务一起带上即可）
+
+```http
+GET /api/m/remote/pending?token=…
+    &id=<设备唯一id>&name=<设备名>&model=<机型>&ver=<App版本>&wait=15000
+```
+
+也可以用请求头：`X-Device-Id` / `X-Device-Name` / `X-Device-Model`。
+
+- 60 秒内有轮询算「在线」，超过显示离线
+- 服务端按 `id` 去重，同名设备只保留一条
+
+### 11.2 查看总线
+
+```http
+GET /api/bus
+```
+
+```json
+{
+  "devices": [
+    { "id": "phone-demo", "name": "红米K60", "model": "Redmi K60", "version": "1.0",
+      "lastSeen": 1794132208060, "handled": 12, "enabled": true, "online": true, "idle": 1 }
+  ],
+  "pending": 0
+}
+```
+
+`handled` 是该设备累计代理解析的次数。
+
+### 11.3 允许 / 暂停某台设备
+
+```http
+POST /api/bus/toggle
+{ "id": "phone-demo", "enabled": false }
+```
+
+暂停后服务端不再给它派任务。
+
+### 11.4 优先手机解析（设置项）
+
+「设置 → 软总线 → 优先手机解析」开关，对应配置 `preferRemote`：
+
+| 状态 | 搜索时的行为 |
+| --- | --- |
+| 关闭（默认） | 先本机解析，失败的源才问手机 |
+| 开启 | 先问在线设备（最多等 8 秒），拿不到再本机解析 |
+
+返回结果里 `via: "phone"` 表示这条来自手机，网页上会标「📱 手机解析」。

@@ -6,6 +6,57 @@
 const crypto = require('node:crypto');
 
 const jobs = new Map(); // id -> { id, type, payload, createdAt, resolve, timer }
+const devices = new Map(); // id -> { id, name, model, version, lastSeen, handled, enabled }
+
+const ONLINE_MS = 60000; // 60 秒内有心跳算在线
+
+/** App 报到 / 心跳 */
+function hello(info = {}) {
+  const id = String(info.id || info.deviceId || '').trim() || 'unknown';
+  const prev = devices.get(id) || { handled: 0, enabled: true };
+  const dev = {
+    id,
+    name: String(info.name || prev.name || '未命名设备'),
+    model: String(info.model || prev.model || ''),
+    version: String(info.version || prev.version || ''),
+    lastSeen: Date.now(),
+    handled: prev.handled || 0,
+    enabled: prev.enabled !== false,
+  };
+  devices.set(id, dev);
+  return dev;
+}
+
+function touch(id) {
+  const dev = devices.get(id);
+  if (dev) dev.lastSeen = Date.now();
+}
+
+function bumpHandled(id) {
+  const dev = devices.get(id);
+  if (dev) {
+    dev.handled = (dev.handled || 0) + 1;
+    dev.lastSeen = Date.now();
+  }
+}
+
+function listDevices() {
+  const now = Date.now();
+  return [...devices.values()]
+    .map((d) => ({
+      ...d,
+      online: now - d.lastSeen < ONLINE_MS,
+      idle: Math.round((now - d.lastSeen) / 1000),
+    }))
+    .sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || b.lastSeen - a.lastSeen);
+}
+
+function setEnabled(id, enabled) {
+  const dev = devices.get(id);
+  if (!dev) return false;
+  dev.enabled = !!enabled;
+  return true;
+}
 const WAIT_MS = 20000;
 const MAX_AGE = 120000;
 
@@ -57,4 +108,4 @@ function stats() {
   return { pending: jobs.size };
 }
 
-module.exports = { request, pending, complete, stats };
+module.exports = { request, pending, complete, stats, hello, touch, bumpHandled, listDevices, setEnabled };

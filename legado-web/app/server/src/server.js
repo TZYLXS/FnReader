@@ -304,6 +304,34 @@ async function handleSearchSSE(req, res, params) {
       const source = sources[i];
       const startedAt = Date.now();
       send({ type: 'source-start', source: source.bookSourceName, id: source.bookSourceUrl });
+
+      // 优先手机端解析：软总线有在线设备时先问手机，拿不到再本地跑
+      const preferRemote = store.config.preferRemote === true || params.get('remote') === '1';
+      if (preferRemote && !closed && busAvailable()) {
+        const rr = await remote.request(
+          'search',
+          { source: source.bookSourceUrl, name: source.bookSourceName, key },
+          store.config.preferRemote === true ? 8000 : 15000
+        );
+        if (!closed && rr.ok && rr.data && Array.isArray(rr.data.books) && rr.data.books.length) {
+          const books = rr.data.books;
+          found += books.length;
+          send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books, via: 'phone' });
+          doneCount++;
+          send({
+            type: 'source-done',
+            source: source.bookSourceName,
+            count: books.length,
+            ms: Date.now() - startedAt,
+            done: doneCount,
+            total: sources.length,
+            via: 'phone',
+          });
+          return;
+        }
+        if (closed) return;
+      }
+
       try {
         const books = await searchSource(source, key, 1);
         if (closed) return;
@@ -867,6 +895,11 @@ function allLanIps() {
     }
   }
   return out.length ? out : ['127.0.0.1'];
+}
+
+/** 是否有在线的解析设备（软总线） */
+function busAvailable() {
+  return remote.listDevices().some((d) => d.online && d.enabled);
 }
 
 function directBase() {
@@ -1603,6 +1636,17 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true, data: result.data });
   }
 
+  // 软总线：当前可用作解析器的设备
+  if (p === '/api/bus' && method === 'GET') {
+    return json(res, 200, { devices: remote.listDevices(), ...remote.stats() });
+  }
+
+  if (p === '/api/bus/toggle' && method === 'POST') {
+    const body = await readJson(req);
+    const ok = remote.setEnabled(String(body.id || ''), body.enabled !== false);
+    return json(res, ok ? 200 : 404, ok ? { ok: true } : { error: '设备不存在' });
+  }
+
   if (p === '/api/remote/stats' && method === 'GET') {
     return json(res, 200, { ...remote.stats(), viewers: events.count() });
   }
@@ -1619,6 +1663,13 @@ async function route(req, res, url) {
 
   // 手机端领任务（长轮询：没有任务就等一会儿再返回）
   if (p === '/api/m/remote/pending' && method === 'GET') {
+    // 设备报到：id/name/model 由 App 带上来
+    remote.hello({
+      id: searchParams.get('id') || req.headers['x-device-id'] || '',
+      name: searchParams.get('name') || req.headers['x-device-name'] || '',
+      model: searchParams.get('model') || req.headers['x-device-model'] || '',
+      version: searchParams.get('ver') || '',
+    });
     const wait = Math.min(30000, Number(searchParams.get('wait') || 10000));
     const deadline = Date.now() + wait;
     let list = remote.pending(Number(searchParams.get('limit') || 5));
@@ -1633,6 +1684,15 @@ async function route(req, res, url) {
     const body = await readJson(req);
     if (!body || !body.id) return json(res, 400, { error: '缺少任务 id' });
     const ok = remote.complete(body.id, body.ok !== false, body.data, body.error);
+    const devId = body.deviceId || req.headers['x-device-id'] || '';
+    if (ok) {
+      if (devId) remote.bumpHandled(devId);
+      else {
+        // 没带设备 id 时记到最近活跃的设备上
+        const d = remote.listDevices()[0];
+        if (d) remote.bumpHandled(d.id);
+      }
+    }
     return json(res, 200, { ok, accepted: ok });
   }
 

@@ -138,6 +138,7 @@ async function router() {
   if (path === '/search') return renderSearch();
   if (path === '/sources') return renderSources();
   if (path === '/settings') return renderSettings();
+  if (path === '/bus') return renderBus();
   if (path === '/detail') return renderDetail();
   if (path === '/feeds') return renderFeeds();
   if (path === '/downloads') return renderDownloads();
@@ -491,6 +492,73 @@ async function renderSearch() {
     input.value = pre;
     startSearch(pre);
   }
+}
+
+async function renderBus() {
+  view.innerHTML = `
+    <header class="topbar"><button class="icon-btn" id="bus-back">‹</button><h1>软总线</h1>
+      <button class="btn" id="bus-refresh" style="padding:5px 10px;font-size:12px">刷新</button>
+    </header>
+    <div class="progress-line" id="bus-hint">正在扫描可用解析设备…</div>
+    <div id="bus-list"><div class="empty"><span class="spinner"></span> 加载中…</div></div>`;
+
+  $('#bus-back').onclick = () => (location.hash = '#/settings');
+  $('#bus-refresh').onclick = () => loadBus();
+
+  async function loadBus() {
+    const box = $('#bus-list');
+    const hint = $('#bus-hint');
+    try {
+      const r = await api('/bus');
+      const devs = r.devices || [];
+      const online = devs.filter((d) => d.online).length;
+      hint.textContent = `待命设备 ${online} 台 · 等待中的任务 ${r.pending || 0} 个`;
+
+      if (!devs.length) {
+        box.innerHTML = `<div class="empty"><div class="big">📱</div>还没有手机接入软总线<br />
+          在 App 里打开「解析待命」即可出现在这里</div>`;
+        return;
+      }
+
+      box.innerHTML = devs
+        .map(
+          (d) => `
+        <div class="section" style="margin:12px 14px">
+          <div class="row">
+            <div class="label">
+              <b>${esc(d.name)} ${d.online ? '<span class="tag" style="background:var(--accent-soft);color:var(--accent)">在线</span>' : '<span class="tag">离线</span>'}</b>
+              <div class="desc">${esc(d.model || '未知机型')}${d.version ? ' · v' + esc(d.version) : ''} · ${d.online ? '刚刚活跃' : d.idle + ' 秒前'}</div>
+            </div>
+            <div class="switch ${d.enabled ? 'on' : ''}" data-toggle="${esc(d.id)}"></div>
+          </div>
+          <div class="row"><div class="label">已代理解析<div class="desc">${d.handled || 0} 次</div></div></div>
+        </div>`
+        )
+        .join('');
+
+      box.onclick = async (e) => {
+        const t = e.target.dataset.toggle;
+        if (t == null) return;
+        const on = e.target.classList.contains('on');
+        try {
+          await api('/bus/toggle', { method: 'POST', body: { id: t, enabled: !on } });
+          e.target.classList.toggle('on', !on);
+          toast(!on ? '已允许该设备代理解析' : '已暂停该设备');
+        } catch (err) {
+          toast('操作失败：' + err.message);
+        }
+      };
+    } catch (e) {
+      box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+    }
+  }
+
+  await loadBus();
+  clearInterval(state.busTimer);
+  state.busTimer = setInterval(() => {
+    if (location.hash.startsWith('#/bus')) loadBus();
+    else clearInterval(state.busTimer);
+  }, 5000);
 }
 
 async function renderDetail() {
@@ -1723,6 +1791,12 @@ async function renderSettings() {
         <a class="row" href="#/sources" style="text-decoration:none"><div class="label">书源管理<div class="desc" id="src-summary">导入、检测、分组与批量删除</div></div><span style="color:var(--text-2)">›</span></a>
       </div>
       <div class="section">
+        <h3>软总线</h3>
+        <div class="row"><div class="label">优先手机解析<div class="desc">开启后搜索先交给在线设备，失败再本机解析</div></div>
+          <div class="switch ${cfg.preferRemote ? 'on' : ''}" id="sw-prefer"></div></div>
+        <a class="row" href="#/bus" style="text-decoration:none"><div class="label">手机解析待命<div class="desc" id="bus-summary">查看哪些设备可以代理解析</div></div><span style="color:var(--text-2)">›</span></a>
+      </div>
+      <div class="section">
         <h3>屏蔽规则</h3>
         <div class="row"><div class="label">替换规则<div class="desc" id="rules-count">加载中…</div></div>
           <input type="file" id="rules-file" accept=".json,application/json" hidden />
@@ -1741,7 +1815,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.31.1 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.8.0 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -1879,6 +1953,26 @@ async function renderSettings() {
         }
       };
     renderRules();
+
+    // 优先手机解析
+    const swPrefer = $('#sw-prefer');
+    if (swPrefer)
+      swPrefer.onclick = () => {
+        const on = !swPrefer.classList.contains('on');
+        swPrefer.classList.toggle('on', on);
+        saveConfig({ preferRemote: on });
+        toast(on ? '搜索将优先交给手机解析' : '已改回本机优先');
+      };
+
+    // 软总线摘要
+    const busSummary = $('#bus-summary');
+    if (busSummary)
+      api('/bus')
+        .then((r) => {
+          const online = (r.devices || []).filter((d) => d.online).length;
+          busSummary.textContent = online ? `${online} 台设备在线可代理解析` : '暂无在线设备';
+        })
+        .catch(() => {});
 
     // 液态玻璃底栏
     const swGlass = $('#sw-glass');
