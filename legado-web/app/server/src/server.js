@@ -1281,6 +1281,102 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  // App 同步已缓存的小说：章节目录 + 正文 + 封面 + 来源，落到 <下载目录>/cache/<书名>/
+  if (p === '/api/m/cache' && method === 'POST') {
+    const body = await readJson(req);
+    const book = body && body.book;
+    if (!book || !book.bookUrl) return json(res, 400, { error: '缺少 book.bookUrl' });
+
+    const root = path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache');
+    const safe = String(book.name || '未命名')
+      .replace(/[\\/:*?"<>|\r\n\t]/g, '_')
+      .replace(/^\.+/, '')
+      .slice(0, 80)
+      .trim() || '未命名';
+
+    let dir = path.join(root, safe);
+    for (let i = 2; fs.existsSync(dir); i++) dir = path.join(root, `${safe} (${i})`);
+    fs.mkdirSync(dir, { recursive: true });
+
+    const chapters = Array.isArray(body.chapters) ? body.chapters : [];
+    const saved = [];
+    let bytes = 0;
+
+    chapters.forEach((ch, i) => {
+      const idx = String(i + 1).padStart(4, '0');
+      const title = String(ch.title || `第${i + 1}章`).replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 60);
+      let text = '';
+      if (Array.isArray(ch.paragraphs)) text = ch.paragraphs.join('\n\n');
+      else if (typeof ch.content === 'string') text = ch.content;
+      else if (typeof ch.text === 'string') text = ch.text;
+      const file = `${idx} ${title}.txt`;
+      if (text) {
+        fs.writeFileSync(path.join(dir, file), text, 'utf8');
+        bytes += Buffer.byteLength(text, 'utf8');
+      }
+      saved.push({ index: i, title: String(ch.title || ''), url: String(ch.url || ''), file: text ? file : '' });
+    });
+
+    // 封面
+    let coverFile = '';
+    if (body.coverData) {
+      try {
+        const buf = Buffer.from(String(body.coverData).replace(/^data:[^;]+;base64,/, ''), 'base64');
+        if (buf.length) {
+          const ext = /png/i.test(body.coverMime || '') ? 'png' : /webp/i.test(body.coverMime || '') ? 'webp' : 'jpg';
+          coverFile = `cover.${ext}`;
+          fs.writeFileSync(path.join(dir, coverFile), buf);
+          bytes += buf.length;
+        }
+      } catch {
+        /* 忽略坏图 */
+      }
+    }
+
+    const meta = {
+      name: String(book.name || ''),
+      author: String(book.author || ''),
+      bookUrl: book.bookUrl,
+      origin: String(book.origin || ''),
+      originName: String(book.originName || ''),
+      intro: String(book.intro || '').slice(0, 1000),
+      totalChapterNum: saved.length || Number(book.totalChapterNum) || 0,
+      durChapterIndex: Number(book.durChapterIndex || 0),
+      savedAt: Date.now(),
+      cover: coverFile,
+      chapters: saved,
+    };
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
+
+    // 同时登记到书架，网页端可直接读（正文已落盘）
+    const stored = store.findBook(book.bookUrl) || {};
+    store.upsertBook({
+      ...stored,
+      bookUrl: book.bookUrl,
+      name: String(book.name || stored.name || '未命名'),
+      author: String(book.author || stored.author || ''),
+      coverUrl: coverFile ? `file://${path.join(dir, coverFile)}` : stored.coverUrl || '',
+      intro: String(book.intro || stored.intro || ''),
+      origin: String(book.origin || stored.origin || ''),
+      originName: String(book.originName || stored.originName || '手机缓存'),
+      chapters: saved.map((c) => ({ title: c.title, url: c.url })),
+      totalChapterNum: saved.length,
+      cachedDir: dir,
+      durChapterIndex: Number(book.durChapterIndex || stored.durChapterIndex || 0),
+      durChapterTime: Date.now(),
+    });
+    events.broadcast({ type: 'shelf', action: 'cache', bookUrl: book.bookUrl, via: 'app' });
+
+    return json(res, 200, {
+      ok: true,
+      dir,
+      chapters: saved.length,
+      withText: saved.filter((c) => c.file).length,
+      bytes,
+      cover: coverFile,
+    });
+  }
+
   // App 上传书源：与「导入书源」同格式，按 bookSourceUrl 合并
   if (p === '/api/m/sources' && method === 'POST') {
     const body = await readJson(req);

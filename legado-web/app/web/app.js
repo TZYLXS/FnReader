@@ -1129,9 +1129,11 @@ function openReaderSettings() {
   box.innerHTML = `
     <h3>阅读设置</h3>
     <div class="row"><div class="label">主题</div>
-      <div class="seg" id="seg-theme">
-        ${['light', 'sepia', 'dark', 'book'].map((t) => `<button data-v="${t}" class="${cfg.theme === t ? 'on' : ''}">${{ light: '浅色', sepia: '羊皮纸', dark: '深色', book: '旧书' }[t]}</button>`).join('')}
-      </div>
+      <select class="scope-select theme-select" id="sel-theme">
+        ${['light', 'sepia', 'dark', 'book']
+          .map((t) => `<option value="${t}" ${cfg.theme === t ? 'selected' : ''}>${{ light: '浅色', sepia: '羊皮纸', dark: '深色', book: '旧书' }[t]}</option>`)
+          .join('')}
+      </select>
     </div>
     <div class="row"><div class="label">字号 <span class="desc">${cfg.fontSize}px</span></div>
       <div class="seg">
@@ -1162,12 +1164,12 @@ function openReaderSettings() {
   modal.onclick = (e) => {
     if (e.target === modal) close();
   };
-  $('#seg-theme').onclick = (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    saveConfig({ theme: b.dataset.v });
-    $$('#seg-theme button').forEach((x) => x.classList.toggle('on', x === b));
-  };
+  const selTheme = $('#sel-theme');
+  if (selTheme)
+    selTheme.onchange = () => {
+      saveConfig({ theme: selTheme.value });
+      toast('主题已切换');
+    };
   box.querySelectorAll('[data-font]').forEach((b) => {
     b.onclick = () => {
       const v = Math.max(14, Math.min(30, cfg.fontSize + Number(b.dataset.font)));
@@ -1794,9 +1796,11 @@ async function renderSettings() {
       <div class="section">
         <h3>阅读</h3>
         <div class="row"><div class="label">主题</div>
-          <div class="seg" id="set-theme">
-            ${['light', 'sepia', 'dark'].map((t) => `<button data-v="${t}" class="${cfg.theme === t ? 'on' : ''}">${{ light: '浅色', sepia: '羊皮纸', dark: '深色' }[t]}</button>`).join('')}
-          </div>
+          <select class="scope-select theme-select" id="set-theme">
+            ${['light', 'sepia', 'dark', 'book']
+              .map((t) => `<option value="${t}" ${cfg.theme === t ? 'selected' : ''}>${{ light: '浅色', sepia: '羊皮纸', dark: '深色', book: '旧书' }[t]}</option>`)
+              .join('')}
+          </select>
         </div>
         <div class="row"><div class="label">字号</div>
           <input type="number" id="set-font" min="14" max="30" value="${cfg.fontSize}" style="width:72px" />
@@ -1871,7 +1875,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.10.0 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.10.1 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -1884,12 +1888,7 @@ async function renderSettings() {
     const logRow = $('#open-log');
     if (logRow) logRow.onclick = () => showChangelog();
 
-    $('#set-theme').onclick = (e) => {
-      const b = e.target.closest('button');
-      if (!b) return;
-      saveConfig({ theme: b.dataset.v });
-      $$('#set-theme button').forEach((x) => x.classList.toggle('on', x === b));
-    };
+    $('#set-theme').onchange = (e) => saveConfig({ theme: e.target.value });
     $('#set-font').onchange = (e) => saveConfig({ fontSize: Number(e.target.value) || 19 });
     $('#set-lh').onchange = (e) => saveConfig({ lineHeight: Number(e.target.value) || 1.85 });
 

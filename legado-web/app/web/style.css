@@ -714,3 +714,6 @@ html[data-theme="book"] .chip.on { background: var(--accent); color: #fff8ee; }
 .daily-item .nm b { font-weight: 600; font-size: 15px; }
 .daily-item .nm .au { display: block; font-size: 12px; color: var(--text-2); margin-top: 2px; }
 .daily-item .sc { font-size: 12px; color: var(--text-2); }
+
+/* 主题下拉：与搜索范围下拉同款 */
+.theme-select { width: 104px; height: 34px; padding: 4px 8px; font-size: 13px; }

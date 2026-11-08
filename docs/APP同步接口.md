@@ -667,3 +667,80 @@ POST /api/m/books
 4. 全都失败 → 返回磁盘里的上一次结果（`stale: true`）
 
 缓存 6 小时；App 也可以直接调这个接口做「今日推荐」页。
+
+---
+
+## 16 缓存同步：把手机里已缓存的书整本推到 NAS
+
+App 本地缓存了章节正文时，可以连同**目录、封面、来源**一起推上来，
+NAS 那边落成文件，网页端离线也能读。
+
+### 16.1 接口
+
+```http
+POST /api/m/cache      X-Api-Token: …
+{
+  "book": {
+    "bookUrl": "https://…",
+    "name": "书名",
+    "author": "作者",
+    "origin": "https://源站",
+    "originName": "源名",
+    "intro": "简介",
+    "durChapterIndex": 12
+  },
+  "coverData": "<base64 或 data:image/jpeg;base64,…>",
+  "coverMime": "image/jpeg",
+  "chapters": [
+    { "title": "第一章 开端", "url": "https://…", "paragraphs": ["第一段", "第二段"] },
+    { "title": "第二章 继续", "url": "https://…", "content": "整章文本…" }
+  ]
+}
+```
+
+- `chapters[].paragraphs` 或 `.content` 二选一；只传目录不传正文也允许
+- 章节顺序以数组顺序为准，`index` 由服务端重新编号
+
+响应：
+
+```json
+{ "ok": true, "dir": "/vol3/1000/DownLoad/cache/书名",
+  "chapters": 3, "withText": 2, "bytes": 133, "cover": "cover.png" }
+```
+
+### 16.2 落盘规则
+
+统一写到**用户设置的下载目录**下的 `cache/`，以书名建子目录：
+
+```
+<下载目录>/cache/<书名>/
+    meta.json            # 书名/作者/来源/简介/目录/保存时间
+    cover.jpg|png        # 封面（有就存）
+    0001 第一章 开端.txt
+    0002 第二章 继续.txt
+    ...
+```
+
+- 书名里的 `\ / : * ? " < > |` 换成 `_`，最长 80 字
+- 重名自动加后缀：`书名 (2)`、`书名 (3)`
+- 同名书重复推送会新建目录（不覆盖旧的），需要覆盖请先删旧目录
+
+### 16.3 推完之后
+
+- 这本书会登记进书架（`origin` 保留，`originName` 缺省写「手机缓存」）
+- 目录已写入 `book.chapters`，网页端点开就有目录
+- 正文已落盘，`/api/content` 直接读文件，不再走网络
+- 收到 `{type:'shelf', action:'cache'}` 事件后网页书架自动刷新
+
+### 16.4 App 侧建议
+
+```text
+用户点「同步到飞牛」或批量同步时：
+  for book in 已缓存书:
+      chapters = 本地按 index 排序，取 title/url/(paragraphs)
+      POST /api/m/cache { book, coverData, chapters }
+      # 大书分批：一次 50 章，第二次带同样的 book 会新建目录，
+      # 所以建议先只推一次、或自己控制全书在一个请求里
+```
+
+一次请求体上限 32 MB；整本几千章建议只推「已缓存的前 N 章」或分卷推。
