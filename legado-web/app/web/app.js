@@ -24,8 +24,12 @@ function toast(msg) {
 }
 
 async function api(path, opts = {}) {
+  // /api/m/* 需要令牌；网页端自己也知道令牌，直接带上，避免 401
+  const headers = { 'Content-Type': 'application/json' };
+  const token = state.config && state.config.apiToken;
+  if (token) headers['X-Api-Token'] = token;
   const res = await fetch('./api' + path, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...opts,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
@@ -1736,7 +1740,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.30 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.31 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -1986,6 +1990,7 @@ async function renderSettings() {
         if (!confirm('重置后旧 App 的 token 会失效，需要重新填写。继续？')) return;
         try {
           const r = await api('/m/reset-token', { method: 'POST' });
+          state.config.apiToken = r.apiToken;
           $('#api-token').textContent = r.apiToken;
           toast('令牌已重置');
         } catch (e) {
