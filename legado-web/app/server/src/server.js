@@ -2,6 +2,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const zlib = require('node:zlib');
 const crypto = require('node:crypto');
 const store = require('./store');
@@ -835,6 +836,44 @@ function externalBase(req, prefix) {
   return `${proto}://${host}${prefix || ''}`;
 }
 
+/** 本机局域网 IPv4（跳过 docker / 虚拟网卡） */
+function lanIp() {
+  const skip = /^(docker|br-|veth|virbr|lo|tun|tap|zt|tailscale)/i;
+  const cands = [];
+  const nets = os.networkInterfaces();
+  for (const [name, list] of Object.entries(nets)) {
+    for (const n of list || []) {
+      if (n.family !== 'IPv4' || n.internal) continue;
+      if (skip.test(name)) continue;
+      cands.push(n.address);
+    }
+  }
+  return cands[0] || '127.0.0.1';
+}
+
+/**
+ * App / 书源要用的直连地址。
+ * 走 fnOS 网关（:5666）时 req.host 是网关端口，手机 App 连不了那儿，
+ * 所以固定用「服务端口 + 局域网 IP」。
+ */
+function allLanIps() {
+  const skip = /^(docker|br-|veth|virbr|lo|tun|tap|zt|tailscale)/i;
+  const out = [];
+  for (const [name, list] of Object.entries(os.networkInterfaces())) {
+    for (const n of list || []) {
+      if (n.family !== 'IPv4' || n.internal) continue;
+      if (skip.test(name)) continue;
+      if (!out.includes(n.address)) out.push(n.address);
+    }
+  }
+  return out.length ? out : ['127.0.0.1'];
+}
+
+function directBase() {
+  const port = process.env.TRIM_SERVICE_PORT || process.env.PORT || 1122;
+  return `http://${lanIp()}:${port}`;
+}
+
 /** 生成 Legado 书源对象（可直接被「阅读」导入） */
 function buildLegadoBookSource(base, token) {
   const api = `${base}/api/m`;
@@ -1263,7 +1302,7 @@ async function route(req, res, url) {
 
   // 书源 JSON：GET /api/m/booksource?token=xxx
   if (p === '/api/m/booksource' && method === 'GET') {
-    const base = externalBase(req, MOUNT_PREFIX);
+    const base = directBase();
     return json(res, 200, buildLegadoBookSource(base, apiToken()));
   }
 
@@ -1271,7 +1310,7 @@ async function route(req, res, url) {
   if (p === '/api/m/legado/search' && method === 'GET') {
     const key = String(searchParams.get('key') || '').trim();
     if (!key) return json(res, 400, { error: '缺少 key' });
-    const base = externalBase(req, MOUNT_PREFIX);
+    const base = directBase();
     const token = apiToken();
     try {
       const books = await mobileSearch(key, searchParams.get('group') || '', searchParams.get('limit') || 8);
@@ -1299,7 +1338,7 @@ async function route(req, res, url) {
 
   // 书籍详情：首次打开时自动加入书架，修掉「搜到书却打不开」的断链
   if (p === '/api/m/legado/book' && method === 'GET') {
-    const base = externalBase(req, MOUNT_PREFIX);
+    const base = directBase();
     const token = apiToken();
     const bookUrl = unb64u(searchParams.get('u'));
     const srcUrl = unb64u(searchParams.get('s'));
@@ -1353,7 +1392,7 @@ async function route(req, res, url) {
 
   // 目录：章节地址直接指向 /api/m/content，正文返回 {"paragraphs":[...]}
   if (p === '/api/m/legado/toc' && method === 'GET') {
-    const base = externalBase(req, MOUNT_PREFIX);
+    const base = directBase();
     const token = apiToken();
     const book = store.findBook(unb64u(searchParams.get('u')));
     if (!book) return json(res, 404, { error: '书籍不在书架中，请从阅读里重新搜索打开' });
@@ -2061,7 +2100,13 @@ function mergeFeedIntoBook(feed) {
     return json(res, 200, { ok: true });
   }
 
-  if (p === '/api/config' && method === 'GET') return json(res, 200, store.config);
+  if (p === '/api/config' && method === 'GET')
+    return json(res, 200, {
+      ...store.config,
+      directBase: directBase(),
+      lanIp: lanIp(),
+      lanIps: allLanIps().map((ip) => `http://${ip}:${process.env.TRIM_SERVICE_PORT || process.env.PORT || 1122}`),
+    });
   if (p === '/api/config' && method === 'POST') {
     const body = await readJson(req);
     if (body && body.downloadDir) {

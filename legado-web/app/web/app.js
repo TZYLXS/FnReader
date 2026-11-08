@@ -1690,6 +1690,7 @@ async function renderSettings() {
         <h3>手机接入</h3>
         <div class="row"><div class="label">接口地址<div class="desc" id="api-base" style="word-break:break-all">-</div></div>
           <button class="btn" id="copy-base" style="padding:5px 10px;font-size:12px">复制</button></div>
+        <div class="row"><div class="label">其它地址<div class="desc" id="api-alts" style="word-break:break-all">-</div></div></div>
         <div class="row"><div class="label">访问令牌<div class="desc" id="api-token" style="word-break:break-all">-</div></div>
           <button class="btn" id="copy-token" style="padding:5px 10px;font-size:12px">复制</button>
           <button class="btn ghost" id="reset-token" style="padding:5px 8px;font-size:12px;color:var(--danger)">重置</button></div>
@@ -1740,7 +1741,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.31 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.7.31.1 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -1970,9 +1971,14 @@ async function renderSettings() {
       };
 
     // 手机接入：接口地址 + token
-    const apiBase = location.origin + location.pathname.replace(/\/[^/]*$/, '');
+    // 直连地址：网关（:5666）不能给手机用，服务端会返回 真实端口+局域网IP
+    const apiBase = cfg.directBase || location.origin + location.pathname.replace(/\/[^/]*$/, '');
     const baseEl = $('#api-base');
     if (baseEl) baseEl.textContent = apiBase;
+    const altEl = $('#api-alts');
+    if (altEl && Array.isArray(cfg.lanIps) && cfg.lanIps.length > 1) {
+      altEl.textContent = '其它可用地址：' + cfg.lanIps.filter((x) => x !== apiBase).join('  ');
+    }
     const tokenEl = $('#api-token');
     if (tokenEl) tokenEl.textContent = cfg.apiToken || '';
     const copy = (text, label) => {
