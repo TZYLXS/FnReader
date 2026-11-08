@@ -1306,6 +1306,15 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true, added, updated, total: store.sources.length });
   }
 
+/** 保存封面文件并返回可访问地址 */
+function saveCover(target, buf, mime) {
+  const ext = /png/i.test(mime) ? 'png' : /webp/i.test(mime) ? 'webp' : /gif/i.test(mime) ? 'gif' : 'jpg';
+  const name = crypto.createHash('sha1').update(String(target) || buf).digest('hex').slice(0, 16) + '.' + ext;
+  fs.mkdirSync(COVER_DIR, { recursive: true });
+  fs.writeFileSync(path.join(COVER_DIR, name), buf);
+  return `${directBase()}/api/covers/${name}`;
+}
+
   // App 上传封面：JSON {bookUrl, data(base64)} 或 raw image + ?bookUrl=
   if (p === '/api/m/cover' && method === 'POST') {
     const bookUrl = searchParams.get('bookUrl') || '';
@@ -1365,13 +1374,23 @@ async function route(req, res, url) {
     for (const item of list) {
       const bookUrl = String((item && item.bookUrl) || '').trim();
       if (!/^https?:/i.test(bookUrl)) continue;
+      // 内嵌封面：一次请求完成「加书 + 封面」
+      let inlineCover = '';
+      if (item.coverData) {
+        try {
+          const buf = Buffer.from(String(item.coverData).replace(/^data:[^;]+;base64,/, ''), 'base64');
+          if (buf.length) inlineCover = saveCover(bookUrl, buf, item.coverMime || 'image/jpeg');
+        } catch {
+          /* 忽略坏图片 */
+        }
+      }
       const existing = store.findBook(bookUrl);
       if (existing) {
         store.upsertBook({
           ...existing,
+          coverUrl: inlineCover || item.coverUrl || existing.coverUrl,
           name: item.name || existing.name,
           author: item.author || existing.author,
-          coverUrl: item.coverUrl || existing.coverUrl,
           intro: item.intro || existing.intro,
           durChapterIndex: Number(item.index != null ? item.index : item.durChapterIndex) || existing.durChapterIndex || 0,
           durChapterTitle: item.title || item.durChapterTitle || existing.durChapterTitle || '',
@@ -1383,7 +1402,7 @@ async function route(req, res, url) {
           bookUrl,
           name: String(item.name || '未命名'),
           author: String(item.author || ''),
-          coverUrl: String(item.coverUrl || ''),
+          coverUrl: inlineCover || String(item.coverUrl || ''),
           intro: String(item.intro || ''),
           kind: String(item.kind || ''),
           origin: String(item.origin || ''),

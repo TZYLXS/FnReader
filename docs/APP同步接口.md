@@ -533,3 +533,110 @@ POST /api/m/sources      X-Api-Token: …
 
 与 yuedu-pro 的「接入飞牛服务器」保持一致：书源仍然是 Legado 数组格式，
 只是方向从「NAS → App」变成「App → NAS」也支持了。
+
+---
+
+## 14 自动同步：加书即同步（推荐实现）
+
+触发条件只有一个：**App 把一本书加进本地书架**。加完立刻推 NAS，不依赖用户再点「同步」。
+
+### 14.1 触发点
+
+| App 里的动作 | 是否触发 |
+| --- | --- |
+| 搜索页「加入书架」 | ✅ |
+| 详情页「加入书架」 | ✅ |
+| 换源后重新加书 | ✅ |
+| 导入书单 / 批量加书 | ✅（逐个或批量） |
+| 只翻开阅读、不改书架 | ❌ |
+
+### 14.2 一次请求搞定「书 + 封面」
+
+把封面 base64 塞进同一个请求，避免两次往返：
+
+```http
+POST /api/m/books      X-Api-Token: …
+{
+  "bookUrl": "https://…",
+  "name": "书名",
+  "author": "作者",
+  "originName": "源名",
+  "coverData": "<base64 或 data:image/png;base64,…>",
+  "coverMime": "image/png",
+  "intro": "简介",
+  "totalChapterNum": 120,
+  "index": 0
+}
+```
+
+响应：
+
+```json
+{ "ok": true, "added": 1, "updated": 0, "total": 11 }
+```
+
+- `coverData` 会被落盘到 `covers/`，该书的 `coverUrl` 自动指向本地地址
+- 同一 `bookUrl` 再推是**更新**（`updated: 1`），不会重复加书，可以放心重试
+- 没有图片就省略 `coverData`；也可以单独调 `POST /api/m/cover`
+
+### 14.3 书源同样自动推
+
+本地书源有新增或修改时，跟加书一起推（只传变化的）：
+
+```http
+POST /api/m/sources   [ { "bookSourceName": "…", "bookSourceUrl": "…", "ruleSearch": {…} } ]
+```
+
+### 14.4 失败重试
+
+加书是用户操作，网络可能不通，要排队重试：
+
+```text
+onAddBook(book):
+    localDB.insert(book)                 # 先本地成功
+    pendingQueue.push({ type: 'book', bookUrl, payload, retries: 0 })
+    flush()
+
+flush():
+    while pendingQueue.top():
+        item = pendingQueue.top()
+        try:
+            POST /api/m/books  (带 coverData)
+            pendingQueue.pop()
+        catch (e):
+            item.retries += 1
+            if item.retries > 5: 标记 failed，通知用户「未同步到 NAS」
+            else: 等 2^retries 秒后再试（2/4/8/16/32）
+            break        # 队列保序，失败就停，等下次事件再 flush
+```
+
+队列要持久化（SQLite / SharedPreferences），App 被杀掉、手机重启后还能补传。
+
+### 14.5 批量加书
+
+书单导入时不要每条都发一次请求，攒成一批：
+
+```http
+POST /api/m/books
+{ "books": [ { … }, { … } ] }
+```
+
+单批建议 ≤ 20 本，避免请求体过大。
+
+### 14.6 双向一致的判定
+
+| 场景 | 处理 |
+| --- | --- |
+| NAS 已有同 `bookUrl` | 覆盖元数据，进度以 `durChapterTime` 大的为准 |
+| NAS 没有 | 新增 |
+| App 删书 | 调 `DELETE /api/books?url=<bookUrl>`（可选，默认不同步删除） |
+
+### 14.7 网页端会立刻看到
+
+服务端在加书/换封面后会通过 `/api/events` 广播：
+
+```json
+{ "type": "shelf", "action": "add", "bookUrl": "https://…", "via": "app" }
+```
+
+网页开着的话书架会自动刷新出这本新书，不用手动点刷新。

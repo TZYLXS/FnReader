@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.9.0
+version=1.9.1
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=新增 POST /api/m/cover：App 可把封面推到 NAS（base64 或二进制），自动写回书籍封面；新增 POST /api/m/sources：App 可把书源推到 NAS，按 bookSourceUrl 合并；封面本地存储 + /api/covers/<文件> 直出，带 7 天缓存
+changelog=POST /api/m/books 支持内嵌 coverData，加书与封面一次请求完成；文档新增第 14 章「自动同步：加书即同步」，含触发点、重试队列与批量建议
