@@ -862,3 +862,63 @@ POST /api/m/cache { layout:'legado', book, coverData, chapters, images }
 ```http
 POST /api/m/sources        [ … ]        // 见 13.2
 ```
+
+---
+
+## 18 简介补全：让手机把书籍详情带回来
+
+服务端抓不到的简介（起点反爬、晋江字体混淆）可以直接问手机——手机里有登录态和 WebView。
+
+### 18.1 任务类型 `bookinfo`
+
+服务端建任务：
+
+```json
+{ "type": "bookinfo", "payload": {
+    "bookUrl": "http://www.feisuwx.org/book/274/274864/index.html",
+    "source": "https://www.aixiawx.com/",
+    "name": "黎明之剑",
+    "author": "远瞳" } }
+```
+
+手机回传：
+
+```json
+{ "id": "…", "ok": true, "data": {
+    "intro": "高文穿越到一个即将被魔潮吞没的世界……",
+    "author": "远瞳",
+    "coverUrl": "https://…/cover.jpg",
+    "kind": "奇幻",
+    "wordCount": "500万字",
+    "lastChapter": "第1594章 8：05",
+    "totalChapterNum": 1594 } }
+```
+
+字段都可选，服务端只补「原本为空」的字段，不覆盖已有值。
+
+### 18.2 服务端什么时候问手机
+
+| 入口 | 触发条件 |
+| --- | --- |
+| `GET /api/intro?name=&author=&url=` | 本地书源 + 晋江都没拿到简介，且传了 `url` |
+| `GET /api/detail?url=&origin=` | 详情页的 `intro` 或 `coverUrl` 为空 |
+
+成功时响应里带 `"via": "phone"`，同时把结果写回书架（`book.intro`/`coverUrl`/`author`…）。
+
+超时 10 秒，拿不到就按原样返回，不阻塞页面。
+
+### 18.3 App 端实现要点
+
+```kotlin
+// 收到 bookinfo 任务
+val book = appDb.bookDao.getBook(payload.bookUrl)
+val info = webBook.getBookInfoAwait(bookSource, book)   // 走 Legado 自己的详情规则
+POST /api/m/remote/result {
+    id, deviceId, ok: true,
+    data: { intro = info.intro, coverUrl = info.coverUrl, author = info.author,
+            kind = info.kind?.toString(), wordCount = info.wordCount,
+            lastChapter = info.latestChapterTitle, totalChapterNum = info.totalChapterNum }
+}
+```
+
+只回你拿得到的字段即可，缺的留空。

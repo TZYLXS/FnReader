@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.11.4
+version=2.0.0
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=新增 Python 解析引擎（legado_rule）并可开关切换：设置页一键切 Node/Python，含桥接、依赖随包安装、失败自动回退、目录复用去重排序。
+changelog=软总线新增简介补全：本地拿不到简介时问手机（bookinfo 任务），结果写回书架，响应带 via:phone；修复手机/Python 分支里 return 导致搜索提前结束（403 个源只跑 15 个就 done）；手机解析结果落盘缓存（cache/phone/），加书自动预热目录与前 3 章，手机离线也能读；新增 worker 早退回归测试与软总线冒烟脚本

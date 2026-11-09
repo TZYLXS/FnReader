@@ -92,10 +92,17 @@ async function loadChapterContent(book, index) {
     }
   }
   if (book.viaPhone) {
+    // 手机解析过的章节落过盘，就不必再问手机
+    const hit = readPhoneCache(book.bookUrl, index, 'content');
+    if (hit && Array.isArray(hit.paragraphs) && hit.paragraphs.length) {
+      cacheSet(key, hit.paragraphs);
+      return { paragraphs: hit.paragraphs, cached: true, via: 'phone-cache' };
+    }
     const paragraphs = await remoteContent(book, chapter).catch(() => null);
     if (paragraphs && paragraphs.length) {
       cacheSet(key, paragraphs);
-      return { paragraphs, cached: false };
+      writePhoneCache(book.bookUrl, index, 'content', { paragraphs, title: chapter.title, at: Date.now() });
+      return { paragraphs, cached: false, via: 'phone' };
     }
   }
   const mem = cacheGet(key);
@@ -366,7 +373,7 @@ async function handleSearchSSE(req, res, params) {
               total: sources.length,
               via: 'python',
             });
-            return;
+            continue;
           }
         } catch (e) {
           send({ type: 'log', message: `python 引擎失败（${source.bookSourceName}）：${e.message}` });
@@ -394,7 +401,7 @@ async function handleSearchSSE(req, res, params) {
             total: sources.length,
             via: 'phone',
           });
-          return;
+          continue;
         }
         if (closed) return;
       }
@@ -441,7 +448,7 @@ async function handleSearchSSE(req, res, params) {
               total: sources.length,
               via: 'phone',
             });
-            return;
+            continue;
           }
         }
         doneCount++;
@@ -541,6 +548,32 @@ const DOWNLOAD_INDEX = path.join(store.dataDir, 'downloads.json');
 const FEEDS_FILE = path.join(store.dataDir, 'feeds.json');
 const IMG_DIR = path.join(store.dataDir, 'cache', 'img');
 const COVER_DIR = path.join(store.dataDir, 'covers');
+const PHONE_CACHE = path.join(store.dataDir, 'cache', 'phone');
+
+function phoneCachePath(bookUrl, index, kind) {
+  const h = crypto.createHash('sha1').update(String(bookUrl)).digest('hex').slice(0, 16);
+  return path.join(PHONE_CACHE, h, `${kind}-${index}.json`);
+}
+
+function readPhoneCache(bookUrl, index, kind) {
+  try {
+    const f = phoneCachePath(bookUrl, index, kind);
+    if (!fs.existsSync(f)) return null;
+    return JSON.parse(fs.readFileSync(f, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writePhoneCache(bookUrl, index, kind, data) {
+  try {
+    const f = phoneCachePath(bookUrl, index, kind);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(data), 'utf8');
+  } catch {
+    /* 落盘失败不影响阅读 */
+  }
+}
 
 function readJSON(file, fallback) {
   try {
@@ -894,6 +927,61 @@ async function mobileSearch(key, group, limit) {
   return out;
 }
 
+/** 让手机端补全书籍详情（简介/封面/字数等），失败返回 null */
+async function remoteBookInfo(bookUrl, source, timeout = 10000) {
+  if (!busAvailable()) return null;
+  const book = bookUrl ? store.findBook(bookUrl) : null;
+  const r = await remote.request(
+    'bookinfo',
+    {
+      bookUrl,
+      source: source || (book && book.origin) || '',
+      name: (book && book.name) || '',
+      author: (book && book.author) || '',
+    },
+    timeout
+  ).catch(() => null);
+  if (!r || !r.ok || !r.data) return null;
+  const d = r.data;
+  return {
+    intro: String(d.intro || '').trim(),
+    coverUrl: String(d.coverUrl || '').trim(),
+    author: String(d.author || '').trim(),
+    kind: String(d.kind || '').trim(),
+    wordCount: String(d.wordCount || '').trim(),
+    lastChapter: String(d.lastChapter || '').trim(),
+    totalChapterNum: Number(d.totalChapterNum) || 0,
+  };
+}
+
+/** 把手机补全的信息写回书架 */
+function applyRemoteBookInfo(book, info) {
+  if (!book || !info) return;
+  if (info.intro) book.intro = info.intro;
+  if (info.coverUrl && !book.coverUrl) book.coverUrl = info.coverUrl;
+  if (info.author && !book.author) book.author = info.author;
+  if (info.kind && !book.kind) book.kind = info.kind;
+  if (info.wordCount && !book.wordCount) book.wordCount = info.wordCount;
+  if (info.lastChapter && !book.lastChapter) book.lastChapter = info.lastChapter;
+  if (info.totalChapterNum && !book.totalChapterNum) book.totalChapterNum = info.totalChapterNum;
+  store.upsertBook(book);
+}
+
+/** 手机解析来的书：预热目录 + 前几章正文并落盘 */
+async function prefetchPhoneBook(book, chapterCount = 3) {
+  if (!book || !book.viaPhone) return;
+  if (!busAvailable()) return;
+  const chapters = book.chapters && book.chapters.length ? book.chapters : await handleRefreshToc(book).catch(() => []);
+  const n = Math.min(chapterCount, (chapters || []).length);
+  for (let i = 0; i < n; i++) {
+    if (readPhoneCache(book.bookUrl, i, 'content')) continue;
+    const ps = await remoteContent(book, chapters[i]).catch(() => null);
+    if (ps && ps.length) {
+      writePhoneCache(book.bookUrl, i, 'content', { paragraphs: ps, title: chapters[i].title, at: Date.now() });
+    }
+  }
+}
+
 /** 让手机端解析目录（返回 chapters） */
 async function remoteToc(book) {
   const r = await remote.request(
@@ -926,11 +1014,19 @@ async function remoteContent(book, chapter) {
 async function handleRefreshToc(book) {
   // 手机解析出来的书：目录也交给手机
   if (book.viaPhone) {
+    const cachedToc = readPhoneCache(book.bookUrl, 0, 'toc');
+    if (cachedToc && Array.isArray(cachedToc.chapters) && cachedToc.chapters.length) {
+      book.chapters = cachedToc.chapters;
+      book.totalChapterNum = cachedToc.chapters.length;
+      store.upsertBook(book);
+      return book.chapters;
+    }
     const chapters = await remoteToc(book).catch(() => null);
     if (chapters && chapters.length) {
       book.chapters = chapters;
       book.totalChapterNum = chapters.length;
       store.upsertBook(book);
+      writePhoneCache(book.bookUrl, 0, 'toc', { chapters, at: Date.now() });
       return chapters;
     }
   }
@@ -2228,6 +2324,7 @@ function saveCover(target, buf, mime) {
     const author = String(searchParams.get('author') || '').trim();
     if (!name) return json(res, 400, { error: '缺少书名' });
     try {
+      const bookUrlParam = String(searchParams.get('url') || '');
       const r = await introLookup.lookup(name, author, store.dataDir, {
         force: searchParams.get('force') === '1',
         searchSources: (key, limit) => mobileSearch(key, '', limit),
@@ -2239,6 +2336,15 @@ function saveCover(target, buf, mime) {
           return book;
         },
       });
+      // 本地书源/晋江都拿不到时，让手机端补全
+      if (!r.intro && bookUrlParam) {
+        const info = await remoteBookInfo(bookUrlParam, '');
+        if (info && info.intro) {
+          const book = store.findBook(bookUrlParam);
+          if (book) applyRemoteBookInfo(book, info);
+          return json(res, 200, { ...r, ...info, source: '手机解析', via: 'phone' });
+        }
+      }
       return json(res, 200, r);
     } catch (e) {
       return json(res, 502, { error: '获取简介失败：' + (e.message || e) });
@@ -2264,6 +2370,22 @@ function saveCover(target, buf, mime) {
         }
       }
     }
+    // 本地书源抓不到简介：让手机补
+    if (!book.intro || !book.coverUrl) {
+      const info = await remoteBookInfo(url, origin);
+      if (info && (info.intro || info.coverUrl)) {
+        applyRemoteBookInfo(inShelf || book, info);
+        Object.assign(book, {
+          intro: book.intro || info.intro,
+          coverUrl: book.coverUrl || info.coverUrl,
+          author: book.author || info.author,
+          kind: book.kind || info.kind,
+          wordCount: book.wordCount || info.wordCount,
+          lastChapter: book.lastChapter || info.lastChapter,
+        });
+        return json(res, 200, { book, inShelf: !!inShelf, via: 'phone' });
+      }
+    }
     return json(res, 200, { book, inShelf: !!inShelf });
   }
 
@@ -2280,6 +2402,13 @@ function saveCover(target, buf, mime) {
       totalChapterNum: body.totalChapterNum || 0,
     };
     store.upsertBook(book);
+    // 手机解析来的书：后台预热目录与前几章，避免手机一离线就没正文
+    const saved = store.findBook(book.bookUrl);
+    if (saved && saved.viaPhone) {
+      setTimeout(() => {
+        prefetchPhoneBook(saved).catch(() => {});
+      }, 200);
+    }
     return json(res, 200, { ok: true, book: sanitizeBook(store.findBook(book.bookUrl)) });
   }
 
