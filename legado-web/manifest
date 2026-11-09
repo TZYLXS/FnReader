@@ -1,5 +1,5 @@
 ﻿appname=legado-web
-version=2.0.3
+version=2.0.4
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=目录引擎：分页上限 5→40，带循环检测，没写 nextTocUrl 时按「下一页」链接兜底，无新章节即停
+changelog=Python 引擎目录支持分页：桥接层按 nextTocUrl / 页面「下一页」循环抓取（上限 40 页、去重、无新增即停）
