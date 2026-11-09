@@ -1024,12 +1024,14 @@ async function remoteContent(book, chapter) {
 }
 
 async function handleRefreshToc(book) {
-  // 手机解析出来的书：目录也交给手机
-  if (book.viaPhone) {
+  // 目录优先走软总线：只要有手机在线就先让它解析（手机能过反爬/登录态），
+  // 拿不到（无设备、源不在手机上、超时）再回落到本机解析
+  if (book.viaPhone || busAvailable()) {
     const cachedToc = readPhoneCache(book.bookUrl, 0, 'toc');
     if (cachedToc && Array.isArray(cachedToc.chapters) && cachedToc.chapters.length) {
       book.chapters = cachedToc.chapters;
       book.totalChapterNum = cachedToc.chapters.length;
+      book.tocVia = 'phone-cache';
       store.upsertBook(book);
       return book.chapters;
     }
@@ -1037,6 +1039,7 @@ async function handleRefreshToc(book) {
     if (chapters && chapters.length) {
       book.chapters = chapters;
       book.totalChapterNum = chapters.length;
+      book.tocVia = 'phone';
       store.upsertBook(book);
       writePhoneCache(book.bookUrl, 0, 'toc', { chapters, at: Date.now() });
       return chapters;
@@ -1047,6 +1050,7 @@ async function handleRefreshToc(book) {
     if (book.cachedDir) return book.chapters || [];
     throw new Error('未找到书源，可能已被删除');
   }
+  book.tocVia = 'local';
   if (store.config.engine === 'python') {
     try {
       const r = await pyengine.call('toc', { source, tocUrl: book.tocUrl || book.bookUrl, bookUrl: book.bookUrl });
@@ -2528,6 +2532,16 @@ function saveCover(target, buf, mime) {
         prefetchPhoneBook(saved).catch(() => {});
       }, 200);
     }
+    // 新加的书：后台立刻抓一次完整目录（分页也会跟），抓完广播给网页
+    if (saved && !(saved.chapters && saved.chapters.length)) {
+      setTimeout(() => {
+        handleRefreshToc(saved)
+          .then((chapters) => {
+            events.broadcast({ type: 'shelf', action: 'toc', bookUrl: saved.bookUrl, count: (chapters || []).length, via: 'server' });
+          })
+          .catch(() => {});
+      }, 100);
+    }
     return json(res, 200, { ok: true, book: sanitizeBook(store.findBook(book.bookUrl)) });
   }
 
@@ -2601,7 +2615,7 @@ function saveCover(target, buf, mime) {
     if (!force && book.chapters && book.chapters.length) return json(res, 200, { chapters: book.chapters });
     try {
       const chapters = await handleRefreshToc(book);
-      return json(res, 200, { chapters });
+      return json(res, 200, { chapters, via: book.tocVia || 'local' });
     } catch (e) {
       return json(res, 502, { error: String(e.message || e) });
     }

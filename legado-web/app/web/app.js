@@ -781,15 +781,34 @@ async function addBook(book, btn) {
   btn.textContent = '添加中…';
   try {
     await api('/books', { method: 'POST', body: book });
-    btn.textContent = '已在书架';
-    toast('已加入书架，正在获取目录…');
-    // 后台拉目录，失败不影响加入
-    fetch('./api/toc?url=' + encodeURIComponent(book.bookUrl))
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.chapters) toast(`《${book.name}》共 ${d.chapters.length} 章`);
-      })
-      .catch(() => {});
+    btn.textContent = '获取目录…';
+    toast('已加入书架，正在获取完整目录…');
+    // 强制 refresh=1：确保拿到全部章节（含分页），而不是书架里的旧/空目录
+    try {
+      const d = await api('/toc?refresh=1&url=' + encodeURIComponent(book.bookUrl));
+      const n = (d.chapters || []).length;
+      if (n) {
+        book.chapters = d.chapters;
+        book.totalChapterNum = n;
+        if (state.books) {
+          const hit = state.books.find((x) => x.bookUrl === book.bookUrl);
+          if (hit) {
+            hit.chapters = d.chapters;
+            hit.totalChapterNum = n;
+            hit.chapterCount = n;
+          }
+        }
+        btn.textContent = '开始阅读';
+        const srcText = d.via === 'phone' || d.via === 'phone-cache' ? '（手机解析）' : '';
+        toast(`《${book.name}》共 ${n} 章${srcText}`);
+      } else {
+        btn.textContent = '已在书架';
+        toast('已加入书架（目录为空）');
+      }
+    } catch (e) {
+      btn.textContent = '已在书架';
+      toast('已加入书架，目录稍后会自动补全');
+    }
   } catch (e) {
     btn.disabled = false;
     btn.textContent = '加入书架';
@@ -1922,7 +1941,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.4 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.6 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
