@@ -291,9 +291,14 @@ async function parseTocFrom(startUrl, source, book) {
   let chapters = [];
   let pageGuard = 0;
   let nextUrl = startUrl;
+  const visitedTocPages = new Set();
 
-  while (nextUrl && pageGuard < 5) {
+  // 目录可能分很多页：上限放宽到 40，并做循环检测 + 无新增即停
+  while (nextUrl && pageGuard < 40) {
+    if (visitedTocPages.has(nextUrl)) break;
+    visitedTocPages.add(nextUrl);
     pageGuard++;
+    const chaptersBeforePage = chapters.length;
     const resp = await fetchPage(nextUrl, source, {});
     const doc = makeDoc(resp.body);
     const ctx = { doc, json: tryJson(resp.body), baseUrl: resp.url, source, book };
@@ -323,6 +328,22 @@ async function parseTocFrom(startUrl, source, book) {
       const next = evalString(rule.nextTocUrl, ctx);
       if (next) nextUrl = absoluteUrl(resp.url, next);
     }
+    // 书源没写 nextTocUrl，但页面自己有「下一页」链接时兜底跟一页
+    if (!nextUrl) {
+      const $ = doc.$;
+      let found = '';
+      $('a').each((i, el) => {
+        if (found) return;
+        const t = $(el).text().replace(/\s+/g, '');
+        const href = $(el).attr('href') || '';
+        if (!href) return;
+        if (/^(下一页|下页|下一頁|下一页»|下一页>|next|›|»)$/i.test(t)) found = absoluteUrl(resp.url, href);
+      });
+      if (found && !visitedTocPages.has(found)) nextUrl = found;
+    }
+
+    // 这一页没有拿到任何新章节，说明翻页逻辑已经空了，停止
+    if (chapters.length === chaptersBeforePage) nextUrl = '';
 
     // 目录格式化：formatJs 拿 result（本页标题按行拼接）返回处理后文本
     if (rule.formatJs && chapters.length) {
