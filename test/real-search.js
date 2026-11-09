@@ -1,8 +1,13 @@
 'use strict';
+
+const _fs = require('node:fs');
+const _path = require('node:path');
+const _root = _path.resolve(__dirname, '..');
+const APP_DIR = ['legado-web', 'fnos-legado'].find((d) => _fs.existsSync(_path.join(_root, d))) || 'legado-web';
 // 用真实书源批量测试搜索，统计成功率与失败原因
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeSource, searchSource } = require('../fnos-legado/app/server/src/books');
+const { normalizeSource, searchSource } = require('../' + APP_DIR + '/app/server/src/books');
 
 const file = process.argv[2] || path.join(__dirname, 'real-sources.json');
 const key = process.argv[3] || '斗破';

@@ -1,7 +1,9 @@
 'use strict';
 // 导源链路回归测试：网页导入 / App 上传 / 直接赋值 —— 都不应该抛错
 const path = require('node:path');
-process.env.LEGADO_DATA_DIR = path.join(require('node:os').tmpdir(), 'legado-store-test-' + Date.now());
+const _tmp = require('node:path').join(require('node:os').tmpdir(), 'legado-store-test-' + Date.now());
+require('node:fs').rmSync(_tmp, { recursive: true, force: true });
+process.env.LEGADO_DATA = _tmp;   // store.js 认这个变量
 
 const store = require('../fnos-legado/app/server/src/store');
 

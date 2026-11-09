@@ -1,4 +1,9 @@
 'use strict';
+
+const _fs = require('node:fs');
+const _path = require('node:path');
+const _root = _path.resolve(__dirname, '..');
+const APP_DIR = ['legado-web', 'fnos-legado'].find((d) => _fs.existsSync(_path.join(_root, d))) || 'legado-web';
 // 端到端测试：模拟站点 -> 书源规则 -> 搜索/目录/正文/进度
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -7,7 +12,7 @@ const path = require('node:path');
 
 const NODE = process.execPath;
 const ROOT = path.join(__dirname, '..');
-const SERVER = path.join(ROOT, 'fnos-legado', 'app', 'server', 'src', 'server.js');
+const SERVER = path.join(ROOT, APP_DIR, 'app', 'server', 'src', 'server.js');
 const MOCK = path.join(__dirname, 'mock-site.js');
 const PORT = 18100;
 const MOCK_PORT = 18080;
@@ -126,7 +131,7 @@ async function readSSE(url) {
       TRIM_SERVICE_PORT: PORT,
       LEGADO_DATA: DATA,
       TRIM_APPDEST: path.join(DATA, 'target'),
-      LEGADO_WEB: path.join(ROOT, 'fnos-legado', 'app', 'web'),
+      LEGADO_WEB: path.join(ROOT, APP_DIR, 'app', 'web'),
     },
     stdio: 'ignore',
   });

@@ -133,6 +133,30 @@ async function fetchPage(url, source, extra = {}) {
 const PERIODICAL_RE = /^\s*\d{4}\s*年\s*(第\s*)?\d{1,2}\s*期/;
 const DATE_ONLY_RE = /^\s*\d{4}[-./年]\s*\d{1,2}([-./月]\s*\d{1,2})?\s*(日|号)?\s*$/;
 
+
+/** 正文净化：##正则##替换 / ##正则 只取匹配 / ###正则##替换 只替首个 */
+function applyReplaceRules(text, rule) {
+  const raw = String(rule == null ? '' : rule);
+  if (!raw.trim() || !String(text)) return text;
+  const firstOnly = raw.startsWith('###');
+  const body = firstOnly ? raw.slice(3) : raw.replace(/^##/, '');
+  const parts = body.split('##');
+  const pattern = parts[0];
+  if (!pattern) return text;
+  const isExtract = parts.length === 1;
+  let re;
+  try {
+    // 只取匹配时必须用非全局正则，否则拿不到捕获组
+    re = new RegExp(pattern, firstOnly || isExtract ? '' : 'g');
+  } catch {
+    return text;
+  }
+  if (!isExtract) return String(text).replace(re, parts[1] || '');
+  const m = String(text).match(re);
+  if (!m) return '';
+  return m[1] !== undefined ? m[1] : m[0];
+}
+
 function isJunkResult(name, author) {
   const n = String(name || '').trim();
   if (!n) return true;
@@ -275,7 +299,6 @@ async function parseTocFrom(startUrl, source, book) {
     const ctx = { doc, json: tryJson(resp.body), baseUrl: resp.url, source, book };
     const rule = source.ruleToc || {};
     if (rule.init) evalRule(rule.init, ctx);
-    if (rule.formatJs) evalRule(rule.formatJs, ctx);
 
     const listRule = rule.chapterList || 'body';
     const listNodes = evalRule(listRule, ctx).nodes;
@@ -299,6 +322,28 @@ async function parseTocFrom(startUrl, source, book) {
     if (rule.nextTocUrl) {
       const next = evalString(rule.nextTocUrl, ctx);
       if (next) nextUrl = absoluteUrl(resp.url, next);
+    }
+
+    // 目录格式化：formatJs 拿 result（本页标题按行拼接）返回处理后文本
+    if (rule.formatJs && chapters.length) {
+      try {
+        const pageStart = chapters.length - listNodes.length;
+        const before = chapters.slice(0, pageStart);
+        const current = chapters.slice(pageStart);
+        const text = current.map((c) => c.title).join('\n');
+        const out = runJs(rule.formatJs, { result: text, baseUrl: resp.url, source, book });
+        const lines = String(out || '')
+          .split('\n')
+          .map((x) => x.trim())
+          .filter(Boolean);
+        if (lines.length === current.length) {
+          current.forEach((c, i) => {
+            c.title = lines[i];
+          });
+        }
+      } catch {
+        /* formatJs 失败不影响主流程 */
+      }
     }
   }
 
@@ -464,6 +509,7 @@ async function getContent(source, book, chapter) {
 }
 
 module.exports = {
+  applyReplaceRules,
   isJunkResult,
   normalizeSource,
   sourceId,

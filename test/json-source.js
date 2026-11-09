@@ -1,7 +1,12 @@
 'use strict';
+
+const _fs = require('node:fs');
+const _path = require('node:path');
+const _root = _path.resolve(__dirname, '..');
+const APP_DIR = ['legado-web', 'fnos-legado'].find((d) => _fs.existsSync(_path.join(_root, d))) || 'legado-web';
 // 用本地假 JSON API 验证：搜索 → 目录 → 正文 全链路（模拟 mgz0227 书源包的写法）
 const http = require('node:http');
-const { normalizeSource, searchSource, getToc, getContent } = require('../fnos-legado/app/server/src/books');
+const { normalizeSource, searchSource, getToc, getContent } = require('../' + APP_DIR + '/app/server/src/books');
 
 const PORT = 19090;
 const server = http.createServer((req, res) => {

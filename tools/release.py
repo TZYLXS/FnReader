@@ -13,11 +13,20 @@ import sys
 from datetime import date
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MANIFEST = os.path.join(BASE, "fnos-legado", "manifest")
-APPJS = os.path.join(BASE, "fnos-legado", "app", "web", "app.js")
-INDEX = os.path.join(BASE, "fnos-legado", "app", "web", "index.html")
-TXT = os.path.join(BASE, "dist", "更新日志.txt")
-MD = os.path.join(BASE, "dist", "更新日志.md")
+# 应用目录可能是 legado-web（仓库）或 fnos-legado（本地工作目录），自动识别
+APP_DIR = next(
+    (d for d in ("legado-web", "fnos-legado") if os.path.isdir(os.path.join(BASE, d))),
+    "legado-web",
+)
+MANIFEST = os.path.join(BASE, APP_DIR, "manifest")
+APPJS = os.path.join(BASE, APP_DIR, "app", "web", "app.js")
+INDEX = os.path.join(BASE, APP_DIR, "app", "web", "index.html")
+TXT = os.path.join(BASE, "docs", "更新日志.txt")
+MD = os.path.join(BASE, "docs", "更新日志.md")
+# 兼容旧的 dist/ 目录：两份都写，避免打包/部署口径不一致
+ALT_TXT = os.path.join(BASE, "dist", "更新日志.txt")
+ALT_MD = os.path.join(BASE, "dist", "更新日志.md")
+README = os.path.join(BASE, "README.md")
 
 NL = "\n"
 
@@ -80,6 +89,14 @@ def main():
         if first >= 0:
             md_new = md[:first] + md_entry + md[first:]
 
+    # README 里的「当前版本」也同步，避免文档掉队
+    readme_new = None
+    if os.path.exists(README):
+        rd = io.open(README, encoding="utf-8").read()
+        rd2 = re.sub(r"当前版本 \*\*[\d.]++\*\*", "当前版本 **" + new + "**", rd)
+        if rd2 != rd:
+            readme_new = rd2
+
     # app.js 版本显示
     js_new = None
     if os.path.exists(APPJS):
@@ -109,8 +126,14 @@ def main():
 
     io.open(MANIFEST, "w", encoding="utf-8", newline=NL).write(manifest_new)
     io.open(TXT, "w", encoding="utf-8", newline=NL).write(txt_new)
+    if os.path.isdir(os.path.dirname(ALT_TXT)):
+        io.open(ALT_TXT, "w", encoding="utf-8", newline=NL).write(txt_new)
     if md_new is not None:
         io.open(MD, "w", encoding="utf-8", newline=NL).write(md_new)
+        if os.path.isdir(os.path.dirname(ALT_MD)):
+            io.open(ALT_MD, "w", encoding="utf-8", newline=NL).write(md_new)
+    if readme_new is not None:
+        io.open(README, "w", encoding="utf-8", newline=NL).write(readme_new)
     if js_new is not None:
         io.open(APPJS, "w", encoding="utf-8", newline=NL).write(js_new)
     if idx_new is not None:

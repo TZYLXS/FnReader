@@ -1,4 +1,9 @@
 'use strict';
+
+const _fs = require('node:fs');
+const _path = require('node:path');
+const _root = _path.resolve(__dirname, '..');
+const APP_DIR = ['legado-web', 'fnos-legado'].find((d) => _fs.existsSync(_path.join(_root, d))) || 'legado-web';
 // 起一个本地预览实例（模拟书源站 + 应用服务），用于截图检查阅读页
 const { spawn } = require('node:child_process');
 const path = require('node:path');

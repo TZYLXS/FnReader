@@ -1,5 +1,5 @@
 appname=legado-web
-version=1.11.2
+version=1.11.3
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=修复导源报错 upsertSource is not a function：store 新增 upsertSource 方法；修复 Cannot set property sources：store.sources 增加 setter，旧式直接赋值不再抛错；新增 test/store-guard.js（6 条断言）覆盖导源链路
+changelog=修复 legado-py 缺陷清单：补 applyReplaceRules（正文净化）、formatJs 结果生效、脚本/测试目录名统一、日志写入 docs、README 版本自动同步。

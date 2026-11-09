@@ -1,6 +1,11 @@
 'use strict';
+
+const _fs = require('node:fs');
+const _path = require('node:path');
+const _root = _path.resolve(__dirname, '..');
+const APP_DIR = ['legado-web', 'fnos-legado'].find((d) => _fs.existsSync(_path.join(_root, d))) || 'legado-web';
 // 书源规则语法测试：显式前缀 / && 拼接 / ## 净化 / 取值尾缀
-const { makeDoc, evalString } = require('../fnos-legado/app/server/src/rules');
+const { makeDoc, evalString } = require('../' + APP_DIR + '/app/server/src/rules');
 
 const html = `<div class="book">
   <h1 class="title">JS 权威指南</h1>
