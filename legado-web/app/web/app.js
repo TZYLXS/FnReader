@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /* ---------------- 基础工具 ---------------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -682,32 +682,55 @@ async function renderDetail() {
 
   $('#detail-download').onclick = () => startDownloadFlow(url, b.name);
 
-  const fetchBtn = $('#fetch-intro');
-  if (fetchBtn)
-    fetchBtn.onclick = async () => {
-      fetchBtn.disabled = true;
-      fetchBtn.textContent = '获取中…';
-      try {
-        const r = await api('/intro?name=' + encodeURIComponent(b.name) + '&author=' + encodeURIComponent(b.author || ''));
-        if (!r.intro) {
-          fetchBtn.disabled = false;
-          fetchBtn.textContent = '没找到，重试';
-          return;
+  const fetchIntro = async (auto) => {
+    const btn = $('#fetch-intro');
+    const box = $('#detail-intro');
+    if (!box) return;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '获取中…';
+    }
+    if (auto) box.textContent = '正在获取简介…';
+    try {
+      const q =
+        '/intro?name=' +
+        encodeURIComponent(b.name) +
+        '&author=' +
+        encodeURIComponent(b.author || '') +
+        '&url=' +
+        encodeURIComponent(b.bookUrl || url) +
+        '&origin=' +
+        encodeURIComponent(b.origin || '');
+      const r = await api(q);
+      if (!r.intro) {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '没找到，重试';
         }
-        b.intro = r.intro;
-        $('#detail-intro').textContent = r.intro;
-        fetchBtn.remove();
-        const tip = document.createElement('div');
-        tip.className = 'desc';
-        tip.style.cssText = 'font-size:11.5px;color:var(--text-2);margin-top:8px';
-        tip.textContent = '简介来源：' + (r.source || '未知') + (r.url ? ' · ' + r.url : '');
-        $('#detail-intro').after(tip);
-      } catch (e) {
-        fetchBtn.disabled = false;
-        fetchBtn.textContent = '获取失败，重试';
-        toast('获取简介失败：' + e.message);
+        if (auto) box.textContent = '暂无简介';
+        return;
       }
-    };
+      b.intro = r.intro;
+      box.textContent = r.intro;
+      if (btn) btn.remove();
+      const tip = document.createElement('div');
+      tip.className = 'desc';
+      tip.style.cssText = 'font-size:11.5px;color:var(--text-2);margin-top:8px';
+      tip.textContent = '简介来源：' + (r.source || '未知') + (r.via === 'phone' ? '（手机解析）' : '');
+      box.after(tip);
+    } catch (e) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '获取失败，重试';
+      }
+      if (auto) box.textContent = '暂无简介';
+      if (!auto) toast('获取简介失败：' + e.message);
+    }
+  };
+
+  const fetchBtn = $('#fetch-intro');
+  if (fetchBtn) fetchBtn.onclick = () => fetchIntro(false);
+  if (!b.intro) fetchIntro(true);
 }
 
 function renderSearchResults() {
@@ -1880,7 +1903,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.0 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.1 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');

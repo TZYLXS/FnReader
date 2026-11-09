@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -17,6 +17,8 @@ const replaceRules = require('./replace');
 const introLookup = require('./intro');
 const { buildSyncPayload } = require('./sync');
 const { getDaily } = require('./daily');
+const { dedupeBooks } = require('./dedupe');
+const tombstone = require('./tombstone');
 const { normalizeChapterList } = require('./chapter-order');
 const pyengine = require('./pyengine');
 const { mergeSources, pullSince } = require('./sourcesync');
@@ -903,8 +905,10 @@ function mobileBook(b) {
 }
 
 async function mobileSearch(key, group, limit) {
-  let sources = store.sources.filter((s) => s.enabled && s.checkStatus === 'ok');
+  // 优先用体检通过的源，但一个都没有时退化为全部启用源（否则换源永远搜不到东西）
+  let sources = store.sources.filter((s) => s.enabled);
   if (group) sources = sources.filter((s) => (s.bookSourceGroup || '') === group);
+  sources = sources.sort((a, b) => Number(b.checkStatus === 'ok') - Number(a.checkStatus === 'ok'));
   sources = sources.slice(0, Math.max(1, Math.min(30, Number(limit) || 8)));
   const buckets = await Promise.all(
     sources.map((s) =>
@@ -927,6 +931,22 @@ async function mobileSearch(key, group, limit) {
   return out;
 }
 
+/** 书架去重：同名同作者只留一条（章数多的优先），其余来源记进 altOrigins */
+function dedupeShelf() {
+  const r = dedupeBooks(store.books);
+  if (r.removed > 0) {
+    store.saveBooks(r.list);
+    events.broadcast({ type: 'shelf', action: 'dedupe', removed: r.removed, via: 'server' });
+  }
+  return r;
+}
+
+let tombstoneReady = false;
+function ensureTombstone() {
+  if (tombstoneReady) return;
+  tombstone.init(store.dataDir);
+  tombstoneReady = true;
+}
 /** 让手机端补全书籍详情（简介/封面/字数等），失败返回 null */
 async function remoteBookInfo(bookUrl, source, timeout = 10000) {
   if (!busAvailable()) return null;
@@ -1761,9 +1781,17 @@ function saveCover(target, buf, mime) {
     if (!list.length) return json(res, 400, { error: '请提供书籍对象或数组' });
     let added = 0;
     let updated = 0;
+    ensureTombstone();
+    let skippedDeleted = 0;
     for (const item of list) {
       const bookUrl = String((item && item.bookUrl) || '').trim();
       if (!/^https?:/i.test(bookUrl)) continue;
+      // 被删过的书：客户端时间不比删除时间新，就不再推回来
+      const ts = Number((item && (item.time || item.durChapterTime)) || 0);
+      if (tombstone.tombstoneOf(bookUrl, ts)) {
+        skippedDeleted++;
+        continue;
+      }
       // 内嵌封面：一次请求完成「加书 + 封面」
       let inlineCover = '';
       if (item.coverData) {
@@ -1809,7 +1837,8 @@ function saveCover(target, buf, mime) {
       }
     }
     if (added) events.broadcast({ type: 'shelf', action: 'add', count: added, via: 'app' });
-    return json(res, 200, { ok: true, added, updated, total: store.books.length });
+    if (added || updated) dedupeShelf();
+    return json(res, 200, { ok: true, added, updated, skippedDeleted, total: store.books.length });
   }
 
   // 批量回传阅读进度（App 同步用）
@@ -1822,6 +1851,10 @@ function saveCover(target, buf, mime) {
     for (const item of list) {
       let book = store.findBook(item.bookUrl);
       if (!book) {
+        if (tombstone.tombstoneOf(item.bookUrl, Number(item.time) || 0)) {
+          missing.push(item.bookUrl);
+          continue;
+        }
         // App 本地新加的书：带书名就顺手建一条，否则记为 missing 让 App 补传
         if (item.name && /^https?:/i.test(String(item.bookUrl || ''))) {
           book = {
@@ -2116,6 +2149,8 @@ function saveCover(target, buf, mime) {
   }
 
   if (p === '/api/books' && method === 'GET') {
+    ensureTombstone();
+    dedupeShelf();
     const books = [...store.books].sort((a, b) => (b.durChapterTime || 0) - (a.durChapterTime || 0));
     return json(res, 200, { books: books.map(sanitizeBook) });
   }
@@ -2126,7 +2161,34 @@ function saveCover(target, buf, mime) {
     const exclude = String(searchParams.get('exclude') || '');
     if (!name) return json(res, 400, { error: '缺少书名' });
     try {
-      const books = await mobileSearch(name, searchParams.get('group') || '', searchParams.get('limit') || 8);
+      let books = await mobileSearch(name, searchParams.get('group') || '', searchParams.get('limit') || 8);
+
+      // 本地结果太少时，再让软总线上的手机用它的书源搜一轮
+      const wantPhone = searchParams.get('remote') === '1' || store.config.preferRemote === true;
+      if ((wantPhone || books.length < 3) && busAvailable()) {
+        const phoneSources = store.sources
+          .filter((x) => x.enabled)
+          .sort((a, b) => Number(b.checkStatus === 'ok') - Number(a.checkStatus === 'ok'))
+          .slice(0, 12);
+        const buckets = await Promise.all(
+          phoneSources.map((src) =>
+            remote
+              .request('search', { source: src.bookSourceUrl, name: src.bookSourceName, key: name }, 6000)
+              .then((r) => (r.ok && r.data && Array.isArray(r.data.books) ? r.data.books.map((b) => ({ ...b, viaPhone: true })) : []))
+              .catch(() => [])
+          )
+        );
+        for (const list of buckets) books = books.concat(list);
+      }
+
+      // 同一本书只留一条（多个源抓到同一地址）
+      const seenUrl = new Set();
+      books = books.filter((b) => {
+        if (!b || !b.bookUrl || seenUrl.has(b.bookUrl)) return false;
+        seenUrl.add(b.bookUrl);
+        return true;
+      });
+
       const norm = (t) => String(t || '').replace(/\s+/g, '').toLowerCase();
       const target = norm(name);
       const list = books
@@ -2173,7 +2235,7 @@ function saveCover(target, buf, mime) {
   if (p === '/api/remote/job' && method === 'POST') {
     const body = await readJson(req);
     const type = String((body && body.type) || '');
-    if (!['search', 'toc', 'content'].includes(type)) return json(res, 400, { error: '不支持的任务类型' });
+    if (!['search', 'toc', 'content', 'bookinfo', 'rank'].includes(type)) return json(res, 400, { error: '不支持的任务类型' });
     const wait = Math.min(60000, Number((body && body.waitMs) || 20000));
     const result = await remote.request(type, body.payload || {}, wait);
     if (!result.ok) return json(res, 504, { error: result.error === 'timeout' ? '手机端没有响应' : result.error });
@@ -2324,7 +2386,18 @@ function saveCover(target, buf, mime) {
     const author = String(searchParams.get('author') || '').trim();
     if (!name) return json(res, 400, { error: '缺少书名' });
     try {
-      const bookUrlParam = String(searchParams.get('url') || '');
+      let bookUrlParam = String(searchParams.get('url') || '');
+      let originParam = String(searchParams.get('origin') || '');
+      // 网页详情页只传了书名/作者：从书架里反查地址，否则手机不知道要抓哪本书
+      if (!bookUrlParam) {
+        const inShelf = (store.books || []).find(
+          (b) => b.name === name && (!author || !b.author || b.author.includes(author) || author.includes(b.author))
+        );
+        if (inShelf) {
+          bookUrlParam = inShelf.bookUrl;
+          originParam = originParam || inShelf.origin || '';
+        }
+      }
       const r = await introLookup.lookup(name, author, store.dataDir, {
         force: searchParams.get('force') === '1',
         searchSources: (key, limit) => mobileSearch(key, '', limit),
@@ -2337,8 +2410,8 @@ function saveCover(target, buf, mime) {
         },
       });
       // 本地书源/晋江都拿不到时，让手机端补全
-      if (!r.intro && bookUrlParam) {
-        const info = await remoteBookInfo(bookUrlParam, '');
+      if (!r.intro) {
+        const info = await remoteBookInfo(bookUrlParam, originParam);
         if (info && info.intro) {
           const book = store.findBook(bookUrlParam);
           if (book) applyRemoteBookInfo(book, info);
@@ -2401,7 +2474,10 @@ function saveCover(target, buf, mime) {
       durChapterTime: Date.now(),
       totalChapterNum: body.totalChapterNum || 0,
     };
+    ensureTombstone();
+    tombstone.remove(book.bookUrl); // 网页显式加书视为用户重新加进来
     store.upsertBook(book);
+    dedupeShelf();
     // 手机解析来的书：后台预热目录与前几章，避免手机一离线就没正文
     const saved = store.findBook(book.bookUrl);
     if (saved && saved.viaPhone) {
@@ -2415,7 +2491,12 @@ function saveCover(target, buf, mime) {
   if (p === '/api/books' && method === 'DELETE') {
     const bookUrl = searchParams.get('url');
     if (!bookUrl) return json(res, 400, { error: '缺少 url' });
+    ensureTombstone();
+    const victim = store.findBook(bookUrl);
     store.removeBook(bookUrl);
+    // 记墓碑，防止客户端同步把删掉的书又推回来
+    tombstone.add(bookUrl, victim && victim.name);
+    events.broadcast({ type: 'shelf', action: 'delete', bookUrl, via: 'web' });
     return json(res, 200, { ok: true });
   }
 
@@ -2908,7 +2989,22 @@ function main() {
   }
 
   const tcp = http.createServer(server.listeners('request')[0]);
-  tcp.listen(PORT, '0.0.0.0', () => console.log(`[legado-web] http://0.0.0.0:${PORT}`));
+  
+// 启动即整理一次书架：删掉墓碑里残留的、合并重复条目
+try {
+  ensureTombstone();
+  const gone = tombstone.all().map((x) => x.bookUrl);
+  if (gone.length) {
+    const kept = store.books.filter((b) => !gone.includes(b.bookUrl));
+    if (kept.length !== store.books.length) store.saveBooks(kept);
+  }
+  const r = dedupeShelf();
+  if (r.removed) console.log('[legado-web] 启动去重：合并 ' + r.removed + ' 条重复书籍');
+} catch (e) {
+  console.log('[legado-web] 启动整理失败：' + e.message);
+}
+
+tcp.listen(PORT, '0.0.0.0', () => console.log(`[legado-web] http://0.0.0.0:${PORT}`));
   tcp.on('error', (e) => console.error('[legado-web] tcp listen error:', e.message));
 
   // 单个请求/任务出错不应该拖垮整个服务
