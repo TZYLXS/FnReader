@@ -997,8 +997,16 @@ function toggleDrawer() {
   if (!d) return;
   d.classList.toggle('hidden');
   if (!d.classList.contains('hidden')) {
-    const on = $('#chapter-list .item.on');
-    if (on) on.scrollIntoView({ block: 'center' });
+    const r = state.reader;
+    const list = $('#chapter-list');
+    if (!r || !list) return;
+    // 打开目录时先把当前章标出来，再按索引算滚动位置（不用 scrollIntoView，
+    // 它会把整页一起滚走，表现成「目录总是停在最后一张」）
+    const items = $$('#chapter-list .item');
+    items.forEach((el) => el.classList.toggle('on', Number(el.dataset.i) === r.index));
+    const cur = items[r.index];
+    if (cur) list.scrollTop = Math.max(0, cur.offsetTop - list.clientHeight / 2);
+    else list.scrollTop = 0;
   }
 }
 
@@ -1031,7 +1039,18 @@ async function loadChapter(index) {
     article.appendChild(el);
   }
   updateReaderMeta();
-  window.scrollTo(0, 0);
+  // 内容整体替换后浏览器会把位置「锚」在底部，翻章后要重置到顶部
+  article.style.overflowAnchor = 'none';
+  const toTop = () => {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    const wrap = article.closest('.article-wrap');
+    if (wrap) wrap.scrollTop = 0;
+  };
+  toTop();
+  requestAnimationFrame(toTop);
+  setTimeout(toTop, 60);
   saveProgress();
 }
 
@@ -1903,7 +1922,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.1 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.2 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');

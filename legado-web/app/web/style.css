@@ -717,3 +717,7 @@ html[data-theme="book"] .chip.on { background: var(--accent); color: #fff8ee; }
 
 /* 主题下拉：与搜索范围下拉同款 */
 .theme-select { width: 104px; height: 34px; padding: 4px 8px; font-size: 13px; }
+
+/* 翻章后不要被浏览器的滚动锚定拽在底部 */
+.reader.kindle .article { overflow-anchor: none; }
+.drawer .list { overscroll-behavior: contain; }

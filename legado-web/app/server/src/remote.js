@@ -97,15 +97,29 @@ function pending(limit = 5) {
 function complete(id, ok, data, error) {
   const job = jobs.get(id);
   if (!job) return false;
+  try {
+    recent.push({
+      at: Date.now(),
+      type: job.type,
+      ok: !!ok,
+      keys: data && typeof data === 'object' ? Object.keys(data) : [],
+      sample: JSON.stringify(data || error || '').slice(0, 300),
+    });
+    if (recent.length > 20) recent.shift();
+  } catch {
+    /* ignore */
+  }
   clearTimeout(job.timer);
   jobs.delete(id);
   job.resolve(ok ? { ok: true, data } : { ok: false, error: error || 'failed' });
   return true;
 }
 
+const recent = []; // 最近的回传，排查用
+
 function stats() {
   purge();
-  return { pending: jobs.size };
+  return { pending: jobs.size, recent: recent.slice(-5) };
 }
 
 module.exports = { request, pending, complete, stats, hello, touch, bumpHandled, listDevices, setEnabled };

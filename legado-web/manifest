@@ -1,5 +1,5 @@
 ﻿appname=legado-web
-version=2.0.1
+version=2.0.2
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=书架去重：同名同作者只保留一条（章数最多优先），其余来源记入 altOrigins；删除墓碑：删掉的书不再被客户端同步推回来，网页手动加回可清除墓碑；详情页简介修复：自动请求、带上 url/origin，服务端无 url 时按书名反查书架
+changelog=阅读器：翻章后强制回到顶部，目录定位到当前章；软总线搜索加并发闸门与熔断，过滤词典/知道类非书源；删除墓碑不再被客户端时间戳绕过

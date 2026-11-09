@@ -308,7 +308,7 @@ async function handleSearchSSE(req, res, params) {
     return res.end();
   }
 
-  let sources = store.sources.filter((s) => s.enabled);
+  let sources = store.sources.filter((s) => s.enabled && !isJunkSource(s));
 
   // 学术关键词识别：命中后只搜学术类书源，跳过网络小说源
   let academicInfo = null;
@@ -384,11 +384,7 @@ async function handleSearchSSE(req, res, params) {
 
       const preferRemote = store.config.preferRemote === true || params.get('remote') === '1';
       if (preferRemote && !closed && busAvailable()) {
-        const rr = await remote.request(
-          'search',
-          { source: source.bookSourceUrl, name: source.bookSourceName, key },
-          store.config.preferRemote === true ? 8000 : 15000
-        );
+        const rr = await phoneSearch(source.bookSourceUrl, key, 8000);
         if (!closed && rr.ok && rr.data && Array.isArray(rr.data.books) && rr.data.books.length) {
           const books = rr.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
           found += books.length;
@@ -429,13 +425,9 @@ async function handleSearchSSE(req, res, params) {
           cachedTotal: cachedSources,
         });
       } catch (e) {
-        // 本机解析失败（需要 WebView / 加密接口）：如果开了手机解析，交给 App 再试一次
-        if (params.get('remote') === '1' && !closed) {
-          const r = await remote.request(
-            'search',
-            { source: source.bookSourceUrl, name: source.bookSourceName, key },
-            15000
-          );
+        // 本机解析失败：只要软总线有在线设备就交给手机再试一次
+        if (!closed && (params.get('remote') === '1' || busAvailable())) {
+          const r = await phoneSearch(source.bookSourceUrl, key, 8000);
           if (!closed && r.ok && r.data && Array.isArray(r.data.books) && r.data.books.length) {
             const fromPhone = r.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
             found += fromPhone.length;
@@ -1190,6 +1182,57 @@ function resolveSource(book) {
   return null;
 }
 
+/** 手机任务并发闸门 + 熔断：App 按队列处理，连续超时就暂停代理解析 */
+let phoneSlots = 4;
+let phoneFails = 0;
+let phoneBlockedUntil = 0;
+const phoneWaiting = [];
+
+function acquirePhoneSlot() {
+  return new Promise((resolve) => {
+    if (phoneSlots > 0) {
+      phoneSlots--;
+      resolve();
+    } else {
+      phoneWaiting.push(resolve);
+    }
+  });
+}
+
+function releasePhoneSlot() {
+  const next = phoneWaiting.shift();
+  if (next) next();
+  else phoneSlots++;
+}
+
+/** 通过软总线搜一个源（带排队 + 熔断） */
+async function phoneSearch(source, key, waitMs = 8000) {
+  if (Date.now() < phoneBlockedUntil) return { ok: false, error: 'bus-cooling' };
+  await acquirePhoneSlot();
+  try {
+    const r = await remote.request('search', { source, name: source.bookSourceName, key }, waitMs);
+    if (r.ok) {
+      phoneFails = 0;
+    } else if (String(r.error || '').includes('timeout')) {
+      phoneFails++;
+      if (phoneFails >= 3) {
+        phoneBlockedUntil = Date.now() + 120000;
+        phoneFails = 0;
+        console.log('[legado-web] 软总线连续超时，暂停代理解析 2 分钟');
+      }
+    }
+    return r;
+  } finally {
+    releasePhoneSlot();
+  }
+}
+
+/** 明显不是小说源的（词典/知道/翻译），搜索时跳过 */
+function isJunkSource(src) {
+  const text = String((src && src.bookSourceName) || '') + ' ' + String((src && src.bookSourceUrl) || '');
+  return /词典|知道|翻译|单词|dict\.cn|zhidao\.baidu/i.test(text);
+}
+
 /** 是否有在线的解析设备（软总线） */
 function busAvailable() {
   return remote.listDevices().some((d) => d.online && d.enabled);
@@ -1786,12 +1829,12 @@ function saveCover(target, buf, mime) {
     for (const item of list) {
       const bookUrl = String((item && item.bookUrl) || '').trim();
       if (!/^https?:/i.test(bookUrl)) continue;
-      // 被删过的书：客户端时间不比删除时间新，就不再推回来
-      const ts = Number((item && (item.time || item.durChapterTime)) || 0);
-      if (tombstone.tombstoneOf(bookUrl, ts)) {
+      // 被删过的书不再推回来；客户端要主动恢复必须显式 force: true
+      if (tombstone.tombstoneOf(bookUrl) && !(item && item.force === true)) {
         skippedDeleted++;
         continue;
       }
+      if (item && item.force === true) tombstone.remove(bookUrl);
       // 内嵌封面：一次请求完成「加书 + 封面」
       let inlineCover = '';
       if (item.coverData) {
@@ -1851,7 +1894,7 @@ function saveCover(target, buf, mime) {
     for (const item of list) {
       let book = store.findBook(item.bookUrl);
       if (!book) {
-        if (tombstone.tombstoneOf(item.bookUrl, Number(item.time) || 0)) {
+        if (tombstone.tombstoneOf(item.bookUrl) && item.force !== true) {
           missing.push(item.bookUrl);
           continue;
         }
@@ -2165,11 +2208,11 @@ function saveCover(target, buf, mime) {
 
       // 本地结果太少时，再让软总线上的手机用它的书源搜一轮
       const wantPhone = searchParams.get('remote') === '1' || store.config.preferRemote === true;
-      if ((wantPhone || books.length < 3) && busAvailable()) {
+      if ((wantPhone || books.length < 3 || busAvailable()) && busAvailable()) {
         const phoneSources = store.sources
           .filter((x) => x.enabled)
           .sort((a, b) => Number(b.checkStatus === 'ok') - Number(a.checkStatus === 'ok'))
-          .slice(0, 12);
+          .slice(0, 16);
         const buckets = await Promise.all(
           phoneSources.map((src) =>
             remote

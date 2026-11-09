@@ -35,13 +35,13 @@ function add(bookUrl, name) {
   persist();
 }
 
-/** 是否被删过；传入时间戳时，比删除时间新则视为「用户重新加」 */
-function tombstoneOf(bookUrl, at) {
-  const hit = list.find((x) => x.bookUrl === bookUrl);
-  if (!hit) return null;
-  const t = Number(at) || 0;
-  if (t > hit.at) return null; // 客户端时间更新，允许重加
-  return hit;
+/**
+ * 是否被删过。
+ * 只要在墓碑里就算删过（不看客户端时间戳——客户端推送常带当前时间，
+ * 用时间戳比较会导致「删了又回来」）。要重加必须显式 force。
+ */
+function tombstoneOf(bookUrl) {
+  return list.find((x) => x.bookUrl === bookUrl) || null;
 }
 
 function remove(bookUrl) {
