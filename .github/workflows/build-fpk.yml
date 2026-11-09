@@ -44,9 +44,13 @@ jobs:
       - name: 生成本次发布说明（取更新日志第一段）
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          awk 'BEGIN{n=0} /^--------------------------------------------------$/{n++; if(n==2) exit} n>=1{print}' docs/更新日志.txt > release-notes.md
-          echo "--- release-notes.md ---"
-          cat release-notes.md
+          python3 - <<'PY'
+          import io
+          s = io.open('docs/更新日志.md', encoding='utf-8-sig').read()
+          first = s.split('\n---\n')[0].strip()
+          io.open('release-notes.md', 'w', encoding='utf-8').write(first + '\n')
+          print(first)
+          PY
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
