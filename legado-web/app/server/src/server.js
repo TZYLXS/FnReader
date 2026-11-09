@@ -17,6 +17,8 @@ const replaceRules = require('./replace');
 const introLookup = require('./intro');
 const { buildSyncPayload } = require('./sync');
 const { getDaily } = require('./daily');
+const { normalizeChapterList } = require('./chapter-order');
+const pyengine = require('./pyengine');
 const { mergeSources, pullSince } = require('./sourcesync');
 const events = require('./events');
 const remote = require('./remote');
@@ -109,6 +111,18 @@ async function loadChapterContent(book, index) {
   }
   const source = resolveSource(book);
   if (!source) throw new Error('该书没有关联书源，且没有本地缓存');
+  if (store.config.engine === 'python') {
+    try {
+      const r = await pyengine.call('content', { source, chapterUrl: chapter.url, bookUrl: book.bookUrl });
+      if (r && Array.isArray(r.paragraphs) && r.paragraphs.length) {
+        const paragraphs = r.paragraphs.map((x) => String(x).trim()).filter(Boolean);
+        cacheSet(key, paragraphs);
+        return { paragraphs, cached: false, via: 'python' };
+      }
+    } catch {
+      /* 回退内置 */
+    }
+  }
   const promise = getContent(source, book, chapter).then((paragraphs) => {
     cacheSet(key, paragraphs);
     diskCache.set(key, { paragraphs, title: chapter.title });
@@ -334,6 +348,31 @@ async function handleSearchSSE(req, res, params) {
       send({ type: 'source-start', source: source.bookSourceName, id: source.bookSourceUrl });
 
       // 优先手机端解析：软总线有在线设备时先问手机，拿不到再本地跑
+      // 选了 Python 引擎就先用它，失败再走内置实现
+      if (store.config.engine === 'python' && !closed) {
+        try {
+          const r = await pyengine.call('search', { source, key });
+          if (r && Array.isArray(r.books) && r.books.length) {
+            const books = r.books.map((b) => ({ ...b, origin: b.origin || source.bookSourceUrl, originName: b.originName || source.bookSourceName }));
+            found += books.length;
+            send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books, via: 'python' });
+            doneCount++;
+            send({
+              type: 'source-done',
+              source: source.bookSourceName,
+              count: books.length,
+              ms: Date.now() - startedAt,
+              done: doneCount,
+              total: sources.length,
+              via: 'python',
+            });
+            return;
+          }
+        } catch (e) {
+          send({ type: 'log', message: `python 引擎失败（${source.bookSourceName}）：${e.message}` });
+        }
+      }
+
       const preferRemote = store.config.preferRemote === true || params.get('remote') === '1';
       if (preferRemote && !closed && busAvailable()) {
         const rr = await remote.request(
@@ -899,6 +938,26 @@ async function handleRefreshToc(book) {
   if (!source) {
     if (book.cachedDir) return book.chapters || [];
     throw new Error('未找到书源，可能已被删除');
+  }
+  if (store.config.engine === 'python') {
+    try {
+      const r = await pyengine.call('toc', { source, tocUrl: book.tocUrl || book.bookUrl, bookUrl: book.bookUrl });
+      if (r && Array.isArray(r.chapters) && r.chapters.length) {
+        const raw = r.chapters.map((c, i) => ({
+          index: i,
+          title: String(c.title || c.name || `第${i + 1}章`),
+          url: String(c.url || c.chapterUrl || ''),
+        }));
+        // Python 引擎不做目录去重/排序，这里复用内置规范化
+        const list = normalizeChapterList(raw).map((c, i) => ({ ...c, index: i }));
+        book.chapters = list;
+        book.totalChapterNum = list.length;
+        store.upsertBook(book);
+        return list;
+      }
+    } catch {
+      /* 回退到内置解析 */
+    }
   }
   if (!book.tocUrl) await getBookInfo(source, book);
   const chapters = await getToc(source, book);
@@ -2023,6 +2082,26 @@ function saveCover(target, buf, mime) {
     const result = await remote.request(type, body.payload || {}, wait);
     if (!result.ok) return json(res, 504, { error: result.error === 'timeout' ? '手机端没有响应' : result.error });
     return json(res, 200, { ok: true, data: result.data });
+  }
+
+  // 规则引擎切换：node（内置）/ python（legado_rule）
+  if (p === '/api/engine' && method === 'GET') {
+    const status = await pyengine.probe();
+    return json(res, 200, {
+      engine: store.config.engine === 'python' ? 'python' : 'node',
+      python: status,
+    });
+  }
+
+  if (p === '/api/engine' && method === 'POST') {
+    const body = await readJson(req);
+    const want = body && body.engine === 'python' ? 'python' : 'node';
+    if (want === 'python') {
+      const status = await pyengine.probe(true);
+      if (!status.ok) return json(res, 400, { error: 'Python 引擎不可用：' + (status.error || '未知原因'), python: status });
+    }
+    store.saveConfig({ engine: want });
+    return json(res, 200, { ok: true, engine: want });
   }
 
   // 每日推荐（起点榜 → 纵横兜底，6 小时缓存）

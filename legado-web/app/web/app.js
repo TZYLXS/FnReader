@@ -1810,6 +1810,11 @@ async function renderSettings() {
         </div>
       </div>
       <div class="section">
+        <h3>解析引擎</h3>
+        <div class="row"><div class="label">Python 引擎<div class="desc" id="engine-status">检测中…</div></div>
+          <div class="switch" id="sw-engine"></div></div>
+      </div>
+      <div class="section">
         <h3>界面</h3>
         <div class="row"><div class="label">液态玻璃底栏<div class="desc">底栏改为半透明玻璃质感，随主题自动适配</div></div>
           <div class="switch ${cfg.liquidGlass ? 'on' : ''}" id="sw-glass"></div></div>
@@ -1875,7 +1880,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.11.3 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V1.11.4 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -2008,6 +2013,39 @@ async function renderSettings() {
         }
       };
     renderRules();
+
+    // 解析引擎切换（Node 内置 / Python legado_rule）
+    const swEngine = $('#sw-engine');
+    const stEngine = $('#engine-status');
+    if (swEngine) {
+      api('/engine')
+        .then((r) => {
+          swEngine.classList.toggle('on', r.engine === 'python');
+          if (r.engine === 'python') stEngine.textContent = '已启用 · Python ' + (r.python && r.python.engine ? r.python.engine : '');
+          else if (r.python && r.python.ok) stEngine.textContent = '内置 Node 引擎（Python 引擎可用：' + (r.python.engine || '') + '）';
+          else stEngine.textContent = '内置 Node 引擎 · Python 不可用：' + ((r.python && r.python.error) || '未安装');
+        })
+        .catch(() => {
+          stEngine.textContent = '状态未知';
+        });
+      swEngine.onclick = async () => {
+        const want = swEngine.classList.contains('on') ? 'node' : 'python';
+        stEngine.textContent = '切换中…';
+        try {
+          const r = await api('/engine', { method: 'POST', body: { engine: want } });
+          swEngine.classList.toggle('on', r.engine === 'python');
+          toast(r.engine === 'python' ? '已切换到 Python 解析引擎' : '已切回内置引擎');
+          const st = await api('/engine');
+          stEngine.textContent =
+            r.engine === 'python'
+              ? '已启用 · Python ' + ((st.python && st.python.engine) || '')
+              : '内置 Node 引擎 · Python ' + (st.python && st.python.ok ? '可用' : '不可用');
+        } catch (e) {
+          stEngine.textContent = e.message;
+          toast(e.message);
+        }
+      };
+    }
 
     // 优先手机解析
     const swPrefer = $('#sw-prefer');
