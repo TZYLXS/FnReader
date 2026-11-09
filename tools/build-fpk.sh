@@ -23,14 +23,15 @@ mkdir -p "$DIST"
 echo "==> 1/4 打包前端服务（esbuild）"
 cd "$SRC/app/server"
 NODE_BIN="${NODE:-node}"
-if [ -f node_modules/esbuild/bin/esbuild ]; then
-  "$NODE_BIN" node_modules/esbuild/bin/esbuild src/server.js \
-    --bundle --platform=node --target=node18 --format=cjs --minify \
-    --outfile=server.bundle.js >/dev/null
+ESB=node_modules/esbuild/bin/esbuild
+if [ -f "$ESB" ] && "$ESB" --version >/dev/null 2>&1; then
+  # Linux 下是原生可执行文件，直接跑
+  "$ESB" src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
+elif [ -f "$ESB" ]; then
+  # Windows 下是 JS 包装脚本，用 node 跑
+  "$NODE_BIN" "$ESB" src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
 else
-  npx --yes esbuild src/server.js \
-    --bundle --platform=node --target=node18 --format=cjs --minify \
-    --outfile=server.bundle.js >/dev/null
+  npx --yes esbuild src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
 fi
 
 echo "==> 2/4 组装应用目录"
