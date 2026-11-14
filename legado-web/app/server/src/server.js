@@ -1255,6 +1255,34 @@ function resolveSource(book) {
   return null;
 }
 
+/** 书名归一化：去空白与书名号，用于「本地电子书 ⇄ 客户端同步」匹配 */
+function normBookName(s) {
+  return String(s || '')
+    .replace(/[《》「」【】\[\]()（）]/g, '')
+    .replace(/\s+/g, '')
+    .toLowerCase();
+}
+
+/** 本地电子书登记表里找同名书（本地有就不同步客户端缓存） */
+function localEbookByName(name) {
+  const target = normBookName(name);
+  if (!target) return null;
+  let list = [];
+  try {
+    list = ebookStore.loadIndex(store.dataDir);
+  } catch {
+    return null;
+  }
+  const exact = list.find((e) => normBookName(e.name) === target);
+  if (exact) return exact;
+  return (
+    list.find((e) => {
+      const n = normBookName(e.name);
+      return n && (n.includes(target) || target.includes(n)) && Math.min(n.length, target.length) >= 2;
+    }) || null
+  );
+}
+
 /** 手机任务并发闸门 + 熔断：App 按队列处理，连续超时就暂停代理解析 */
 let phoneSlots = 4;
 let phoneFails = 0;
@@ -1769,6 +1797,21 @@ async function route(req, res, url) {
     if (!book || !book.bookUrl) return json(res, 400, { error: '缺少 book.bookUrl' });
 
     const layout = String(body.layout || 'legado').toLowerCase();
+
+    // 本地已有同名电子书（epub/mobi/txt/pdf）→ 不同步客户端的网文缓存
+    if (body.skipIfLocal !== false) {
+      const hit = localEbookByName(book.name);
+      if (hit) {
+        return json(res, 200, {
+          ok: true,
+          skipped: true,
+          reason: 'local-ebook',
+          message: '本地已有同名电子书，跳过客户端同步',
+          local: { sha1: hit.sha1, name: hit.name, format: hit.format, status: hit.status },
+        });
+      }
+    }
+
     const root = path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache');
     const safe =
       String(book.name || '未命名')
@@ -1786,7 +1829,25 @@ async function route(req, res, url) {
     fs.mkdirSync(path.join(dir, 'raw'), { recursive: true });
     fs.mkdirSync(path.join(dir, 'images'), { recursive: true });
 
-    const chapters = Array.isArray(body.chapters) ? body.chapters : [];
+    let chapters = Array.isArray(body.chapters) ? body.chapters : [];
+    let viaTxt = false;
+
+    // 客户端手里只有 TXT：正文交给本地 Python 引擎分章，不再存 .nb
+    const isTxt = String(body.format || (book && book.format) || '').toLowerCase() === 'txt' && typeof body.text === 'string';
+    if (isTxt) {
+      try {
+        const parsed = await pyengine.call('txt', { name: book.name, text: body.text });
+        chapters = (parsed.chapters || []).map((c) => ({
+          title: c.title,
+          raw: (c.paragraphs || []).join('\n'),
+          paragraphs: c.paragraphs || [],
+        }));
+        viaTxt = true;
+      } catch (e) {
+        return json(res, 502, { error: '本地 TXT 解析失败：' + (e.message || e) });
+      }
+    }
+
     const saved = [];
     let bytes = 0;
     let imageCount = 0;
@@ -1908,6 +1969,7 @@ async function route(req, res, url) {
       ok: true,
       layout,
       dir,
+      via: viaTxt ? 'local-txt' : 'legado',
       chapters: saved.length,
       withText: saved.filter((c) => c.file).length,
       images: imageCount,

@@ -1990,6 +1990,9 @@ async function renderSettings() {
         <div class="row"><div class="label">保存位置<div class="desc" id="stat-dir">-</div></div>
           <select id="set-dir" style="max-width:46%;font-size:12px"></select>
         </div>
+        <div class="row"><div class="label">扫描目录<div class="desc" id="stat-ebook">检查本地 epub/mobi/txt/pdf</div></div>
+          <button class="btn" id="scan-ebook" style="padding:5px 10px;font-size:12px">立即扫描</button>
+        </div>
         <div class="row"><div class="label">自定义目录<div class="desc">填绝对路径，如 /vol1/1000/Books</div></div>
           <input id="set-dir-custom" placeholder="/vol1/1000/Books" style="max-width:44%;font-size:12px" />
           <button class="btn" id="save-dir-custom" style="padding:5px 10px;font-size:12px">保存</button>
@@ -2030,7 +2033,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.1.1 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.2.1 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -2380,6 +2383,27 @@ async function renderSettings() {
         }
       };
       sel.onchange = () => applyDir(sel.value);
+      // 扫描本地电子书目录（epub/mobi/txt/pdf）
+      const scanBtn = $('#scan-ebook');
+      if (scanBtn) {
+        scanBtn.onclick = async () => {
+          const tip = $('#stat-ebook');
+          scanBtn.disabled = true;
+          scanBtn.textContent = '扫描中…';
+          try {
+            const r = await api('/ebook/scan', { method: 'POST' });
+            const list = await api('/ebook/list');
+            const books = (list.books || []).length;
+            if (tip) tip.textContent = `发现 ${r.found || 0}，新增 ${r.added || 0}，本地共 ${books} 本`;
+            toast(`扫描完成：新增 ${r.added || 0}，失败 ${r.errors || 0}`);
+          } catch (e) {
+            toast('扫描失败：' + e.message);
+          } finally {
+            scanBtn.disabled = false;
+            scanBtn.textContent = '立即扫描';
+          }
+        };
+      }
       const customInput = $('#set-dir-custom');
       if (customInput) customInput.value = wanted || cur || '';
       const customSave = $('#save-dir-custom');

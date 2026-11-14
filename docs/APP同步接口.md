@@ -246,6 +246,19 @@ POST /api/setup/confirm {"cacheDir":"/vol1/1000/Books"}
 确认后写入 `downloadDir` 与 `setupVersion=当前版本`，`/api/m/remote/pending` 与 `/api/remote/job` 立即恢复 200。
 App 侧建议：收到 409 时提示「请在网页端确认缓存位置」，并降低轮询频率（如 30s 一次）。
 
+### 8.3.2 缓存同步的两个新分支（2.2.1 起）
+
+`POST /api/m/cache` 行为补充：
+
+| 分支 | 触发条件 | 响应 |
+| --- | --- | --- |
+| 本地已有同名电子书 | 书名命中 `ebook` 登记表（epub/mobi/txt/pdf） | `{ok:true, skipped:true, reason:"local-ebook", local:{sha1,format,status}}`，不写 `.nb` |
+| 客户端只有 TXT | 请求体 `format:"txt"` + `text` | 服务端用本地 Python 引擎分章，响应带 `"via":"local-txt"` |
+| 常规 | 其它 | 原行为，`"via":"legado"` |
+
+- 想强制同步：请求体带 `skipIfLocal:false`
+- TXT 分章失败返回 502 `本地 TXT 解析失败：…`，客户端可回退传 `.nb`
+
 ### 8.4 任务类型
 
 | type | payload | data 约定 |
