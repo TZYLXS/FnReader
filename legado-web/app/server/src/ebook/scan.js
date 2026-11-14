@@ -183,6 +183,12 @@ async function scanOnce(ctx) {
     scanning = false;
   }
   ctx.log && ctx.log(`[ebook] 扫描完成 ${root} 发现=${result.found} 新增=${result.added}`);
+  // 扫描完让上层做书架联动（本地同名书切换到 ebook://）
+  try {
+    if (typeof ctx.afterScan === 'function') await ctx.afterScan(result);
+  } catch (e) {
+    ctx.log && ctx.log('[ebook] afterScan 失败:', e.message);
+  }
   return result;
 }
 

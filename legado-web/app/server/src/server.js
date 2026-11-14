@@ -842,6 +842,7 @@ const ebookCtx = {
   remote,
   token: () => apiToken(),
   log: (...args) => console.log(...args),
+  afterScan: () => linkLocalEbooksToShelf(),
 };
 
 function checkApiToken(req, url) {
@@ -1263,6 +1264,79 @@ function normBookName(s) {
     .toLowerCase();
 }
 
+/**
+ * 扫描到本地电子书后，把书架上同名的书切到 ebook://<sha1>，不再走缓存/网文源。
+ * 保留阅读进度；如果书架里已经有同一本 ebook，则删掉旧条目而不是重复。
+ */
+function linkLocalEbooksToShelf() {
+  let entries = [];
+  try {
+    entries = ebookStore.loadIndex(store.dataDir);
+  } catch {
+    return 0;
+  }
+  const usable = entries.filter((e) => e.status === 'complete' || e.status === 'partial');
+  if (!usable.length) return 0;
+
+  const books = store.books;
+  let changed = 0;
+
+  for (const e of usable) {
+    const key = normBookName(e.name);
+    if (!key) continue;
+    const ebookUrl = 'ebook://' + e.sha1;
+    const alreadyIdx = books.findIndex((b) => b.bookUrl === ebookUrl);
+    const targets = books
+      .map((b, i) => ({ b, i }))
+      .filter((x) => !String(x.b.bookUrl).startsWith('ebook://') && normBookName(x.b.name) === key);
+
+    // 书架里已有这本 ebook：把旧的网文条目删掉
+    if (alreadyIdx >= 0) {
+      if (!targets.length) continue;
+      for (const t of targets.reverse()) {
+        books.splice(t.i, 1);
+        changed++;
+      }
+      continue;
+    }
+    if (!targets.length) continue;
+
+    const first = targets[0];
+    const old = first.b;
+    const toc = ebookRender.toc(store.dataDir, e.sha1) || { chapters: [] };
+    const chapters = toc.chapters || [];
+    const keepIdx = Math.max(0, Math.min(Number(old.durChapterIndex) || 0, Math.max(0, chapters.length - 1)));
+    books[first.i] = {
+      ...old,
+      bookUrl: ebookUrl,
+      tocUrl: ebookUrl,
+      origin: 'local-ebook',
+      originName: '本地电子书',
+      cachedDir: '',
+      chapters,
+      totalChapterNum: chapters.length,
+      durChapterIndex: keepIdx,
+      durChapterTitle: chapters[keepIdx] ? chapters[keepIdx].title : old.durChapterTitle || '',
+      lastChapter: chapters.length ? chapters[chapters.length - 1].title : old.lastChapter || '',
+      tocVia: 'ebook',
+      intro: old.intro || (toc.meta && toc.meta.description) || old.intro || '',
+    };
+    changed++;
+    // 同名的其它重复条目一并删掉
+    for (const t of targets.slice(1).reverse()) {
+      books.splice(t.i, 1);
+      changed++;
+    }
+  }
+
+  if (changed) {
+    store.saveBooks(books);
+    events.broadcast({ type: 'shelf', action: 'local-ebook', count: changed });
+    console.log(`[legado-web] 本地电子书联动书架：${changed} 条`);
+  }
+  return changed;
+}
+
 /** 本地电子书登记表里找同名书（本地有就不同步客户端缓存） */
 function localEbookByName(name) {
   const target = normBookName(name);
@@ -1679,6 +1753,7 @@ async function route(req, res, url) {
   }
 
   if (p === '/api/ebook/scan' && method === 'POST') {
+    // scanOnce 结束时 ctx.afterScan 已经做过书架联动，这里不再重复调用
     const r = await ebookScan.scanOnce(ebookCtx);
     return json(res, 200, r);
   }
@@ -3408,6 +3483,7 @@ tcp.listen(PORT, '0.0.0.0', () => console.log(`[legado-web] http://0.0.0.0:${POR
     if (store.config.ebookEnabled !== false && ebookBus.ebookMode(store.config) !== 'off') {
       ebookScan.start(ebookCtx, (Number(store.config.ebookScanSec) || 60) * 1000);
       ebookBus.startWatchdog(ebookCtx);
+      setTimeout(() => linkLocalEbooksToShelf(), 4000);
       console.log('[legado-web] 本地电子书引擎已启动，目录: ' + ebookScan.ebookDir(ebookCtx));
     }
   } catch (e) {

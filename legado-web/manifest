@@ -1,5 +1,5 @@
 ﻿appname=legado-web
-version=2.2.2
+version=2.2.3
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=新增电子书解析模式开关（默认『代理解析』）：可切仅本机解析或关闭；/api/ebook/settings 读写，设置页即时生效
+changelog=扫描到本地同名电子书时，书架对应书自动切到 ebook:// 并使用本地文件（保留进度、清空缓存），定时扫描与启动时都会联动
