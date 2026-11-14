@@ -1,5 +1,5 @@
 ﻿appname=legado-web
-version=2.0.7
+version=2.0.8
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=缓存目录去重：<下载目录>/cache 下同一本书不再生成「书名 (2)(3)…」，重复同步复用原目录；启动时自动合并历史重复目录，新增 /api/cache/dedupe
+changelog=缓存目录去重（2）：去重逻辑改为异步、只由 /api/cache/dedupe 触发，避免扫描大量目录卡住服务；重复同步复用原目录

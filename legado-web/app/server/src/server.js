@@ -2355,7 +2355,7 @@ function saveCover(target, buf, mime) {
   // 缓存目录去重：把「书名 (2)(3)…」合并回一本
   if (p === '/api/cache/dedupe' && method === 'POST') {
     const root = path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache');
-    const r = dedupeCache(root);
+    const r = await dedupeCache(root);
     return json(res, 200, { ok: true, ...r, root });
   }
 
@@ -3068,18 +3068,7 @@ try {
     if (kept.length !== store.books.length) store.saveBooks(kept);
   }
   const r = dedupeShelf();
-  // 顺手清理缓存目录里的重复书本目录（延后跑，不拖慢启动）
-  setTimeout(() => {
-    try {
-      const cacheRoot = path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache');
-      const cr = dedupeCache(cacheRoot);
-      if (cr.removed || cr.renamed) {
-        console.log(`[legado-web] 缓存目录去重：合并 ${cr.merged} 个、删除 ${cr.removed} 个、重命名 ${cr.renamed} 个`);
-      }
-    } catch {
-      /* ignore */
-    }
-  }, 5000);
+  // 缓存目录去重改为手动/接口触发（扫几千个目录会卡事件循环）
   if (r.removed) console.log('[legado-web] 启动去重：合并 ' + r.removed + ' 条重复书籍');
 } catch (e) {
   console.log('[legado-web] 启动整理失败：' + e.message);

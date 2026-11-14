@@ -88,7 +88,7 @@ function canonicalName(dirName) {
  * 清理 cache 根目录下的重复书本目录
  * @returns {{groups:number, removed:number, merged:number, renamed:number}}
  */
-function dedupeCache(root) {
+async function dedupeCache(root) {
   const result = { groups: 0, removed: 0, merged: 0, renamed: 0 };
   if (!fs.existsSync(root)) return result;
   let dirs = [];
@@ -108,7 +108,9 @@ function dedupeCache(root) {
     groups.get(key).push(dir);
   }
 
+  const tick = () => new Promise((r) => setImmediate(r));
   for (const list of groups.values()) {
+    await tick();
     if (list.length <= 1) {
       // 只有一个目录时，也把「书名 (2)」改回书名（如果书名目录空着）
       const only = list[0];
@@ -142,6 +144,7 @@ function dedupeCache(root) {
 
     const keep = scored[0].dir;
     for (const item of scored.slice(1)) {
+      await tick();
       mergeInto(item.dir, keep);
       try {
         fs.rmSync(item.dir, { recursive: true, force: true });
