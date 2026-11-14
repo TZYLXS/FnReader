@@ -311,6 +311,18 @@ async function handleSearchSSE(req, res, params) {
 
   let sources = store.sources.filter((s) => s.enabled && !isJunkSource(s));
 
+  // 正版接口源默认不搜；用户勾选「正版源」或指定了具体书源时才包含
+  const includeOfficial = params.get('official') === '1' || ids.length > 0;
+  let officialSkipped = 0;
+  if (!includeOfficial) {
+    const beforeOfficial = sources.length;
+    sources = sources.filter((s) => !isOfficialSource(s));
+    officialSkipped = beforeOfficial - sources.length;
+    if (officialSkipped > 0) {
+      send({ type: 'note', message: `已跳过 ${officialSkipped} 个正版接口源（起点/QQ/掌阅等），需要时勾选「正版源」` });
+    }
+  }
+
   // 学术关键词识别：命中后只搜学术类书源，跳过网络小说源
   let academicInfo = null;
   if (params.get('auto') !== '0' && !ids.length && !group) {
@@ -463,7 +475,7 @@ async function handleSearchSSE(req, res, params) {
   const workers = Array.from({ length: Math.min(concurrency, sources.length) }, worker);
   Promise.all(workers).then(() => {
     if (!closed) {
-      send({ type: 'done', found });
+      send({ type: 'done', found, officialSkipped: typeof officialSkipped === 'number' ? officialSkipped : 0 });
       res.end();
     }
   });
@@ -1271,6 +1283,15 @@ async function phoneSearch(source, key, waitMs = 8000) {
   } finally {
     releasePhoneSlot();
   }
+}
+
+/**
+ * 正版接口源（起点 / QQ阅读 / 掌阅 / 番茄 / 七猫 / 百度小说…）：
+ * 默认不参与搜索（容易被风控、也多是付费源），用户显式指定时才搜。
+ */
+function isOfficialSource(src) {
+  const text = String((src && src.bookSourceName) || '') + ' ' + String((src && src.bookSourceUrl) || '') + ' ' + String((src && src.bookSourceGroup) || '');
+  return /起点|qidian|QQ\s*阅读|ubook\.reader\.qq|bookshelf\.html5\.qq|novel\.html5\.qq|掌阅|zhangyue|ireader|番茄|fanqie|fqnovel|七猫|wtzw|百度小说|novelapi\.baidu|17K|正版|官方接口/i.test(text);
 }
 
 /** 明显不是小说源的（词典/知道/翻译），搜索时跳过 */

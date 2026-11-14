@@ -51,7 +51,7 @@ const state = {
   books: [],
   sources: [],
   config: { theme: 'light', fontSize: 19, lineHeight: 1.85, pageWidth: 720 },
-  search: { key: '', selected: new Set(), running: false, es: null, results: [] },
+  search: { key: '', selected: new Set(), running: false, es: null, results: [], official: false },
   reader: null,
 };
 
@@ -414,6 +414,7 @@ async function renderSearch() {
       <button class="chip on" data-mode="book">找书</button>
       <button class="chip" data-mode="feed">订阅</button>
       <button class="chip ${state.search.remote ? 'on' : ''}" id="chip-remote" title="用手机端解析器搜索">📱 手机解析</button>
+      <button class="chip ${state.search.official ? 'on' : ''}" id="chip-official" title="包含起点 / QQ阅读 / 掌阅等正版接口源">正版源</button>
       <button class="chip" id="chip-daily">每日推荐</button>
     </div>
     <div class="searchbar">
@@ -436,6 +437,12 @@ async function renderSearch() {
       state.search.remote = !state.search.remote;
       b.classList.toggle('on', state.search.remote);
       toast(state.search.remote ? '已开启手机解析：本机解析失败的源会交给手机' : '已关闭手机解析');
+      return;
+    }
+    if (b.id === 'chip-official') {
+      state.search.official = !state.search.official;
+      b.classList.toggle('on', state.search.official);
+      toast(state.search.official ? '已包含正版接口源（起点/QQ阅读/掌阅等）' : '已排除正版接口源');
       return;
     }
     if (b.dataset.mode === 'feed') location.hash = '#/feeds';
@@ -834,6 +841,7 @@ function startSearch(key, opts = {}) {
   else if (state.search.group) params.set('group', state.search.group);
   if (opts.auto === false) params.set('auto', '0');
   if (state.search.remote) params.set('remote', '1');
+  if (state.search.official) params.set('official', '1');
   const hint = $('#academic-hint');
   if (hint) hint.style.display = 'none';
   status.innerHTML = `<span class="spinner"></span> 正在搜索…`;
@@ -854,6 +862,14 @@ function startSearch(key, opts = {}) {
     try {
       msg = JSON.parse(ev.data);
     } catch {
+      return;
+    }
+    if (msg.type === 'note') {
+      const h = $('#academic-hint');
+      if (h) {
+        h.style.display = 'block';
+        h.textContent = msg.message || '';
+      }
       return;
     }
     if (msg.type === 'start') {
@@ -2014,7 +2030,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.12 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.1.0 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');

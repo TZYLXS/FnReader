@@ -1,5 +1,5 @@
 ﻿appname=legado-web
-version=2.0.12
+version=2.1.0
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
