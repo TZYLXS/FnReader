@@ -1092,8 +1092,9 @@ async function loadChapter(index) {
   const article = $('#article');
   article.innerHTML = `<div class="loading"><span class="spinner"></span> 正在加载…</div>`;
   $$('#chapter-list .item').forEach((el) => el.classList.toggle('on', Number(el.dataset.i) === index));
+  const maxIdx = r.pageMode && r.pageTotal ? r.pageTotal - 1 : r.chapters.length - 1;
   $('#prev').disabled = index === 0;
-  $('#next').disabled = index >= r.chapters.length - 1;
+  $('#next').disabled = index >= maxIdx;
   updateReaderMeta();
 
   let data;
@@ -1131,6 +1132,10 @@ async function loadChapter(index) {
       got = await fetchPage();
     }
     data = got.status === 200 ? got.body : { error: got.body.error || `请求失败 (${got.status})` };
+    if (data && data.page && data.total) {
+      r.pageTotal = data.total;
+      r.index = data.page - 1;
+    }
   } else {
     data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}`).catch((e) => ({ error: e.message }));
   }
@@ -1142,14 +1147,19 @@ async function loadChapter(index) {
   article.innerHTML = '';
   const h = document.createElement('h2');
   h.className = 'chapter-head';
-  h.textContent = r.chapters[index].title;
+  h.textContent =
+    r.pageMode && (data.page || r.pageTotal)
+      ? `第 ${data.page || index + 1} 页${r.pageTotal ? ' / 共 ' + r.pageTotal + ' 页' : ''}`
+      : (r.chapters[index] && r.chapters[index].title) || (data.title || '');
   article.appendChild(h);
   for (const p of data.paragraphs) {
     if (p && typeof p === 'object' && p.k === 'img' && p.t) {
       const img = document.createElement('img');
       img.className = 'page-img';
       img.loading = 'lazy';
-      img.src = p.t;
+      // 服务端返回的是 /api/... 绝对路径；本应用可能在网关子路径下（/app/legado-web/），要改相对
+      const raw = String(p.t);
+      img.src = raw.startsWith('/api/') ? '.' + raw : raw;
       article.appendChild(img);
       continue;
     }
@@ -1177,7 +1187,7 @@ async function loadChapter(index) {
 function updateReaderMeta() {
   const r = state.reader;
   if (!r) return;
-  const total = r.chapters.length || 1;
+  const total = (r.pageMode && r.pageTotal) || r.chapters.length || 1;
   const pct = Math.round(((r.index + 1) / total) * 100);
   const bt = $('#book-title');
   if (bt) bt.textContent = r.book.name;
@@ -1189,7 +1199,8 @@ function updateReaderMeta() {
 
 function gotoChapter(index) {
   const r = state.reader;
-  if (!r || index < 0 || index >= r.chapters.length) return;
+  const max = r && r.pageMode && r.pageTotal ? r.pageTotal : r && r.chapters.length;
+  if (!r || index < 0 || index >= max) return;
   if (state.reader.index === index) return;
   loadChapter(index);
 }

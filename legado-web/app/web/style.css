@@ -721,3 +721,15 @@ html[data-theme="book"] .chip.on { background: var(--accent); color: #fff8ee; }
 /* 翻章后不要被浏览器的滚动锚定拽在底部 */
 .reader.kindle .article { overflow-anchor: none; }
 .drawer .list { overscroll-behavior: contain; }
+
+
+/* PDF 原页模式：按页显示的整页图片 */
+.reader.kindle .article .page-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 8px 0 16px;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
+}
