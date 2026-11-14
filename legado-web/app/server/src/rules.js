@@ -193,9 +193,12 @@ function parseMaybeJson(v) {
 }
 
 function descendantsOf(node, out = []) {
-  for (const c of node.children || []) {
-    out.push(c);
-    descendantsOf(c, out);
+  const stack = (node.children || []).slice().reverse();
+  while (stack.length) {
+    const cur = stack.pop();
+    out.push(cur);
+    const kids = cur.children || [];
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
   }
   return out;
 }

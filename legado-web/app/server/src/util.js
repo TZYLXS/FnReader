@@ -239,14 +239,18 @@ function jsonPath(data, path) {
 }
 
 function collectDeep(obj, key, out) {
-  if (obj == null || typeof obj !== 'object') return;
-  if (Array.isArray(obj)) {
-    for (const v of obj) collectDeep(v, key, out);
-    return;
-  }
-  for (const [k, v] of Object.entries(obj)) {
-    if (k === key) out.push(v);
-    else collectDeep(v, key, out);
+  const stack = [obj];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (cur == null || typeof cur !== 'object') continue;
+    if (Array.isArray(cur)) {
+      for (let i = cur.length - 1; i >= 0; i--) stack.push(cur[i]);
+      continue;
+    }
+    for (const [k, v] of Object.entries(cur)) {
+      if (k === key) out.push(v);
+      else if (v && typeof v === 'object') stack.push(v);
+    }
   }
 }
 

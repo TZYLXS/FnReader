@@ -10,20 +10,36 @@ function childNodes(n) {
 }
 
 function descendants(n, out = []) {
-  for (const c of childNodes(n)) {
-    out.push(c);
-    descendants(c, out);
+  // 迭代实现：有些站点 HTML 嵌套极深，递归会爆栈（Maximum call stack size exceeded）
+  const stack = childNodes(n).slice().reverse();
+  while (stack.length) {
+    const cur = stack.pop();
+    out.push(cur);
+    const kids = childNodes(cur);
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
   }
   return out;
 }
 
 function nodeText(n) {
   if (!n) return '';
-  if (n.type === 'text') return n.data || '';
-  if (n.type === 'attribute') return n.value || '';
-  let s = '';
-  for (const c of childNodes(n)) s += nodeText(c);
-  return s;
+  let out = '';
+  const stack = [n];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (!cur) continue;
+    if (cur.type === 'text') {
+      out += cur.data || '';
+      continue;
+    }
+    if (cur.type === 'attribute') {
+      out += cur.value || '';
+      continue;
+    }
+    const kids = childNodes(cur);
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+  }
+  return out;
 }
 
 function normText(s) {
