@@ -15,6 +15,17 @@ const DEFAULT_CONFIG = {
   lineHeight: 1.85,
   fontFamily: '',
   pageWidth: 720,
+  // 本地电子书（Text Parsing Engine）
+  ebookEnabled: true,
+  ebookDir: '',
+  ebookScanSec: 60,
+  ebookScanDepth: 3,
+  ebookMaxMB: 512,
+  ebookFallbackEnabled: true,
+  ebookFallbackAfterMin: 10,
+  ebookOfflineGraceSec: 120,
+  ebookLocalConcurrency: 2,
+  ebookJobTtlMs: 600000,
 };
 
 let cache = null;

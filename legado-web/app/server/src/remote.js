@@ -63,24 +63,49 @@ const MAX_AGE = 120000;
 function purge() {
   const now = Date.now();
   for (const [id, job] of jobs) {
-    if (now - job.createdAt > MAX_AGE) {
+    const expireAt = job.expireAt || job.createdAt + MAX_AGE;
+    if (now > expireAt) {
       if (job.resolve) job.resolve({ ok: false, error: 'timeout' });
       jobs.delete(id);
     }
   }
 }
 
-/** 创建任务并等待手机回传；超时返回 {ok:false,error:'timeout'} */
-function request(type, payload, waitMs = WAIT_MS) {
+/**
+ * 建任务并返回 {id, promise}；ebook-parse 这类长任务用 ttlMs 单独放宽存活时间
+ * @param {string} type
+ * @param {object} payload
+ * @param {{waitMs?:number, ttlMs?:number}} opts
+ */
+function create(type, payload, opts = {}) {
   purge();
+  const waitMs = Number(opts.waitMs) || WAIT_MS;
+  const ttlMs = Number(opts.ttlMs) || Math.max(waitMs, MAX_AGE);
   const id = crypto.randomBytes(6).toString('hex');
-  return new Promise((resolve) => {
+  const createdAt = Date.now();
+  const promise = new Promise((resolve) => {
     const timer = setTimeout(() => {
       if (jobs.has(id)) jobs.delete(id);
       resolve({ ok: false, error: 'timeout' });
     }, waitMs);
-    jobs.set(id, { id, type, payload, createdAt: Date.now(), resolve, timer });
+    jobs.set(id, { id, type, payload, createdAt, expireAt: createdAt + ttlMs, resolve, timer });
   });
+  return { id, promise };
+}
+
+/** 创建任务并等待手机回传；超时返回 {ok:false,error:'timeout'} */
+function request(type, payload, waitMs = WAIT_MS) {
+  return create(type, payload, { waitMs }).promise;
+}
+
+/** 放弃任务（看门狗/兜底时用）：等待方立刻收到 abandoned */
+function abandon(id) {
+  const job = jobs.get(id);
+  if (!job) return false;
+  clearTimeout(job.timer);
+  jobs.delete(id);
+  if (job.resolve) job.resolve({ ok: false, error: 'abandoned' });
+  return true;
 }
 
 /** 手机领任务：把当前待处理的任务吐出去（不删，等回结果） */
@@ -122,4 +147,4 @@ function stats() {
   return { pending: jobs.size, recent: recent.slice(-5) };
 }
 
-module.exports = { request, pending, complete, stats, hello, touch, bumpHandled, listDevices, setEnabled };
+module.exports = { request, create, abandon, pending, complete, stats, hello, touch, bumpHandled, listDevices, setEnabled };

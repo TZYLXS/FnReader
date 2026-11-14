@@ -829,6 +829,21 @@ function apiToken() {
   return store.config.apiToken;
 }
 
+// ---- 本地电子书引擎（Text Parsing Engine） ----
+const ebookStore = require('./ebook/store');
+const ebookScan = require('./ebook/scan');
+const ebookBus = require('./ebook/bus');
+const ebookRender = require('./ebook/render');
+const ebookLocal = require('./ebook/local');
+
+const ebookCtx = {
+  dataDir: store.dataDir,
+  config: () => store.config,
+  remote,
+  token: () => apiToken(),
+  log: (...args) => console.log(...args),
+};
+
 function checkApiToken(req, url) {
   const t = req.headers['x-api-token'] || url.searchParams.get('token');
   return !!t && t === apiToken();
@@ -1629,6 +1644,119 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true });
   }
 
+  // ---- 本地电子书：扫描 / 列表 / 重新解析 ----
+  if (p === '/api/ebook/list' && method === 'GET') {
+    const entries = ebookStore.loadIndex(store.dataDir);
+    return json(res, 200, { dir: ebookScan.ebookDir(ebookCtx), count: entries.length, books: entries });
+  }
+
+  if (p === '/api/ebook/scan' && method === 'POST') {
+    const r = await ebookScan.scanOnce(ebookCtx);
+    return json(res, 200, r);
+  }
+
+  if (p === '/api/ebook/reparse' && method === 'POST') {
+    const body = await readJson(req);
+    const sha1 = String((body && body.sha1) || '');
+    const entry = ebookStore.getEntry(store.dataDir, sha1);
+    if (!entry) return json(res, 404, { error: '没有这本书' });
+    ebookStore.resetChapters(store.dataDir, sha1);
+    ebookStore.upsertEntry(store.dataDir, { sha1, status: 'discovered', source: '', error: '', parts: 0 });
+    const reset = ebookStore.getEntry(store.dataDir, sha1) || entry;
+    ebookBus.dispatch(ebookCtx, reset);
+    return json(res, 200, { ok: true, sha1, status: 'dispatched' });
+  }
+
+  // ---- 本地电子书：给 App 下载原文件（支持 Range）----
+  if (p.startsWith('/api/m/ebook/file/') && method === 'GET') {
+    if (!checkApiToken(req, url)) return json(res, 401, { error: 'token 无效' });
+    const sha1 = String(p.slice('/api/m/ebook/file/'.length)).split('/')[0].toLowerCase();
+    if (!/^[0-9a-f]{40}$/.test(sha1)) return json(res, 400, { error: 'sha1 不合法' });
+    const entry = ebookStore.getEntry(store.dataDir, sha1);
+    if (!entry || !entry.file || !fs.existsSync(entry.file)) return json(res, 404, { error: '文件不存在' });
+    const stat = fs.statSync(entry.file);
+    const types = { epub: 'application/epub+zip', mobi: 'application/x-mobipocket-ebook', azw3: 'application/vnd.amazon.ebook', pdf: 'application/pdf', txt: 'text/plain; charset=utf-8' };
+    const type = types[String(entry.format || '').toLowerCase()] || 'application/octet-stream';
+    const range = req.headers.range;
+    if (range) {
+      const m = /bytes=(\d*)-(\d*)/.exec(String(range));
+      const start = m && m[1] ? Number(m[1]) : 0;
+      const end = m && m[2] ? Number(m[2]) : stat.size - 1;
+      if (!Number.isFinite(start) || start >= stat.size || end < start) {
+        res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+        return res.end();
+      }
+      const stop = Math.min(end, stat.size - 1);
+      res.writeHead(206, {
+        'Content-Type': type,
+        'Content-Length': stop - start + 1,
+        'Content-Range': `bytes ${start}-${stop}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+      });
+      return fs.createReadStream(entry.file, { start, end: stop }).pipe(res);
+    }
+    res.writeHead(200, { 'Content-Type': type, 'Content-Length': stat.size, 'Accept-Ranges': 'bytes' });
+    return fs.createReadStream(entry.file).pipe(res);
+  }
+
+  // ---- 本地电子书：App 上传解析分片 ----
+  if (p === '/api/m/ebook/part' && method === 'POST') {
+    if (!checkApiToken(req, url)) return json(res, 401, { error: 'token 无效' });
+    const sha1 = String(searchParams.get('sha1') || '').toLowerCase();
+    const seq = Number(searchParams.get('seq') || 0);
+    const total = Number(searchParams.get('total') || 0);
+    if (!/^[0-9a-f]{40}$/.test(sha1)) return json(res, 400, { error: 'sha1 不合法' });
+    const entry = ebookStore.getEntry(store.dataDir, sha1);
+    if (!entry) return json(res, 404, { error: '没有这本书' });
+    let raw;
+    try {
+      raw = await readBody(req, 8 * 1024 * 1024);
+    } catch (e) {
+      return json(res, 413, { error: '分片过大（上限 8MB）' });
+    }
+    let text = raw;
+    if (String(req.headers['content-encoding'] || '').includes('gzip')) {
+      try {
+        text = zlib.gunzipSync(Buffer.from(raw, 'utf8')).toString('utf8');
+      } catch {
+        return json(res, 400, { error: 'gzip 解压失败' });
+      }
+    }
+    if (text.length > 20 * 1024 * 1024) return json(res, 413, { error: '解压后超过 20MB' });
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return json(res, 400, { error: '分片不是合法 JSON' });
+    }
+    let r;
+    try {
+      r = ebookLocal.acceptPart(store.dataDir, entry, seq, total, payload);
+    } catch (e) {
+      const code = e && e.code;
+      const status = code === 'too-large' ? 413 : code === 'sha1' ? 409 : 400;
+      return json(res, status, { error: String((e && e.message) || e), code: code || '' });
+    }
+    return json(res, 200, { ok: true, ...r });
+  }
+
+  // ---- 本地电子书：断点续传查询 ----
+  if (p === '/api/m/ebook/parts' && method === 'GET') {
+    if (!checkApiToken(req, url)) return json(res, 401, { error: 'token 无效' });
+    const sha1 = String(searchParams.get('sha1') || '').toLowerCase();
+    const entry = ebookStore.getEntry(store.dataDir, sha1);
+    if (!entry) return json(res, 404, { error: '没有这本书' });
+    const parts = ebookStore.receivedParts(store.dataDir, sha1);
+    return json(res, 200, {
+      sha1,
+      total: entry.parts || 0,
+      received: parts.length,
+      complete: entry.status === 'complete',
+      status: entry.status,
+      parts,
+    });
+  }
+
   // App 同步已缓存小说：直接接收 Legado 的缓存文件结构，服务端自己转成本站格式
   //   目录：<下载目录>/cache/<书名>/
   //     raw/      原样保存 App 的 .nb（保留原始格式，便于回传 App）
@@ -2349,9 +2477,12 @@ function saveCover(target, buf, mime) {
   if (p === '/api/remote/job' && method === 'POST') {
     const body = await readJson(req);
     const type = String((body && body.type) || '');
-    if (!['search', 'toc', 'content', 'bookinfo', 'rank'].includes(type)) return json(res, 400, { error: '不支持的任务类型' });
+    if (!['search', 'toc', 'content', 'bookinfo', 'rank', 'ebook-parse'].includes(type)) {
+      return json(res, 400, { error: '不支持的任务类型' });
+    }
     if (!busEnabled()) return json(res, 409, { error: '请先在网页端确认缓存保存位置', needConfirm: true });
-    const wait = Math.min(60000, Number((body && body.waitMs) || 20000));
+    const isEbook = type === 'ebook-parse';
+    const wait = isEbook ? 240000 : Math.min(60000, Number((body && body.waitMs) || 20000));
     const result = await remote.request(type, body.payload || {}, wait);
     if (!result.ok) return json(res, 504, { error: result.error === 'timeout' ? '手机端没有响应' : result.error });
     return json(res, 200, { ok: true, data: result.data });
@@ -2692,6 +2823,13 @@ function saveCover(target, buf, mime) {
 
   if (p === '/api/toc' && method === 'GET') {
     const bookUrl = searchParams.get('url');
+    // 本地电子书：只读引擎产出的 JSON，不再解析原文件
+    const ebookSha = ebookRender.parseUrl(bookUrl);
+    if (ebookSha) {
+      const data = ebookRender.toc(store.dataDir, ebookSha);
+      if (!data) return json(res, 404, { error: '电子书未解析完成' });
+      return json(res, 200, data);
+    }
     const book = store.findBook(bookUrl);
     if (!book) return json(res, 404, { error: '书籍不存在' });
     const force = searchParams.get('refresh') === '1';
@@ -2707,6 +2845,12 @@ function saveCover(target, buf, mime) {
   if (p === '/api/content' && method === 'GET') {
     const bookUrl = searchParams.get('url');
     const index = Number(searchParams.get('index') || 0);
+    const ebookShaC = ebookRender.parseUrl(bookUrl);
+    if (ebookShaC) {
+      const data = ebookRender.content(store.dataDir, ebookShaC, index);
+      if (!data) return json(res, 404, { error: '章节不存在' });
+      return json(res, 200, data);
+    }
     const book = store.findBook(bookUrl);
     if (!book) return json(res, 404, { error: '书籍不存在' });
 
@@ -3174,6 +3318,17 @@ try {
 
 tcp.listen(PORT, '0.0.0.0', () => console.log(`[legado-web] http://0.0.0.0:${PORT}`));
   tcp.on('error', (e) => console.error('[legado-web] tcp listen error:', e.message));
+
+  // 本地电子书：定时扫描 + 长任务看门狗
+  try {
+    if (store.config.ebookEnabled !== false) {
+      ebookScan.start(ebookCtx, (Number(store.config.ebookScanSec) || 60) * 1000);
+      ebookBus.startWatchdog(ebookCtx);
+      console.log('[legado-web] 本地电子书引擎已启动，目录: ' + ebookScan.ebookDir(ebookCtx));
+    }
+  } catch (e) {
+    console.error('[legado-web] 电子书引擎启动失败:', e.message);
+  }
 
   // 单个请求/任务出错不应该拖垮整个服务
   process.on('unhandledRejection', (e) => console.error('[legado-web] unhandledRejection:', e && e.message ? e.message : e));

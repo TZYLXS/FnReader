@@ -1,4 +1,12 @@
 --------------------------------------------------
+2.2.0    2026-11-15
+--------------------------------------------------
+· 接入本地电子书解析引擎（Text Parsing Engine）：扫描目录里的 epub/mobi/pdf/txt，EPUB/MOBI 优先由手机端解析回传，手机不在线时服务端本地兜底
+· 新增接口：/api/ebook/list、/api/ebook/scan、/api/ebook/reparse；/api/m/ebook/file|part|parts
+· ebook:// 书可直接用 /api/toc 与 /api/content 渲染（via=ebook-json），不再解析原文件
+· 软总线支持长任务：remote.create 支持 waitMs/ttlMs，新增 abandon 撤销；ebook-parse 等待上限 240 秒
+
+--------------------------------------------------
 2.1.1    2026-11-15
 --------------------------------------------------
   ・修复打开/换源偶发 Maximum call stack size exceeded：XPath 文本与后代遍历、JSON 深度查找全部改为迭代实现（深嵌套页面不再爆栈）
