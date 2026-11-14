@@ -938,6 +938,23 @@ function finishSearch() {
 }
 
 /* ---------------- 阅读器 ---------------- */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 确保 PDF 原页已渲染，返回总页数（0 表示失败） */
+async function ensurePages(sha1, onProgress) {
+  let st = await api('/ebook/pages?sha1=' + encodeURIComponent(sha1)).catch(() => null);
+  if (st && st.ready) return st.count || 0;
+  await api('/ebook/pages', { method: 'POST', body: { sha1 } }).catch(() => {});
+  for (let i = 0; i < 240; i++) {
+    await sleep(1000);
+    st = await api('/ebook/pages?sha1=' + encodeURIComponent(sha1)).catch(() => null);
+    if (onProgress) onProgress(st);
+    if (st && st.ready) return st.count || 0;
+    if (i > 10 && st && !st.rendering && !st.ready) break;
+  }
+  return 0;
+}
+
 async function openReader(bookUrl, wantTitle) {
   if (!bookUrl) return (location.hash = '#/shelf');
   view.innerHTML = `<div class="reader"><div class="empty"><span class="spinner"></span> 正在打开…</div></div>`;
@@ -949,11 +966,36 @@ async function openReader(bookUrl, wantTitle) {
       book = state.books.find((b) => b.bookUrl === bookUrl);
     }
     if (!book) throw new Error('书籍不在书架中');
-    const { chapters } = await api('/toc?url=' + encodeURIComponent(bookUrl));
+    let { chapters } = await api('/toc?url=' + encodeURIComponent(bookUrl));
     if (!chapters || !chapters.length) throw new Error('目录为空');
     book.chapters = chapters;
     book.totalChapterNum = chapters.length;
+
+    // 原页模式：章节列表换成「第 N 页」，翻页/目录都按页走
+    const keepPage = state.reader && state.reader.pageMode;
+    const isPdf = (book.localEbook && book.localEbook.format === 'pdf') || book.ebookFormat === 'pdf';
+    if (keepPage && isPdf) {
+      const sha = (book.localEbook && book.localEbook.sha1) || (String(bookUrl).startsWith('ebook://') ? String(bookUrl).slice(8).split(/[?#]/)[0] : '');
+      if (sha) {
+        view.innerHTML = `<div class="reader"><div class="empty"><span class="spinner"></span> 正在准备原页…<div class="desc" id="page-progress" style="margin-top:8px"></div></div></div>`;
+        const count = await ensurePages(sha, (st) => {
+          const tip = document.getElementById('page-progress');
+          if (tip) tip.textContent = st && st.ready ? `已渲染 ${st.count} 页` : '渲染中…（首次约 1–2 分钟）';
+        });
+        if (count > 0) {
+          const prev = state.reader;
+          const ratio = prev && prev.chapters.length ? (prev.index + 1) / prev.chapters.length : 0;
+          const targetPage = Math.max(0, Math.min(count - 1, Math.round(ratio * count) - 1));
+          chapters = Array.from({ length: count }, (_, i) => ({ index: i, title: `第 ${i + 1} 页`, url: bookUrl + '#' + (i + 1) }));
+          book.totalChapterNum = count;
+        } else {
+          toast('原页渲染失败，已回到文字模式');
+          state.reader = null;
+        }
+      }
+    }
     let idx = Math.min(book.durChapterIndex || 0, chapters.length - 1);
+    if (state.reader && state.reader.pageMode && state.reader.index >= 0) idx = Math.min(state.reader.index, chapters.length - 1);
     // 换源后按章节标题定位到同一章
     if (wantTitle) {
       const norm = (t) => String(t || '').replace(/\s+/g, '');
@@ -1022,8 +1064,29 @@ function renderReaderShell() {
     pageBtn.onclick = async () => {
       const r = state.reader;
       if (!r) return;
-      r.pageMode = !r.pageMode;
-      const title = '';
+      const toPage = !r.pageMode;
+      const title = r.chapters[r.index] ? r.chapters[r.index].title : '';
+      const ratio = r.chapters.length ? (r.index + 1) / r.chapters.length : 0;
+      if (toPage) {
+        const sha = (r.book.localEbook && r.book.localEbook.sha1) || (String(r.book.bookUrl).startsWith('ebook://') ? String(r.book.bookUrl).slice(8).split(/[?#]/)[0] : '');
+        if (!sha) return toast('这本书没有本地原文件');
+        view.innerHTML = `<div class="reader"><div class="empty"><span class="spinner"></span> 正在准备原页…<div class="desc" id="page-progress" style="margin-top:8px"></div></div></div>`;
+        const count = await ensurePages(sha, (st) => {
+          const tip = document.getElementById('page-progress');
+          if (tip) tip.textContent = st && st.ready ? `已渲染 ${st.count} 页` : '渲染中…（首次约 1–2 分钟）';
+        });
+        if (!count) {
+          toast('原页渲染失败，保持文字模式');
+          return openReader(r.book.bookUrl, title);
+        }
+        r.pageMode = true;
+        r.pageTotal = count;
+        state.reader = { ...r, pageMode: true, pageTotal: count, index: Math.max(0, Math.round(ratio * count) - 1) };
+        await openReader(r.book.bookUrl, '');
+        return;
+      }
+      r.pageMode = false;
+      r.pageTotal = 0;
       await openReader(r.book.bookUrl, title);
     };
   }
