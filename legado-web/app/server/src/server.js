@@ -604,6 +604,25 @@ function allowedDownloadDirs() {
   for (const p of extra) add(p);
   // 环境变量可能滞后于授权操作，保留用户之前选过的目录
   add(store.config.downloadDir);
+  // fnOS 重装/重启后 TRIM_DATA_ACCESSIBLE_PATHS 会被清空，
+  // 这里扫描常见卷上的可写目录，让用户仍能选到自己的空间
+  const roots = ['/vol1/1000', '/vol2/1000', '/vol3/1000', '/vol4/1000', '/vol1/@appshare', '/vol00'];
+  for (const root of roots) {
+    let names = [];
+    try {
+      names = fs.readdirSync(root).slice(0, 40);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const p = path.join(root, name);
+      try {
+        if (fs.statSync(p).isDirectory() && isWritableDir(p)) add(p);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
   return dirs;
 }
 
@@ -2980,8 +2999,15 @@ function mergeFeedIntoBook(feed) {
   if (p === '/api/config' && method === 'POST') {
     const body = await readJson(req);
     if (body && body.downloadDir) {
-      const ok = allowedDownloadDirs().some((d) => d.path === body.downloadDir);
-      if (!ok) return json(res, 400, { error: '该目录未授权，请先在 fnOS 应用设置里授权文件夹' });
+      const wanted = String(body.downloadDir).trim();
+      if (!wanted.startsWith('/')) return json(res, 400, { error: '请填写绝对路径，例如 /vol1/1000/Books' });
+      try {
+        fs.mkdirSync(wanted, { recursive: true });
+      } catch {
+        /* 已存在或建不了，下面再判 */
+      }
+      if (!isWritableDir(wanted)) return json(res, 400, { error: '目录不可写：' + wanted });
+      body.downloadDir = wanted;
     }
     store.saveConfig(body || {});
     return json(res, 200, store.config);

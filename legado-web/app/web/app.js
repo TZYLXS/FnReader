@@ -1905,6 +1905,10 @@ async function renderSettings() {
         <div class="row"><div class="label">保存位置<div class="desc" id="stat-dir">-</div></div>
           <select id="set-dir" style="max-width:46%;font-size:12px"></select>
         </div>
+        <div class="row"><div class="label">自定义目录<div class="desc">填绝对路径，如 /vol1/1000/Books</div></div>
+          <input id="set-dir-custom" placeholder="/vol1/1000/Books" style="max-width:44%;font-size:12px" />
+          <button class="btn" id="save-dir-custom" style="padding:5px 10px;font-size:12px">保存</button>
+        </div>
       </div>
       <div class="section">
         <h3>数据</h3>
@@ -1941,7 +1945,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.9 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.10 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -2281,14 +2285,23 @@ async function renderSettings() {
         .join('');
       const wanted = cfg.downloadDir || '';
       $('#stat-dir').textContent = (cur.replace(/^.*\//, '') || '默认') + (wanted && wanted !== cur ? '（原目录不可写，已回退）' : '');
-      sel.onchange = async () => {
+      const applyDir = async (value) => {
         try {
-          await api('/config', { method: 'POST', body: { downloadDir: sel.value } });
+          await api('/config', { method: 'POST', body: { downloadDir: value } });
           toast('下载位置已更新');
-          $('#stat-dir').textContent = sel.value.replace(/^.*\//, '');
+          $('#stat-dir').textContent = value.replace(/^.*\//, '');
         } catch (e) {
           toast('设置失败：' + e.message);
         }
+      };
+      sel.onchange = () => applyDir(sel.value);
+      const customInput = $('#set-dir-custom');
+      if (customInput) customInput.value = wanted || cur || '';
+      const customSave = $('#save-dir-custom');
+      if (customSave) customSave.onclick = () => {
+        const v = (customInput.value || '').trim();
+        if (!v) return toast('请填写目录');
+        applyDir(v);
       };
     } catch {
       /* 下载信息可选 */
