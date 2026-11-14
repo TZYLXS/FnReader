@@ -844,6 +844,7 @@ const ebookScan = require('./ebook/scan');
 const ebookBus = require('./ebook/bus');
 const ebookRender = require('./ebook/render');
 const ebookLocal = require('./ebook/local');
+const ebookPages = require('./ebook/pdfpages');
 
 const ebookCtx = {
   dataDir: store.dataDir,
@@ -867,6 +868,21 @@ const ebookCtx = {
     return linkLocalEbooksToShelf();
   },
 };
+
+/** 客户端传书专用令牌（与 X-Api-Token 分开，泄露不影响书架读写） */
+function uploadToken() {
+  if (!store.config.uploadToken) {
+    store.saveConfig({ uploadToken: crypto.randomBytes(16).toString('hex') });
+  }
+  return store.config.uploadToken;
+}
+
+function checkUploadToken(req, url) {
+  const t = req.headers['x-upload-token'] || url.searchParams.get('token');
+  return !!t && t === uploadToken();
+}
+
+const UPLOAD_FORMATS = { '.pdf': 'pdf', '.mobi': 'mobi', '.prc': 'mobi', '.azw': 'mobi', '.azw3': 'mobi', '.epub': 'epub', '.txt': 'txt' };
 
 function checkApiToken(req, url) {
   const t = req.headers['x-api-token'] || url.searchParams.get('token');
@@ -1314,6 +1330,7 @@ function linkLocalEbooksToShelf() {
       const cur = b.localEbook || {};
       if (cur.sha1 === e.sha1) continue;
       b.localEbook = { sha1: e.sha1, format: e.format, name: e.name, status: e.status };
+      b.ebookFormat = e.format;
       b.contentSource = 'local';
       changed++;
     }
@@ -1344,6 +1361,7 @@ function linkLocalEbooksToShelf() {
       durChapterTitle: chapters[0] ? chapters[0].title : '',
       lastChapter: chapters.length ? chapters[chapters.length - 1].title : '',
       tocVia: 'ebook',
+      ebookFormat: e.format,
       contentSource: 'local',
       cachedDir: '',
       addedAt: Date.now(),
@@ -1734,7 +1752,9 @@ async function route(req, res, url) {
     });
   }
 
-  if (p.startsWith('/api/m/') && !checkApiToken(req, url)) {
+  // 客户端传书用自己的令牌（X-Upload-Token / ?token=），不走 X-Api-Token
+  const isUploadPath = p === '/api/m/ebook/upload';
+  if (p.startsWith('/api/m/') && !isUploadPath && !checkApiToken(req, url)) {
     return json(res, 401, { error: 'token 无效，请在「设置 → 手机接入」查看访问令牌' });
   }
 
@@ -1921,6 +1941,141 @@ async function route(req, res, url) {
       return json(res, status, { error: String((e && e.message) || e), code: code || '' });
     }
     return json(res, 200, { ok: true, ...r });
+  }
+
+  // ---- 客户端传书：POST /api/m/ebook/upload?name=xxx.pdf ----
+  if (p === '/api/m/ebook/upload' && method === 'POST') {
+    if (store.config.uploadEnabled === false) return json(res, 403, { error: '服务端已关闭客户端传书' });
+    if (!checkUploadToken(req, url)) {
+      return json(res, 401, { error: '上传令牌无效，请在「设置 → 手机接入」查看上传令牌', code: 'upload-token' });
+    }
+    const rawName = String(searchParams.get('name') || '').trim();
+    const ext = path.extname(rawName).toLowerCase();
+    const format = UPLOAD_FORMATS[ext];
+    if (!rawName || !format) return json(res, 400, { error: '只支持 pdf / mobi / azw3 / epub / txt', code: 'format' });
+
+    const safeName =
+      path.basename(rawName).replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 120) || `upload${ext}`;
+    const dir = ebookScan.ebookDir(ebookCtx);
+    fs.mkdirSync(dir, { recursive: true });
+    const maxBytes = (Number(store.config.uploadMaxMB) || 1024) * 1024 * 1024;
+    const tmp = path.join(dir, `.upload-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.part`);
+    let size = 0;
+    let aborted = false;
+
+    try {
+      await new Promise((resolve, reject) => {
+        const out = fs.createWriteStream(tmp);
+        req.on('data', (c) => {
+          size += c.length;
+          if (size > maxBytes && !aborted) {
+            aborted = true;
+            out.destroy();
+            reject(new Error('文件超过上限'));
+            req.destroy();
+          }
+        });
+        req.pipe(out);
+        out.on('finish', resolve);
+        out.on('error', reject);
+        req.on('error', reject);
+      });
+    } catch (e) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+      return json(res, 413, { error: `上传失败：${e.message}（上限 ${Math.round(maxBytes / 1048576)} MB）` });
+    }
+
+    let finalName = safeName;
+    for (let i = 2; fs.existsSync(path.join(dir, finalName)); i++) {
+      const base = path.basename(safeName, ext);
+      finalName = `${base} (${i})${ext}`;
+    }
+    const dest = path.join(dir, finalName);
+    fs.renameSync(tmp, dest);
+    try {
+      const old = Date.now() / 1000 - 120;
+      fs.utimesSync(dest, old, old); // 绕过扫描的 20 秒 mtime 保护
+    } catch {
+      /* ignore */
+    }
+
+    let entry = null;
+    try {
+      const r = await ebookScan.scanOnce(ebookCtx);
+      entry = ebookStore.loadIndex(store.dataDir).find((e) => e.sourcePath === dest) || null;
+      if (entry) ebookBus.dispatch(ebookCtx, entry);
+    } catch (e) {
+      return json(res, 502, { error: '入库失败：' + e.message, name: finalName });
+    }
+    return json(res, 200, {
+      ok: true,
+      name: finalName,
+      format,
+      size,
+      sha1: entry ? entry.sha1 : '',
+      status: entry ? entry.status : 'discovered',
+      path: dest,
+    });
+  }
+
+  // ---- 客户端传书：配置查询 ----
+  if (p === '/api/ebook/upload' && method === 'GET') {
+    return json(res, 200, {
+      enabled: store.config.uploadEnabled !== false,
+      token: uploadToken(),
+      dir: ebookScan.ebookDir(ebookCtx),
+      maxMB: Number(store.config.uploadMaxMB) || 1024,
+      formats: ['pdf', 'mobi', 'azw3', 'epub', 'txt'],
+      endpoint: '/api/m/ebook/upload?name=<文件名>&token=<上传令牌>',
+    });
+  }
+
+  if (p === '/api/ebook/upload/reset-token' && method === 'POST') {
+    store.saveConfig({ uploadToken: crypto.randomBytes(16).toString('hex') });
+    return json(res, 200, { ok: true, token: uploadToken() });
+  }
+
+  // ---- PDF 原页：触发渲染 / 查询进度 ----
+  if (p === '/api/ebook/pages' && method === 'GET') {
+    const sha1 = String(searchParams.get('sha1') || '').toLowerCase();
+    const entry = ebookStore.getEntry(store.dataDir, sha1);
+    if (!entry) return json(res, 404, { error: '没有这本书' });
+    return json(res, 200, {
+      sha1,
+      format: entry.format,
+      ready: ebookPages.pageCount(store.dataDir, sha1) > 0,
+      count: ebookPages.pageCount(store.dataDir, sha1),
+      rendering: ebookPages.isRendering(sha1),
+    });
+  }
+
+  if (p === '/api/ebook/pages' && method === 'POST') {
+    const body = await readJson(req);
+    const sha1 = String((body && body.sha1) || searchParams.get('sha1') || '').toLowerCase();
+    const entry = ebookStore.getEntry(store.dataDir, sha1);
+    if (!entry) return json(res, 404, { error: '没有这本书' });
+    if (String(entry.format).toLowerCase() !== 'pdf') return json(res, 400, { error: '只有 PDF 支持原页渲染' });
+    const dpi = Number((body && body.dpi) || 100);
+    ebookPages
+      .renderPages(store.dataDir, sha1, entry.file, { dpi })
+      .then((r) => events.broadcast({ type: 'ebook-pages', sha1, count: r.count }))
+      .catch((e) => console.error('[legado-web] PDF 原页渲染失败:', e.message));
+    return json(res, 202, { ok: true, sha1, started: true, dpi });
+  }
+
+  // ---- 单页图片：/api/ebook/page/<sha1>/<n> ----
+  if (p.startsWith('/api/ebook/page/') && method === 'GET') {
+    const rest = p.slice('/api/ebook/page/'.length);
+    const m = /^([0-9a-f]{40})\/(\d+)$/.exec(rest);
+    if (!m) return json(res, 400, { error: '路径应为 /api/ebook/page/<sha1>/<n>' });
+    const file = ebookPages.pageFile(store.dataDir, m[1], Number(m[2]));
+    if (!fs.existsSync(file)) return json(res, 404, { error: '该页还没有渲染' });
+    res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' });
+    return fs.createReadStream(file).pipe(res);
   }
 
   // ---- 本地电子书：单章按需回传（toc-only 补章）----
@@ -3107,6 +3262,25 @@ function saveCover(target, buf, mime) {
   if (p === '/api/content' && method === 'GET') {
     const bookUrl = searchParams.get('url');
     const index = Number(searchParams.get('index') || 0);
+    const pageMode = searchParams.get('mode') === 'page';
+    if (pageMode) {
+      const shaP = ebookRender.parseUrl(bookUrl) || (store.findBook(bookUrl) && store.findBook(bookUrl).localEbook && store.findBook(bookUrl).localEbook.sha1) || '';
+      const count = shaP ? ebookPages.pageCount(store.dataDir, shaP) : 0;
+      if (!shaP) return json(res, 404, { error: '不是本地电子书' });
+      if (!count) return json(res, 409, { error: '原页还没渲染', sha1: shaP, needPages: true, rendering: ebookPages.isRendering(shaP) });
+      if (index < 0 || index >= count) return json(res, 404, { error: '页号越界' });
+      return json(res, 200, {
+        title: `第 ${index + 1} 页`,
+        index,
+        total: count,
+        page: index + 1,
+        paragraphs: [{ k: 'img', t: `/api/ebook/page/${shaP}/${index + 1}` }],
+        next: index + 1 < count ? `第 ${index + 2} 页` : '',
+        prev: index > 0 ? `第 ${index} 页` : '',
+        via: 'ebook-page',
+      });
+    }
+
     const shelfBookContent = store.findBook(bookUrl);
     if (shelfBookContent && shelfBookContent.localEbook && shelfBookContent.contentSource !== 'source') {
       const sha = shelfBookContent.localEbook.sha1;

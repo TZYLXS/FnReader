@@ -965,7 +965,8 @@ async function openReader(bookUrl, wantTitle) {
         if (loose >= 0) idx = loose;
       }
     }
-    state.reader = { book, chapters, index: idx };
+    const keepPageMode = state.reader && state.reader.pageMode && book.bookUrl === state.reader.book.bookUrl;
+    state.reader = { book, chapters, index: idx, pageMode: !!keepPageMode };
     renderReaderShell();
     await loadChapter(state.reader.index);
   } catch (e) {
@@ -983,6 +984,11 @@ function renderReaderShell() {
         ${
           book.localEbook
             ? `<button class="icon-btn" id="toggle-local" title="切换本地副本 / 网文源">${book.contentSource === 'source' ? '本' : '网'}</button>`
+            : ''
+        }
+        ${
+          (book.localEbook && book.localEbook.format === 'pdf') || book.ebookFormat === 'pdf'
+            ? `<button class="icon-btn" id="toggle-page-mode" title="文字 / 原图">${state.reader.pageMode ? '文' : '图'}</button>`
             : ''
         }
         <button class="icon-btn" id="switch-src" title="换源">⇄</button>
@@ -1011,6 +1017,16 @@ function renderReaderShell() {
     </div>`;
 
   $('#back').onclick = () => (location.hash = '#/shelf');
+  const pageBtn = $('#toggle-page-mode');
+  if (pageBtn) {
+    pageBtn.onclick = async () => {
+      const r = state.reader;
+      if (!r) return;
+      r.pageMode = !r.pageMode;
+      const title = '';
+      await openReader(r.book.bookUrl, title);
+    };
+  }
   const toggleLocal = $('#toggle-local');
   if (toggleLocal) {
     toggleLocal.onclick = async () => {
@@ -1080,7 +1096,27 @@ async function loadChapter(index) {
   $('#next').disabled = index >= r.chapters.length - 1;
   updateReaderMeta();
 
-  const data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}`).catch((e) => ({ error: e.message }));
+  let data;
+  if (r.pageMode) {
+    data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}&mode=page`).catch((e) => ({ error: e.message }));
+    if (data && data.needPages) {
+      const sha = data.sha1;
+      article.innerHTML = `<div class="loading"><span class="spinner"></span> 正在渲染原页（PDF 图表）…</div>`;
+      await api('/ebook/pages', { method: 'POST', body: { sha1: sha } }).catch(() => {});
+      for (let i = 0; i < 120; i++) {
+        await new Promise((res) => setTimeout(res, 2000));
+        const st = await api('/ebook/pages?sha1=' + encodeURIComponent(sha)).catch(() => null);
+        if (st && st.ready) break;
+        if (st && !st.rendering && !st.ready) {
+          article.innerHTML = `<div class="loading">原页渲染失败</div>`;
+          return;
+        }
+      }
+      data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}&mode=page`).catch((e) => ({ error: e.message }));
+    }
+  } else {
+    data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}`).catch((e) => ({ error: e.message }));
+  }
   if (r.index !== index) return;
   if (data.error) {
     article.innerHTML = `<div class="loading">加载失败：${esc(data.error)}</div>`;
@@ -1092,8 +1128,16 @@ async function loadChapter(index) {
   h.textContent = r.chapters[index].title;
   article.appendChild(h);
   for (const p of data.paragraphs) {
+    if (p && typeof p === 'object' && p.k === 'img' && p.t) {
+      const img = document.createElement('img');
+      img.className = 'page-img';
+      img.loading = 'lazy';
+      img.src = p.t;
+      article.appendChild(img);
+      continue;
+    }
     const el = document.createElement('p');
-    el.textContent = p;
+    el.textContent = typeof p === 'string' ? p : (p && p.t) || '';
     article.appendChild(el);
   }
   updateReaderMeta();
@@ -1996,6 +2040,11 @@ async function renderSettings() {
           <button class="btn" id="copy-token" style="padding:5px 10px;font-size:12px">复制</button>
           <button class="btn ghost" id="reset-token" style="padding:5px 8px;font-size:12px;color:var(--danger)">重置</button></div>
         <div class="row"><div class="label">说明<div class="desc">安卓 App 通过 /api/m/* 读取书架、目录与正文，请求头带 X-Api-Token</div></div></div>
+        <div class="row"><div class="label">传书令牌<div class="desc" id="upload-token" style="word-break:break-all">-</div></div>
+          <button class="btn" id="copy-upload-token" style="padding:5px 10px;font-size:12px">复制</button>
+          <button class="btn ghost" id="reset-upload-token" style="padding:5px 8px;font-size:12px;color:var(--danger)">重置</button></div>
+        <div class="row"><div class="label">传书接口<div class="desc" id="upload-endpoint" style="word-break:break-all">-</div></div></div>
+        <div class="row"><div class="label">说明<div class="desc">客户端可直接 POST 二进制上传 pdf/mobi/azw3/epub/txt，绕过 WebDAV；请求头 X-Upload-Token 或在 query 带 token</div></div></div>
       </div>
       <div class="section">
         <h3>阅读 APK 接入</h3>
@@ -2378,6 +2427,31 @@ async function renderSettings() {
           toast('重置失败：' + e.message);
         }
       };
+
+    // 客户端传书：令牌 + 接口
+    try {
+      const up = await api('/ebook/upload');
+      const utEl = $('#upload-token');
+      if (utEl) utEl.textContent = up.token || '-';
+      const ueEl = $('#upload-endpoint');
+      if (ueEl) ueEl.textContent = `${apiBase}${up.endpoint.replace('/api/m', 'api/m')}（上限 ${up.maxMB} MB）`;
+      const cu = $('#copy-upload-token');
+      if (cu) cu.onclick = () => copy(up.token || '', '传书令牌');
+      const ru = $('#reset-upload-token');
+      if (ru)
+        ru.onclick = async () => {
+          if (!confirm('重置后客户端需要重新填写传书令牌，继续？')) return;
+          try {
+            const r = await api('/ebook/upload/reset-token', { method: 'POST' });
+            if (utEl) utEl.textContent = r.token;
+            toast('传书令牌已重置');
+          } catch (e) {
+            toast('重置失败：' + e.message);
+          }
+        };
+    } catch {
+      /* 老服务端没有该接口 */
+    }
 
     // 阅读 APK 接入：一键生成 legado:// 书源导入链接
     const apkJsonUrl = `${apiBase}api/m/booksource?token=${encodeURIComponent(cfg.apiToken || '')}`;

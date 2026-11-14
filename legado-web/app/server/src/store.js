@@ -28,6 +28,10 @@ const DEFAULT_CONFIG = {
   ebookOfflineGraceSec: 120,
   ebookLocalConcurrency: 2,
   ebookJobTtlMs: 600000,
+  // 客户端传书（绕过 WebDAV）
+  uploadEnabled: true,
+  uploadToken: '',
+  uploadMaxMB: 1024,
 };
 
 let cache = null;
