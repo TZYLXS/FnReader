@@ -93,6 +93,11 @@ function acceptPart(dataDir, entry, seq, total, payload) {
   if (seq === 0) {
     if (!Array.isArray(payload.toc) || !payload.toc.length) throw fail('toc', 'part0 缺少 toc');
     if (payload.toc.length > 3000) throw fail('too-large', '目录超过 3000 条');
+    // part0 只能传一次：已有登记/章节时拒绝重传，避免新旧目录串章
+    if (store.readBook(dataDir, entry.sha1) && store.receivedParts(dataDir, entry.sha1).length > 0) {
+      throw fail('toc-locked', 'part0 已存在，重传会导致章节串位；需要重建请先调 /api/ebook/reparse');
+    }
+    const tocOnly = payload.tocOnly === true && total === 1;
     const toc = payload.toc.map((t, i) => ({
       id: String(t.id || 'ch' + String(i + 1).padStart(4, '0')),
       title: String(t.title || `第 ${i + 1} 章`),
@@ -112,21 +117,23 @@ function acceptPart(dataDir, entry, seq, total, payload) {
         chars: Number(payload.stats && payload.stats.chars) || 0,
       },
       source: 'device',
-      status: 'partial',
+      status: tocOnly ? 'toc-only' : 'partial',
+      tocOnly: tocOnly || undefined,
       updatedAt: Date.now(),
     };
+    if (tocOnly) book.stats.parts = 0;
     store.writeBook(dataDir, entry.sha1, book);
     store.markPart(dataDir, entry.sha1, 0);
     store.upsertEntry(dataDir, {
       sha1: entry.sha1,
-      status: 'partial',
+      status: tocOnly ? 'toc-only' : 'partial',
       source: 'device',
       chapters: toc.length,
-      parts: store.receivedParts(dataDir, entry.sha1).length,
-      totalParts: total,
+      parts: tocOnly ? 0 : store.receivedParts(dataDir, entry.sha1).length,
+      totalParts: tocOnly ? 0 : total,
       error: '',
     });
-    return { chapters: toc.length, total };
+    return { chapters: toc.length, total, tocOnly };
   }
 
   if (!Array.isArray(payload.chapters) || !payload.chapters.length) throw fail('chapters', '分片里没有章节');
@@ -152,6 +159,16 @@ function acceptPart(dataDir, entry, seq, total, payload) {
     });
   }
   store.markPart(dataDir, entry.sha1, seq);
+
+  // 目录先行（toc-only）收到正文后自动升级
+  if (book.tocOnly) {
+    delete book.tocOnly;
+    book.status = 'partial';
+    book.stats = book.stats || {};
+    book.stats.parts = total;
+    book.updatedAt = Date.now();
+    store.writeBook(dataDir, entry.sha1, book);
+  }
 
   const received = store.receivedParts(dataDir, entry.sha1);
   const complete = received.length >= total;

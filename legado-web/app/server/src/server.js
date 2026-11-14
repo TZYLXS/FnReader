@@ -41,8 +41,17 @@ const APPNAME = process.env.TRIM_APPNAME || 'legado-web';
 const WEB_DIR = path.resolve(process.env.LEGADO_WEB || path.join(__dirname, '..', 'web'));
 const PORT = Number(process.env.TRIM_SERVICE_PORT || process.env.PORT || 1122);
 const APP_DEST = process.env.TRIM_APPDEST || path.join(process.cwd(), 'target');
-const APP_VERSION = process.env.TRIM_APPVER || '1.6.8';
-const BUILD_ID = process.env.TRIM_APPVER || '1.6.8';
+function manifestVersion() {
+  try {
+    const text = fs.readFileSync(path.join(APP_DEST, 'manifest'), 'utf8');
+    const m = /^version=(.+)$/m.exec(text);
+    return m ? m[1].trim() : '';
+  } catch {
+    return '';
+  }
+}
+const APP_VERSION = process.env.TRIM_APPVER || manifestVersion() || '0.0.0';
+const BUILD_ID = APP_VERSION;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -843,7 +852,11 @@ const ebookCtx = {
   token: () => apiToken(),
   log: (...args) => console.log(...args),
   afterScan: async () => {
-    const list = ebookStore.loadIndex(store.dataDir).filter((e) => String(e.format).toLowerCase() === 'txt');
+    const off = ebookBus.ebookMode(store.config) === 'off';
+    if (off) return linkLocalEbooksToShelf();
+    const list = ebookStore
+      .loadIndex(store.dataDir)
+      .filter((e) => String(e.format).toLowerCase() === 'txt' && e.status !== 'toc-only' && e.source !== 'device');
     for (const e of list) {
       try {
         await pythonParseTxtEntry(e);
@@ -1287,7 +1300,7 @@ function linkLocalEbooksToShelf() {
   } catch {
     return 0;
   }
-  const usable = entries.filter((e) => e.status === 'complete' || e.status === 'partial');
+  const usable = entries.filter((e) => e.status === 'complete' || e.status === 'partial' || e.status === 'toc-only');
   if (!usable.length) return 0;
 
   const books = store.books;
@@ -1351,6 +1364,15 @@ function linkLocalEbooksToShelf() {
 async function pythonParseTxtEntry(entry) {
   if (!entry || String(entry.format).toLowerCase() !== 'txt') return false;
   if (entry.parsedBy === 'python' && entry.status === 'complete') return true;
+  if (entry.status === 'toc-only') return false;
+  const cur = (() => {
+    try {
+      return ebookStore.readBook(store.dataDir, entry.sha1);
+    } catch {
+      return null;
+    }
+  })();
+  if (cur && cur.tocOnly) return false;
   const file = entry.file || entry.sourcePath;
   if (!file || !fs.existsSync(file)) return false;
   const text = fs.readFileSync(file, 'utf8');
@@ -1899,6 +1921,42 @@ async function route(req, res, url) {
       return json(res, status, { error: String((e && e.message) || e), code: code || '' });
     }
     return json(res, 200, { ok: true, ...r });
+  }
+
+  // ---- 本地电子书：单章按需回传（toc-only 补章）----
+  if (p === '/api/m/ebook/chapter' && method === 'POST') {
+    if (!checkApiToken(req, url)) return json(res, 401, { error: 'token 无效' });
+    const sha1 = String(searchParams.get('sha1') || '').toLowerCase();
+    const index = Number(searchParams.get('index') || -1);
+    if (!/^[0-9a-f]{40}$/.test(sha1)) return json(res, 400, { error: 'sha1 不合法' });
+    if (!Number.isInteger(index) || index < 0) return json(res, 400, { error: 'index 不合法' });
+    const entry = ebookStore.getEntry(store.dataDir, sha1);
+    if (!entry) return json(res, 404, { error: '没有这本书' });
+    const book = ebookStore.readBook(store.dataDir, sha1);
+    if (!book || !book.toc || index >= book.toc.length) return json(res, 400, { error: '章节号越界' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (e) {
+      return json(res, 400, { error: '请求体不是合法 JSON' });
+    }
+    if (body && body.schema && body.schema !== 'fnreader.ebook.v1') return json(res, 400, { error: 'schema 不匹配', code: 'schema' });
+    const rawParas = Array.isArray(body && body.paragraphs) ? body.paragraphs : [];
+    if (!rawParas.length) return json(res, 400, { error: 'paragraphs 不能为空' });
+    const allowed = new Set(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'quote', 'hr', 'img']);
+    const paragraphs = rawParas
+      .map((x) => ({ k: String((x && x.k) || 'p').toLowerCase(), t: String((x && x.t) || '') }))
+      .filter((x) => allowed.has(x.k) && (x.t || x.k === 'hr'));
+    if (!paragraphs.length) return json(res, 400, { error: '没有合法段落' });
+    ebookStore.writeChapter(store.dataDir, sha1, {
+      schema: 'fnreader.ebook.v1',
+      sha1,
+      index,
+      id: book.toc[index].id,
+      title: String((body && body.title) || book.toc[index].title),
+      paragraphs,
+    });
+    return json(res, 200, { ok: true, index, chapters: book.toc.length });
   }
 
   // ---- 本地电子书：断点续传查询 ----
@@ -3051,14 +3109,26 @@ function saveCover(target, buf, mime) {
     const index = Number(searchParams.get('index') || 0);
     const shelfBookContent = store.findBook(bookUrl);
     if (shelfBookContent && shelfBookContent.localEbook && shelfBookContent.contentSource !== 'source') {
-      const data = ebookRender.content(store.dataDir, shelfBookContent.localEbook.sha1, index);
+      const sha = shelfBookContent.localEbook.sha1;
+      const data = ebookRender.content(store.dataDir, sha, index);
       if (data) return json(res, 200, { ...data, contentSource: 'local' });
+      const local = ebookRender.toc(store.dataDir, sha);
+      if (local && (local.status === 'toc-only' || local.status === 'partial')) {
+        return json(res, 200, { needChapter: index, sha1: sha, status: local.status, via: 'ebook-local-miss' });
+      }
+      return json(res, 404, { error: '章节不存在' });
     }
 
     const ebookShaC = ebookRender.parseUrl(bookUrl);
     if (ebookShaC) {
       const data = ebookRender.content(store.dataDir, ebookShaC, index);
-      if (!data) return json(res, 404, { error: '章节不存在' });
+      if (!data) {
+        const local = ebookRender.toc(store.dataDir, ebookShaC);
+        if (local && (local.status === 'toc-only' || local.status === 'partial')) {
+          return json(res, 200, { needChapter: index, sha1: ebookShaC, status: local.status, via: 'ebook-local-miss' });
+        }
+        return json(res, 404, { error: '章节不存在' });
+      }
       return json(res, 200, data);
     }
     const book = store.findBook(bookUrl);

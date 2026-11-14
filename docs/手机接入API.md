@@ -27,6 +27,7 @@
 | GET | `/api/m/ebook/file/<sha1>` | 下载本地电子书原文件；支持 `Range`（206/416）|
 | POST | `/api/m/ebook/part?sha1=&seq=&total=` | 上传电子书解析分片（明文或 gzip，≤8 MB / 解压后 ≤20 MB）|
 | GET | `/api/m/ebook/parts?sha1=` | 电子书分片断点查询 `{total,received,complete,status,parts}` |
+| POST | `/api/m/ebook/chapter?sha1=&index=` | 单章按需回传（toc-only 模式的补章接口）|
 | GET | `/api/ebook/list` | 本地电子书登记表（sha1/格式/状态/章数）|
 | POST | `/api/ebook/scan` | 立即扫描本地电子书目录 |
 | POST | `/api/ebook/reparse` | 重新解析某本电子书 `{sha1}` |

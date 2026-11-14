@@ -74,7 +74,7 @@ function dispatch(ctx, entry) {
   if (mode === 'off') return;
   const existing = jobsBySha.get(entry.sha1);
   if (existing) return;
-  if (entry.status === 'complete' || entry.status === 'parsing') return;
+  if (entry.status === 'complete' || entry.status === 'parsing' || entry.status === 'toc-only') return;
   // PDF/TXT 手机端不解析，直接本机处理；只有 EPUB/MOBI 才值得走软总线
   if (entry.format !== 'epub' && entry.format !== 'mobi') {
     enqueueLocal(ctx, entry, 'server-format');

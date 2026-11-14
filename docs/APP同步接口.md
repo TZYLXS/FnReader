@@ -285,6 +285,22 @@ App 侧建议：收到 409 时提示「请在网页端确认缓存位置」，�
 客户端错误码约定（`ebook-parse`）：`drm` / `corrupt` / `unsupported` / `kf8-unsupported`
 回传 `ok:false` 后服务端**不做本地兜底**；其它错误（网络、超时、上传失败）服务端会兜底本地解析。
 
+### 8.4.1 本地电子书的两种形态
+
+| 形态 | 客户端行为 | 服务端状态 |
+| --- | --- | --- |
+| 整本解析 | part0 + 正文分片，`total = 1 + N` | `partial` → `complete` |
+| **仅目录先行** | 只传 part0，带 `tocOnly:true`、`total=1` | `toc-only`，正文按需 |
+
+`toc-only` 下 `/api/content` 可能返回 **200 + `needChapter`**（不是正文也不是 404）：
+
+```json
+{"needChapter":5,"sha1":"…","status":"toc-only","via":"ebook-local-miss"}
+```
+
+客户端收到后调 `POST /api/m/ebook/chapter?sha1=&index=` 推送该章，再重新取正文。
+其它形态下 `/api/content` 仍按老约定返回 `{paragraphs:[…]}` 或 404。
+
 ### 8.5 App 侧实现建议
 
 ```text
