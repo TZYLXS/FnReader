@@ -604,4 +604,4 @@ function evalList(ruleStr, ctx, opts = {}) {
   return evalRule(ruleStr, ctx, opts).values;
 }
 
-module.exports = { makeDoc, evalRule, evalString, evalList, parseRule };
+module.exports = { makeDoc, evalRule, evalString, evalList, parseRule, jsonPath };

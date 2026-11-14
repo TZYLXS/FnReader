@@ -19,11 +19,20 @@ function keyOf(book) {
   return name + '|' + author;
 }
 
-/** 评分：章数优先，其次进度、简介、封面 */
+/** 取一本书的章数（目录数组优先，其次各种计数字段） */
+function chaptersOf(book) {
+  if (!book) return 0;
+  if (Array.isArray(book.chapters) && book.chapters.length) return book.chapters.length;
+  return Number(book.totalChapterNum || book.chapterCount || book.numChapter || 0) || 0;
+}
+
+/**
+ * 评分：**章数最多优先**，章数相同才比进度、简介、封面。
+ * 章数权重给到 1e6，确保任何附加分都盖不过「多一章」。
+ */
 function scoreOf(book) {
-  const chapters = (book.chapters && book.chapters.length) || book.totalChapterNum || 0;
   return (
-    chapters * 1000 +
+    chaptersOf(book) * 1000000 +
     (book.cachedDir ? 500 : 0) +
     (Number(book.durChapterIndex) || 0) * 10 +
     (book.intro ? 5 : 0) +
@@ -53,6 +62,9 @@ function mergeTwo(winner, loser) {
     author: winner.author || loser.author || '',
     kind: winner.kind || loser.kind || '',
     lastChapter: winner.lastChapter || loser.lastChapter || '',
+    // 目录：谁章多就用谁的（源站有些书只在某个源是全本）
+    chapters: chaptersOf(loser) > chaptersOf(winner) ? loser.chapters : winner.chapters,
+    totalChapterNum: Math.max(chaptersOf(winner), chaptersOf(loser)),
     altOrigins: alt,
   };
 }
@@ -105,4 +117,4 @@ function dedupeBooks(books) {
   return { list: next, kept: next.length, removed, changed };
 }
 
-module.exports = { dedupeBooks, keyOf, normText, scoreOf };
+module.exports = { dedupeBooks, keyOf, normText, scoreOf, chaptersOf };

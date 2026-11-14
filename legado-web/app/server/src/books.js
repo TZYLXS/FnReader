@@ -1,7 +1,7 @@
 'use strict';
 // 书源模型与抓取流程：搜索 / 详情 / 目录 / 正文
 const { request, absoluteUrl, htmlToParagraphs } = require('./util');
-const { makeDoc, evalString, evalRule } = require('./rules');
+const { makeDoc, evalString, evalRule, jsonPath } = require('./rules');
 const { runJs } = require('./jsrules');
 const searchCache = require('./searchcache');
 const { fixChapterOrder, normalizeChapterList } = require('./chapter-order');
@@ -280,7 +280,23 @@ async function getBookInfo(source, book, opts = {}) {
   }
   const cover = get(rule.coverUrl);
   if (cover) patch.coverUrl = absoluteUrl(resp.url, cover);
-  const tocUrl = get(rule.tocUrl);
+
+  // tocUrl 里可能有 {{$.field}} 模板（QQ阅读这类接口书源），要用详情页 JSON 填值
+  const fillTpl = (text) =>
+    String(text || '').replace(/\{\{\s*\$([^{}]*?)\s*\}\}/g, (m, expr) => {
+      const key = expr.replace(/^\./, '');
+      if (!key) return '';
+      try {
+        const v = jsonPath(ctx.json, key)[0];
+        if (v === undefined || v === null) return m;
+        return typeof v === 'object' ? JSON.stringify(v) : String(v);
+      } catch {
+        return m;
+      }
+    });
+
+  const rawTocUrl = fillTpl(get(rule.tocUrl));
+  const tocUrl = rawTocUrl && !/\{\{/.test(rawTocUrl) ? rawTocUrl : '';
   const toc = tocUrl ? absoluteUrl(resp.url, tocUrl) : resp.url;
   Object.assign(book, patch, { tocUrl: toc });
   return book;
