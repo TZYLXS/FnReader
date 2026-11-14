@@ -1,5 +1,5 @@
 ﻿appname=legado-web
-version=2.0.10
+version=2.0.11
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=下载目录：支持自定义绝对路径（自动建目录并校验可写），重装/重启后不再因 fnOS 授权变量被清空而回退默认；可选目录会扫描各卷上的可写文件夹
+changelog=安装/更新后引导确认缓存保存位置；确认后自动开启软总线接收任务（未确认时 App 轮询返回 409 提示）；发版脚本改为带 volume 安装并保留数据目录

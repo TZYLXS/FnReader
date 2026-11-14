@@ -143,6 +143,7 @@ async function router() {
   if (path === '/detail') return renderDetail();
   if (path === '/feeds') return renderFeeds();
   if (path === '/downloads') return renderDownloads();
+  if (path === '/setup') return renderSetup();
   if (path.startsWith('/read')) return openReader(params.get('url'), params.get('title'));
   return renderShelf();
 }
@@ -1690,6 +1691,74 @@ function openAddFeed() {
   };
 }
 
+/* ---------------- 安装/更新后的缓存位置确认 ---------------- */
+async function renderSetup() {
+  $('#tabbar').style.display = 'none';
+  view.innerHTML = `
+    <div class="setup-page">
+      <header class="topbar"><h1>先确认缓存保存位置</h1></header>
+      <div class="section">
+        <h3>安装/更新完成</h3>
+        <div class="row"><div class="label">当前版本<div class="desc" id="setup-ver">-</div></div></div>
+        <div class="row" style="display:block">
+          <div class="label">缓存保存位置<div class="desc">App 缓存的章节与图片会存到这个目录下的 cache/</div></div>
+          <input id="setup-dir" style="width:100%;margin-top:8px;font-size:13px" />
+          <div class="desc" id="setup-hint" style="margin-top:6px">确认后自动创建目录并开启软总线（手机端任务接收）。</div>
+        </div>
+        <div class="row" style="display:block">
+          <div class="label">可选目录</div>
+          <select id="setup-pick" style="width:100%;margin-top:8px;font-size:12px"></select>
+        </div>
+      </div>
+      <div class="section">
+        <div class="row">
+          <button class="btn primary" id="setup-ok" style="padding:10px 18px">确认并开启软总线</button>
+        </div>
+      </div>
+    </div>`;
+  let st = {};
+  try {
+    st = await api('/setup');
+  } catch {
+    st = {};
+  }
+  const ver = $('#setup-ver');
+  if (ver) ver.textContent = 'V' + (st.version || APP_VER);
+  const input = $('#setup-dir');
+  if (input) input.value = st.cacheDir || '';
+  const pick = $('#setup-pick');
+  if (pick && st.dirs) {
+    pick.innerHTML = st.dirs
+      .map((d) => `<option value="${esc(d.path)}" ${d.path === st.cacheDir ? 'selected' : ''}>${esc(d.label)} — ${esc(d.path)}</option>`)
+      .join('');
+    pick.onchange = () => {
+      if (input) input.value = pick.value;
+    };
+  }
+  const ok = $('#setup-ok');
+  if (ok) {
+    ok.onclick = async () => {
+      const dir = (input && input.value.trim()) || '';
+      if (!dir) return toast('请填写目录');
+      ok.disabled = true;
+      ok.textContent = '确认中…';
+      try {
+        const r = await api('/setup/confirm', { method: 'POST', body: { cacheDir: dir } });
+        toast('缓存位置已确认，软总线已开启');
+        if (r && r.cacheDir) {
+          const hint = $('#setup-hint');
+          if (hint) hint.textContent = '缓存目录：' + r.cachePath;
+        }
+        setTimeout(() => (location.hash = '#/shelf'), 400);
+      } catch (e) {
+        toast('确认失败：' + e.message);
+        ok.disabled = false;
+        ok.textContent = '确认并开启软总线';
+      }
+    };
+  }
+}
+
 /* ---------------- 已下载 ---------------- */
 function formatSize(bytes) {
   if (!bytes) return '';
@@ -1945,7 +2014,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.10 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.0.11 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -2329,6 +2398,17 @@ document.addEventListener('keydown', (e) => {
     applyConfig(cfg);
   } catch {
     applyConfig({});
+  }
+  // 安装/更新后先让用户确认缓存位置（确认后才放行软总线）
+  try {
+    const st = await api('/setup');
+    if (st && st.needConfirm && !parseHash().params.has('setupskip')) {
+      location.hash = '#/setup';
+      await renderSetup();
+      return;
+    }
+  } catch {
+    /* 老版本服务端没有 /api/setup 时忽略 */
   }
   router();
   maybeShowFirstRunHelp();

@@ -584,6 +584,28 @@ function writeJSON(file, data) {
 }
 
 /** 可选的下载目录：应用数据目录 + 用户在 fnOS 里授权的目录 */
+/**
+ * 安装或更新后是否需要让用户确认缓存保存位置。
+ * 记录确认过的版本：版本变了（更新过）或从未确认过 → 需要确认。
+ */
+function setupState() {
+  const confirmed = String(store.config.setupVersion || '');
+  const cacheDir = resolveDownloadDir();
+  return {
+    needConfirm: confirmed !== APP_VERSION,
+    version: APP_VERSION,
+    confirmedVersion: confirmed,
+    cacheDir,
+    cachePath: path.join(cacheDir, 'cache'),
+    dirs: allowedDownloadDirs(),
+  };
+}
+
+/** 软总线（App 轮询任务）是否已放行 */
+function busEnabled() {
+  return String(store.config.setupVersion || '') === APP_VERSION;
+}
+
 function allowedDownloadDirs() {
   const dirs = [{ label: '应用数据目录（默认）', path: path.join(store.dataDir, 'downloads') }];
   const extra = String(process.env.TRIM_DATA_ACCESSIBLE_PATHS || '')
@@ -2307,6 +2329,7 @@ function saveCover(target, buf, mime) {
     const body = await readJson(req);
     const type = String((body && body.type) || '');
     if (!['search', 'toc', 'content', 'bookinfo', 'rank'].includes(type)) return json(res, 400, { error: '不支持的任务类型' });
+    if (!busEnabled()) return json(res, 409, { error: '请先在网页端确认缓存保存位置', needConfirm: true });
     const wait = Math.min(60000, Number((body && body.waitMs) || 20000));
     const result = await remote.request(type, body.payload || {}, wait);
     if (!result.ok) return json(res, 504, { error: result.error === 'timeout' ? '手机端没有响应' : result.error });
@@ -2418,6 +2441,14 @@ function saveCover(target, buf, mime) {
 
   // 手机端领任务（长轮询：没有任务就等一会儿再返回）
   if (p === '/api/m/remote/pending' && method === 'GET') {
+    // 还没确认缓存位置时，先不让软总线接任务（网页端确认后自动放行）
+    if (!busEnabled()) {
+      return json(res, 409, {
+        error: '请先在网页端确认缓存保存位置',
+        needConfirm: true,
+        setupUrl: '/#/setup',
+      });
+    }
     // 设备报到：id/name/model 由 App 带上来
     remote.hello({
       id: searchParams.get('id') || req.headers['x-device-id'] || '',
@@ -2762,6 +2793,26 @@ function saveCover(target, buf, mime) {
     } catch (e) {
       return json(res, 502, { error: String(e.message || e) });
     }
+  }
+
+  // 初始化引导：安装/更新后确认缓存保存位置
+  if (p === '/api/setup' && method === 'GET') {
+    return json(res, 200, setupState());
+  }
+
+  if (p === '/api/setup/confirm' && method === 'POST') {
+    const body = await readJson(req);
+    const wanted = String((body && body.cacheDir) || '').trim();
+    if (!wanted.startsWith('/')) return json(res, 400, { error: '请填写绝对路径' });
+    try {
+      fs.mkdirSync(path.join(wanted, 'cache'), { recursive: true });
+    } catch {
+      /* 下面再判可写 */
+    }
+    if (!isWritableDir(wanted)) return json(res, 400, { error: '目录不可写：' + wanted });
+    store.saveConfig({ downloadDir: wanted, setupVersion: APP_VERSION });
+    events.broadcast({ type: 'setup', action: 'confirmed', cacheDir: wanted });
+    return json(res, 200, { ok: true, ...setupState() });
   }
 
   if (p === '/api/download/dirs' && method === 'GET') {
