@@ -69,7 +69,13 @@ function mergeInto(srcDir, dstDir) {
       } else {
         try {
           fs.mkdirSync(path.dirname(to), { recursive: true });
-          if (!fs.existsSync(to)) fs.copyFileSync(from, to);
+          if (fs.existsSync(to)) return;
+          try {
+            fs.renameSync(from, to);
+          } catch {
+            fs.copyFileSync(from, to);
+            fs.unlinkSync(from);
+          }
         } catch {
           /* ignore */
         }
@@ -103,7 +109,10 @@ async function dedupeCache(root) {
   const groups = new Map();
   for (const dir of dirs) {
     const meta = readMeta(dir);
-    const key = (meta && meta.bookUrl) || canonicalName(path.basename(dir));
+    const title = canonicalName((meta && meta.name) || path.basename(dir)).trim();
+    const author = String((meta && meta.author) || '').trim();
+    // 书名（去掉「(2)」后缀）+ 作者相同即视为同一本，跨书源也合并
+    const key = title + '|' + author;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(dir);
   }
