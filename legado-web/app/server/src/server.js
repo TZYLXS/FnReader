@@ -842,7 +842,17 @@ const ebookCtx = {
   remote,
   token: () => apiToken(),
   log: (...args) => console.log(...args),
-  afterScan: () => linkLocalEbooksToShelf(),
+  afterScan: async () => {
+    const list = ebookStore.loadIndex(store.dataDir).filter((e) => String(e.format).toLowerCase() === 'txt');
+    for (const e of list) {
+      try {
+        await pythonParseTxtEntry(e);
+      } catch (err) {
+        console.log('[legado-web] TXT Python 分章失败：' + (err.message || err));
+      }
+    }
+    return linkLocalEbooksToShelf();
+  },
 };
 
 function checkApiToken(req, url) {
@@ -1265,8 +1275,10 @@ function normBookName(s) {
 }
 
 /**
- * 扫描到本地电子书后，把书架上同名的书切到 ebook://<sha1>，不再走缓存/网文源。
- * 保留阅读进度；如果书架里已经有同一本 ebook，则删掉旧条目而不是重复。
+ * 扫描到本地电子书后，给书架上同名的书挂一个「本地副本」：
+ * - 不改 bookUrl、不删 cachedDir、不动 .nb 缓存
+ * - 只记录 localEbook={sha1,format} 与 contentSource（默认 local）
+ * - 阅读页可在「本地TXT / 网文源」之间切换
  */
 function linkLocalEbooksToShelf() {
   let entries = [];
@@ -1280,64 +1292,110 @@ function linkLocalEbooksToShelf() {
 
   const books = store.books;
   let changed = 0;
-
   for (const e of usable) {
     const key = normBookName(e.name);
     if (!key) continue;
-    const ebookUrl = 'ebook://' + e.sha1;
-    const alreadyIdx = books.findIndex((b) => b.bookUrl === ebookUrl);
-    const targets = books
-      .map((b, i) => ({ b, i }))
-      .filter((x) => !String(x.b.bookUrl).startsWith('ebook://') && normBookName(x.b.name) === key);
-
-    // 书架里已有这本 ebook：把旧的网文条目删掉
-    if (alreadyIdx >= 0) {
-      if (!targets.length) continue;
-      for (const t of targets.reverse()) {
-        books.splice(t.i, 1);
-        changed++;
-      }
-      continue;
+    for (const b of books) {
+      if (String(b.bookUrl).startsWith('ebook://')) continue;
+      if (normBookName(b.name) !== key) continue;
+      const cur = b.localEbook || {};
+      if (cur.sha1 === e.sha1) continue;
+      b.localEbook = { sha1: e.sha1, format: e.format, name: e.name, status: e.status };
+      b.contentSource = 'local';
+      changed++;
     }
-    if (!targets.length) continue;
+  }
 
-    const first = targets[0];
-    const old = first.b;
+  // 扫描到、但书架里还没有的电子书：直接作为新条目加入书架
+  const shelfUrls = new Set(books.map((b) => b.bookUrl));
+  for (const e of usable) {
+    const ebookUrl = 'ebook://' + e.sha1;
+    if (shelfUrls.has(ebookUrl)) continue;
+    const matched = books.some((b) => normBookName(b.name) === normBookName(e.name));
+    if (matched) continue;
     const toc = ebookRender.toc(store.dataDir, e.sha1) || { chapters: [] };
     const chapters = toc.chapters || [];
-    const keepIdx = Math.max(0, Math.min(Number(old.durChapterIndex) || 0, Math.max(0, chapters.length - 1)));
-    books[first.i] = {
-      ...old,
+    const meta = (toc && toc.meta) || {};
+    books.push({
+      name: e.name,
+      author: meta.author || '',
       bookUrl: ebookUrl,
       tocUrl: ebookUrl,
       origin: 'local-ebook',
       originName: '本地电子书',
-      cachedDir: '',
+      coverUrl: '',
+      intro: meta.description || '',
       chapters,
       totalChapterNum: chapters.length,
-      durChapterIndex: keepIdx,
-      durChapterTitle: chapters[keepIdx] ? chapters[keepIdx].title : old.durChapterTitle || '',
-      lastChapter: chapters.length ? chapters[chapters.length - 1].title : old.lastChapter || '',
+      durChapterIndex: 0,
+      durChapterTitle: chapters[0] ? chapters[0].title : '',
+      lastChapter: chapters.length ? chapters[chapters.length - 1].title : '',
       tocVia: 'ebook',
-      intro: old.intro || (toc.meta && toc.meta.description) || old.intro || '',
-    };
+      contentSource: 'local',
+      cachedDir: '',
+      addedAt: Date.now(),
+    });
+    shelfUrls.add(ebookUrl);
     changed++;
-    // 同名的其它重复条目一并删掉
-    for (const t of targets.slice(1).reverse()) {
-      books.splice(t.i, 1);
-      changed++;
-    }
   }
 
   if (changed) {
     store.saveBooks(books);
     events.broadcast({ type: 'shelf', action: 'local-ebook', count: changed });
-    console.log(`[legado-web] 本地电子书联动书架：${changed} 条`);
+    console.log(`[legado-web] 本地电子书同步书架：${changed} 项`);
   }
   return changed;
 }
 
-/** 本地电子书登记表里找同名书（本地有就不同步客户端缓存） */
+/** TXT 用本地 Python 引擎分章后写进 ebook 目录（只做一次），供 /api/toc 与 /api/content 直读 */
+async function pythonParseTxtEntry(entry) {
+  if (!entry || String(entry.format).toLowerCase() !== 'txt') return false;
+  if (entry.parsedBy === 'python' && entry.status === 'complete') return true;
+  const file = entry.file || entry.sourcePath;
+  if (!file || !fs.existsSync(file)) return false;
+  const text = fs.readFileSync(file, 'utf8');
+  const r = await pyengine.call('txt', { name: entry.name, text }, 120000);
+  const chapters = r.chapters || [];
+  if (!chapters.length) return false;
+  const toc = chapters.map((c, i) => ({ id: 'ch' + String(i + 1).padStart(4, '0'), title: c.title, level: 1, index: i }));
+  ebookStore.writeBook(store.dataDir, entry.sha1, {
+    schema: 'fnreader.ebook.v1',
+    sha1: entry.sha1,
+    format: 'txt',
+    name: entry.name,
+    meta: { title: entry.name, author: '', language: 'zh' },
+    toc,
+    stats: { chapters: toc.length, parts: 1, chars: r.chars || 0 },
+    source: 'server',
+    status: 'complete',
+    parsedBy: 'python',
+    updatedAt: Date.now(),
+  });
+  for (const c of chapters) {
+    ebookStore.writeChapter(store.dataDir, entry.sha1, {
+      index: c.index,
+      id: toc[c.index].id,
+      title: c.title,
+      paragraphs: (c.paragraphs || []).map((t) => ({ k: 'p', t })),
+    });
+  }
+  ebookStore.upsertEntry(store.dataDir, {
+    sha1: entry.sha1,
+    status: 'complete',
+    source: 'server',
+    parsedBy: 'python',
+    chapters: toc.length,
+  });
+  return true;
+}
+
+function normBookName(s) {
+  return String(s || '')
+    .replace(/[《》「」【】\[\]()（）]/g, '')
+    .replace(/\s+/g, '')
+    .toLowerCase();
+}
+
 function localEbookByName(name) {
   const target = normBookName(name);
   if (!target) return null;
@@ -2960,6 +3018,15 @@ function saveCover(target, buf, mime) {
 
   if (p === '/api/toc' && method === 'GET') {
     const bookUrl = searchParams.get('url');
+    // 书架书挂了本地副本（localEbook）且当前用本地内容 → 直接读 JSON
+    const shelfBookToc = store.findBook(bookUrl);
+    if (shelfBookToc && shelfBookToc.localEbook && shelfBookToc.contentSource !== 'source') {
+      const data = ebookRender.toc(store.dataDir, shelfBookToc.localEbook.sha1);
+      if (data) {
+        return json(res, 200, { ...data, localEbook: shelfBookToc.localEbook, contentSource: 'local' });
+      }
+    }
+
     // 本地电子书：只读引擎产出的 JSON，不再解析原文件
     const ebookSha = ebookRender.parseUrl(bookUrl);
     if (ebookSha) {
@@ -2982,6 +3049,12 @@ function saveCover(target, buf, mime) {
   if (p === '/api/content' && method === 'GET') {
     const bookUrl = searchParams.get('url');
     const index = Number(searchParams.get('index') || 0);
+    const shelfBookContent = store.findBook(bookUrl);
+    if (shelfBookContent && shelfBookContent.localEbook && shelfBookContent.contentSource !== 'source') {
+      const data = ebookRender.content(store.dataDir, shelfBookContent.localEbook.sha1, index);
+      if (data) return json(res, 200, { ...data, contentSource: 'local' });
+    }
+
     const ebookShaC = ebookRender.parseUrl(bookUrl);
     if (ebookShaC) {
       const data = ebookRender.content(store.dataDir, ebookShaC, index);
@@ -3095,6 +3168,20 @@ function saveCover(target, buf, mime) {
     } catch (e) {
       return json(res, 502, { error: String(e.message || e) });
     }
+  }
+
+  // 阅读页切换「本地副本 / 网文源」
+  if (p === '/api/books/content-source' && method === 'POST') {
+    const body = await readJson(req);
+    const bookUrl = String((body && body.url) || '');
+    const source = String((body && body.source) || '').toLowerCase();
+    if (!['local', 'source'].includes(source)) return json(res, 400, { error: 'source 只能是 local / source' });
+    const book = store.findBook(bookUrl);
+    if (!book) return json(res, 404, { error: '书籍不在书架' });
+    if (!book.localEbook) return json(res, 400, { error: '这本书没有本地副本' });
+    book.contentSource = source;
+    store.saveBooks(store.books);
+    return json(res, 200, { ok: true, source, localEbook: book.localEbook });
   }
 
   // 电子书引擎设置：proxy（默认，手机优先）/ local（仅本机）/ off

@@ -980,6 +980,11 @@ function renderReaderShell() {
       <header class="reader-head" id="reader-head">
         <button class="icon-btn" id="back">‹</button>
         <div class="title" id="book-title">${esc(book.name)}</div>
+        ${
+          book.localEbook
+            ? `<button class="icon-btn" id="toggle-local" title="切换本地副本 / 网文源">${book.contentSource === 'source' ? '本' : '网'}</button>`
+            : ''
+        }
         <button class="icon-btn" id="switch-src" title="换源">⇄</button>
         <button class="icon-btn" id="catalog">☰</button>
         <button class="icon-btn" id="reader-settings">Aa</button>
@@ -1006,6 +1011,23 @@ function renderReaderShell() {
     </div>`;
 
   $('#back').onclick = () => (location.hash = '#/shelf');
+  const toggleLocal = $('#toggle-local');
+  if (toggleLocal) {
+    toggleLocal.onclick = async () => {
+      const r = state.reader;
+      if (!r || !r.book.localEbook) return;
+      const next = r.book.contentSource === 'source' ? 'local' : 'source';
+      const title = r.chapters[r.index] ? r.chapters[r.index].title : '';
+      try {
+        await api('/books/content-source', { method: 'POST', body: { url: r.book.bookUrl, source: next } });
+        r.book.contentSource = next;
+        toast(next === 'local' ? '已切到本地副本' : '已切回网文源');
+        await openReader(r.book.bookUrl, title);
+      } catch (e) {
+        toast('切换失败：' + e.message);
+      }
+    };
+  }
   $('#switch-src').onclick = openSwitchSource;
   $('#catalog').onclick = toggleDrawer;
   $('#drawer-mask').onclick = toggleDrawer;
@@ -2040,7 +2062,7 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.2.3 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.2.4 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
