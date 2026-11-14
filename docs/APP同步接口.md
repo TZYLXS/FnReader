@@ -265,6 +265,7 @@ App 侧建议：收到 409 时提示「请在网页端确认缓存位置」，�
 | 客户端只有 TXT | 请求体 `format:"txt"` + `text` | 服务端用本地 Python 引擎分章，响应带 `"via":"local-txt"` |
 | 常规 | 其它 | 原行为，`"via":"legado"` |
 
+- 上传接口只收**裸 body**，不支持 `multipart/form-data`（`curl -F` 会 400 `code:"multipart"`）
 - 想强制同步：请求体带 `skipIfLocal:false`
 - TXT 分章失败返回 502 `本地 TXT 解析失败：…`，客户端可回退传 `.nb`
 
@@ -278,8 +279,9 @@ App 侧建议：收到 409 时提示「请在网页端确认缓存位置」，�
 | `bookinfo` | `{bookUrl, source, name, author}` | `{intro, coverUrl, wordCount}`：补简介/封面/字数；失败回 `ok:false` 时服务端回落本机抓取 |
 | `rank` | `{url}` | `{books: [{name, author, bookUrl, coverUrl, intro}]}`：榜单页地址，如 `https://www.qidian.com/rank/recom/` |
 | `ebook-parse` | `{sha1, name, format, size, fileUrl, token, schema, partMaxBytes}` | `{chapters, parts, chars}`：本地电子书分片解析，见 `电子书解析引擎接入.md` |
+| `ebook-chapter` | `{sha1, index, name, format, fileUrl, token, schema}` | `{title, paragraphs:[{k,t}]}`：toc-only/partial 书缺章时由服务端发起，客户端用原文件取该章回传 |
 
-以上 6 种是 `/api/remote/job` 与软总线白名单内的合法类型，其它 type 建任务时直接返回
+以上 7 种是 `/api/remote/job` 与软总线白名单内的合法类型，其它 type 建任务时直接返回
 400「不支持的任务类型」。其中 `ebook-parse` 的等待上限单独放宽到 **240 秒**（其它类型 60 秒）。
 
 客户端错误码约定（`ebook-parse`）：`drm` / `corrupt` / `unsupported` / `kf8-unsupported`

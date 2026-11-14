@@ -1309,6 +1309,99 @@ function normBookName(s) {
  * - 只记录 localEbook={sha1,format} 与 contentSource（默认 local）
  * - 阅读页可在「本地TXT / 网文源」之间切换
  */
+/**
+ * 缺章时向在线设备要这一章：建 ebook-chapter 任务，等客户端回传 paragraphs。
+ * 返回 { ok, paragraphs } ；失败/超时返回 { ok:false }
+ */
+async function requestChapterFromDevice(sha1, index, waitMs = 20000) {
+  const entry = ebookStore.getEntry(store.dataDir, sha1);
+  if (!entry) return { ok: false, error: 'no-entry' };
+  const devices = remote.listDevices().filter((d) => d.online && d.enabled !== false);
+  if (!devices.length) return { ok: false, error: 'no-device' };
+  const payload = {
+    schema: 'fnreader.ebook.v1',
+    sha1,
+    index,
+    name: entry.name,
+    format: entry.format,
+    fileUrl: `/api/m/ebook/file/${sha1}`,
+    token: apiToken(),
+  };
+  const r = await remote.request('ebook-chapter', payload, waitMs).catch(() => ({ ok: false, error: 'timeout' }));
+  if (!r.ok || !r.data) return { ok: false, error: r.error || 'failed' };
+  const paragraphs = Array.isArray(r.data.paragraphs) ? r.data.paragraphs : [];
+  const title = String(r.data.title || '');
+  if (!paragraphs.length) return { ok: false, error: 'empty' };
+  try {
+    const book = ebookStore.readBook(store.dataDir, sha1);
+    const tocTitle = (book && book.toc && book.toc[index] && book.toc[index].title) || title || `第 ${index + 1} 章`;
+    ebookStore.writeChapter(store.dataDir, sha1, {
+      schema: 'fnreader.ebook.v1',
+      sha1,
+      index,
+      id: (book && book.toc && book.toc[index] && book.toc[index].id) || `ch${String(index + 1).padStart(4, '0')}`,
+      title: tocTitle,
+      paragraphs: paragraphs.map((p) => ({ k: String((p && p.k) || 'p').slice(0, 8), t: String((p && p.t) || '') })),
+    });
+  } catch {
+    /* 落盘失败也不影响本次返回 */
+  }
+  return { ok: true, paragraphs, title };
+}
+
+/** 删除一本本地电子书：登记表 + 解析产物 + 原文件副本（可选原文件） + 书架引用 */
+function deleteEbookEntry(sha1, opts = {}) {
+  const entry = ebookStore.getEntry(store.dataDir, sha1);
+  if (!entry) return { ok: false, code: 404, error: '没有这本书' };
+
+  try {
+    ebookStore.removeEntry(store.dataDir, sha1);
+  } catch {
+    /* ignore */
+  }
+  try {
+    fs.rmSync(ebookStore.bookDir(store.dataDir, sha1), { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+  if (entry.file) {
+    try {
+      fs.rmSync(entry.file, { force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+  if (opts.file && entry.sourcePath) {
+    try {
+      fs.rmSync(entry.sourcePath, { force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 书架联动：删掉 ebook:// 条目，把挂了本地副本的网文书改回网文源
+  const books = store.books;
+  const before = books.length;
+  const kept = [];
+  let reverted = 0;
+  for (const b of books) {
+    if (b.bookUrl === 'ebook://' + sha1) continue;
+    if (b.localEbook && b.localEbook.sha1 === sha1) {
+      delete b.localEbook;
+      if (b.ebookFormat) delete b.ebookFormat;
+      b.contentSource = 'source';
+      reverted++;
+    }
+    kept.push(b);
+  }
+  const removedShelf = before - kept.length;
+  if (removedShelf || reverted) {
+    store.saveBooks(kept);
+    events.broadcast({ type: 'shelf', action: 'ebook-deleted', sha1, removedShelf, reverted });
+  }
+  return { ok: true, sha1, name: entry.name, removedShelf, reverted, deletedSource: !!(opts.file && entry.sourcePath) };
+}
+
 function linkLocalEbooksToShelf() {
   let entries = [];
   try {
@@ -1332,6 +1425,15 @@ function linkLocalEbooksToShelf() {
       b.localEbook = { sha1: e.sha1, format: e.format, name: e.name, status: e.status };
       b.ebookFormat = e.format;
       b.contentSource = 'local';
+      changed++;
+    }
+  }
+
+  // 回填老的 ebook:// 条目的 ebookFormat
+  const fmtByeSha = new Map(usable.map((e) => ['ebook://' + e.sha1, e.format]));
+  for (const b of books) {
+    if (!b.ebookFormat && fmtByeSha.has(b.bookUrl)) {
+      b.ebookFormat = fmtByeSha.get(b.bookUrl);
       changed++;
     }
   }
@@ -1943,16 +2045,54 @@ async function route(req, res, url) {
     return json(res, 200, { ok: true, ...r });
   }
 
+  // ---- 删除本地电子书：DELETE /api/ebook/delete?sha1=&file=1 ----
+  if (p === '/api/ebook/delete' && (method === 'DELETE' || method === 'POST')) {
+    let sha1 = String(searchParams.get('sha1') || '').toLowerCase();
+    let withFile = searchParams.get('file') === '1';
+    if (!sha1 && method === 'POST') {
+      const body = await readJson(req).catch(() => ({}));
+      sha1 = String((body && body.sha1) || '').toLowerCase();
+      withFile = !!(body && body.file);
+    }
+    // 批量清理：?missing=1 删掉所有「原目录里已不存在」的条目
+    if (searchParams.get('missing') === '1') {
+      const list = ebookStore.loadIndex(store.dataDir).filter((e) => e.status === 'missing');
+      const result = list.map((e) => deleteEbookEntry(e.sha1, { file: false }));
+      return json(res, 200, { ok: true, cleaned: result.length, items: result.map((r) => r.sha1) });
+    }
+    if (!/^[0-9a-f]{40}$/.test(sha1)) return json(res, 400, { error: 'sha1 不合法' });
+    const r = deleteEbookEntry(sha1, { file: withFile });
+    return json(res, r.ok ? 200 : r.code || 400, r);
+  }
+
+  // ---- 客户端删除（带 X-Api-Token 的同一能力）----
+  if (p === '/api/m/ebook/delete' && method === 'POST') {
+    const body = await readJson(req).catch(() => ({}));
+    const sha1 = String((body && body.sha1) || '').toLowerCase();
+    if (!/^[0-9a-f]{40}$/.test(sha1)) return json(res, 400, { error: 'sha1 不合法' });
+    const r = deleteEbookEntry(sha1, { file: !!(body && body.file) });
+    return json(res, r.ok ? 200 : r.code || 400, r);
+  }
+
   // ---- 客户端传书：POST /api/m/ebook/upload?name=xxx.pdf ----
   if (p === '/api/m/ebook/upload' && method === 'POST') {
     if (store.config.uploadEnabled === false) return json(res, 403, { error: '服务端已关闭客户端传书' });
     if (!checkUploadToken(req, url)) {
       return json(res, 401, { error: '上传令牌无效，请在「设置 → 手机接入」查看上传令牌', code: 'upload-token' });
     }
+    const ctype = String(req.headers['content-type'] || '').toLowerCase();
+    if (ctype.includes('multipart/form-data')) {
+      return json(res, 400, {
+        error: '不支持 multipart/form-data，请用裸 body 上传（--data-binary，文件名放 ?name=）',
+        code: 'multipart',
+      });
+    }
     const rawName = String(searchParams.get('name') || '').trim();
     const ext = path.extname(rawName).toLowerCase();
     const format = UPLOAD_FORMATS[ext];
-    if (!rawName || !format) return json(res, 400, { error: '只支持 pdf / mobi / azw3 / epub / txt', code: 'format' });
+    if (!rawName || !format) {
+      return json(res, 400, { error: '只支持 pdf / mobi / prc / azw / azw3 / epub / txt', code: 'format' });
+    }
 
     const safeName =
       path.basename(rawName).replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 120) || `upload${ext}`;
@@ -2802,7 +2942,26 @@ function saveCover(target, buf, mime) {
     ensureTombstone();
     dedupeShelf();
     const books = [...store.books].sort((a, b) => (b.durChapterTime || 0) - (a.durChapterTime || 0));
-    return json(res, 200, { books: books.map(sanitizeBook) });
+    // 老版本入库的 ebook:// 条目没有 ebookFormat，这里按登记表补上（前端据此显示「文/图」按钮）
+    let fmtMap = null;
+    const needFmt = books.some((b) => String(b.bookUrl).startsWith('ebook://') && !b.ebookFormat);
+    if (needFmt) {
+      try {
+        fmtMap = new Map(ebookStore.loadIndex(store.dataDir).map((e) => [e.sha1, e.format]));
+      } catch {
+        fmtMap = new Map();
+      }
+    }
+    const enriched = books.map((b) => {
+      let out = b;
+      if (fmtMap) {
+        const sha = ebookRender.parseUrl(b.bookUrl);
+        if (sha && !b.ebookFormat && fmtMap.get(sha)) out = { ...b, ebookFormat: fmtMap.get(sha) };
+      }
+      if (!out.ebookFormat && out.localEbook && out.localEbook.format) out = { ...out, ebookFormat: out.localEbook.format };
+      return sanitizeBook(out);
+    });
+    return json(res, 200, { books: enriched });
   }
 
   // 换源：按书名再搜一遍，返回其它书源的同名书
@@ -2885,7 +3044,7 @@ function saveCover(target, buf, mime) {
   if (p === '/api/remote/job' && method === 'POST') {
     const body = await readJson(req);
     const type = String((body && body.type) || '');
-    if (!['search', 'toc', 'content', 'bookinfo', 'rank', 'ebook-parse'].includes(type)) {
+    if (!['search', 'toc', 'content', 'bookinfo', 'rank', 'ebook-parse', 'ebook-chapter'].includes(type)) {
       return json(res, 400, { error: '不支持的任务类型' });
     }
     if (!busEnabled()) return json(res, 409, { error: '请先在网页端确认缓存保存位置', needConfirm: true });
@@ -3267,7 +3426,19 @@ function saveCover(target, buf, mime) {
       const shaP = ebookRender.parseUrl(bookUrl) || (store.findBook(bookUrl) && store.findBook(bookUrl).localEbook && store.findBook(bookUrl).localEbook.sha1) || '';
       const count = shaP ? ebookPages.pageCount(store.dataDir, shaP) : 0;
       if (!shaP) return json(res, 404, { error: '不是本地电子书' });
-      if (!count) return json(res, 409, { error: '原页还没渲染', sha1: shaP, needPages: true, rendering: ebookPages.isRendering(shaP) });
+      if (!count) {
+        // 客户端要原页但还没渲染：直接开始渲染，返回 409 + needPages 让前端轮询
+        const entryP = ebookStore.getEntry(store.dataDir, shaP);
+        let rendering = ebookPages.isRendering(shaP);
+        if (entryP && entryP.file) {
+          ebookPages
+            .renderPages(store.dataDir, shaP, entryP.file, { dpi: 100 })
+            .then((r) => events.broadcast({ type: 'ebook-pages', sha1: shaP, count: r.count }))
+            .catch((e) => console.error('[legado-web] PDF 原页渲染失败:', e.message));
+          rendering = true;
+        }
+        return json(res, 409, { error: '原页还没渲染', sha1: shaP, needPages: true, rendering });
+      }
       if (index < 0 || index >= count) return json(res, 404, { error: '页号越界' });
       return json(res, 200, {
         title: `第 ${index + 1} 页`,
@@ -3288,6 +3459,12 @@ function saveCover(target, buf, mime) {
       if (data) return json(res, 200, { ...data, contentSource: 'local' });
       const local = ebookRender.toc(store.dataDir, sha);
       if (local && (local.status === 'toc-only' || local.status === 'partial')) {
+        // 先让在线设备补这一章（App 有原文件，能按 index 取章）
+        const got = await requestChapterFromDevice(sha, index, 20000);
+        if (got.ok) {
+          const data2 = ebookRender.content(store.dataDir, sha, index);
+          if (data2) return json(res, 200, { ...data2, contentSource: 'local', deviceFetched: true });
+        }
         return json(res, 200, { needChapter: index, sha1: sha, status: local.status, via: 'ebook-local-miss' });
       }
       return json(res, 404, { error: '章节不存在' });
@@ -3299,6 +3476,11 @@ function saveCover(target, buf, mime) {
       if (!data) {
         const local = ebookRender.toc(store.dataDir, ebookShaC);
         if (local && (local.status === 'toc-only' || local.status === 'partial')) {
+          const got = await requestChapterFromDevice(ebookShaC, index, 20000);
+          if (got.ok) {
+            const data2 = ebookRender.content(store.dataDir, ebookShaC, index);
+            if (data2) return json(res, 200, { ...data2, deviceFetched: true });
+          }
           return json(res, 200, { needChapter: index, sha1: ebookShaC, status: local.status, via: 'ebook-local-miss' });
         }
         return json(res, 404, { error: '章节不存在' });

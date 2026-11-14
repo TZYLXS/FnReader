@@ -29,6 +29,8 @@
 | GET | `/api/m/ebook/parts?sha1=` | 电子书分片断点查询 `{total,received,complete,status,parts}` |
 | POST | `/api/m/ebook/chapter?sha1=&index=` | 单章按需回传（toc-only 模式的补章接口）|
 | POST | `/api/m/ebook/upload?name=` | 客户端传书（pdf/mobi/azw3/epub/txt），用 `X-Upload-Token` 鉴权 |
+| POST | `/api/m/ebook/delete` | 删除本地电子书 `{sha1, file?}`（带 `X-Api-Token`）|
+| DELETE | `/api/ebook/delete?sha1=` | 管理端删除（`&file=1` 连原文件；`&missing=1` 批量清理失效条目）|
 | GET | `/api/ebook/upload` | 查询传书配置与上传令牌 |
 | POST | `/api/ebook/upload/reset-token` | 重置上传令牌 |
 | POST | `/api/ebook/pages` | 触发 PDF 原页渲染 `{sha1,dpi?}` |

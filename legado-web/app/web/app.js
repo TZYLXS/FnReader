@@ -1098,22 +1098,39 @@ async function loadChapter(index) {
 
   let data;
   if (r.pageMode) {
-    data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}&mode=page`).catch((e) => ({ error: e.message }));
-    if (data && data.needPages) {
-      const sha = data.sha1;
-      article.innerHTML = `<div class="loading"><span class="spinner"></span> 正在渲染原页（PDF 图表）…</div>`;
-      await api('/ebook/pages', { method: 'POST', body: { sha1: sha } }).catch(() => {});
-      for (let i = 0; i < 120; i++) {
+    const pageUrl = () => `./api/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}&mode=page`;
+    const fetchPage = async () => {
+      const resp = await fetch(pageUrl());
+      let body = {};
+      try {
+        body = await resp.json();
+      } catch {
+        body = {};
+      }
+      return { status: resp.status, body };
+    };
+    let got = await fetchPage();
+    if (got.status === 409 && got.body.needPages) {
+      const sha = got.body.sha1;
+      article.innerHTML = `<div class="loading"><span class="spinner"></span> 正在渲染原页（PDF 图表）…<div class="desc" id="page-progress" style="margin-top:8px"></div></div>`;
+      // 服务端已经在渲染；这里只等待，必要时再补一次触发
+      for (let i = 0; i < 300; i++) {
         await new Promise((res) => setTimeout(res, 2000));
         const st = await api('/ebook/pages?sha1=' + encodeURIComponent(sha)).catch(() => null);
+        const tip = $('#page-progress');
+        if (st && tip) tip.textContent = st.ready ? `已渲染 ${st.count} 页` : '渲染中…（首次约 1–2 分钟）';
         if (st && st.ready) break;
-        if (st && !st.rendering && !st.ready) {
-          article.innerHTML = `<div class="loading">原页渲染失败</div>`;
+        if (i === 3 && st && !st.rendering && !st.ready) {
+          await api('/ebook/pages', { method: 'POST', body: { sha1: sha } }).catch(() => {});
+        }
+        if (i > 12 && st && !st.rendering && !st.ready) {
+          article.innerHTML = `<div class="loading">原页渲染失败（可在设置里查看日志）</div>`;
           return;
         }
       }
-      data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}&mode=page`).catch((e) => ({ error: e.message }));
+      got = await fetchPage();
     }
+    data = got.status === 200 ? got.body : { error: got.body.error || `请求失败 (${got.status})` };
   } else {
     data = await api(`/content?url=${encodeURIComponent(r.book.bookUrl)}&index=${index}`).catch((e) => ({ error: e.message }));
   }
