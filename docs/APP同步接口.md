@@ -226,6 +226,26 @@ POST /api/m/remote/result?token=…
 
 失败时传 `{ "ok": false, "error": "解析失败原因" }`。
 
+### 8.3.1 前置门槛：先确认缓存位置（2.1.0 起）
+
+服务端在**安装 / 每次升级后**会要求网页端确认缓存保存位置，确认之前软总线是关闭的：
+
+```http
+GET /api/m/remote/pending          → 409
+{"error":"请先在网页端确认缓存保存位置","needConfirm":true,"setupUrl":"/#/setup"}
+```
+
+网页端确认接口：
+
+```http
+GET  /api/setup                    → {needConfirm, version, confirmedVersion, cacheDir, cachePath, dirs}
+POST /api/setup/confirm {"cacheDir":"/vol1/1000/Books"}
+     → {ok:true, needConfirm:false, ...}
+```
+
+确认后写入 `downloadDir` 与 `setupVersion=当前版本`，`/api/m/remote/pending` 与 `/api/remote/job` 立即恢复 200。
+App 侧建议：收到 409 时提示「请在网页端确认缓存位置」，并降低轮询频率（如 30s 一次）。
+
 ### 8.4 任务类型
 
 | type | payload | data 约定 |

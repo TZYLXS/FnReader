@@ -12,6 +12,8 @@
 | GET | `/api/m/info` | 应用版本与可用接口列表 |
 | GET | `/api/m/shelf` | 书架列表（按最近阅读排序）|
 | GET | `/api/m/search?key=&group=&limit=` | 跨书源搜索（默认 8 个源，最多 30）|
+| GET | `/api/m/remote/pending` | App 领任务；**未确认缓存位置时返回 409**（见 `APP同步接口.md` 8.3.1）|
+| GET | `/api/setup` | 查询是否需要确认缓存位置 |
 | GET | `/api/m/toc?url=` | 目录 |
 | GET | `/api/m/content?url=&index=` | 正文（paragraphs 数组）|
 | POST | `/api/m/progress` | 保存进度 `{bookUrl,index,pos,title}` |
@@ -55,6 +57,7 @@ curl -H "X-Api-Token: $TOKEN" "$BASE/api/m/content?url=<bookUrl>&index=0"
 - 书源 JSON：`GET /api/m/booksource?token=…`
 - 导入链接：`legado://import/bookSource?src=<上面这个地址（URL 编码）>`
 - 搜索：`/api/m/legado/search` → `{"books":[{name,author,kind,intro,lastChapter,coverUrl,bookUrl}]}`
+- 网页端搜索默认跳过正版接口源（起点 / QQ阅读 / 掌阅 / 番茄 / 七猫等）；手机 API 的搜索不受此限制
 - 详情：`/api/m/legado/book?u=<b64url(bookUrl)>&s=<b64url(书源地址)>&n=<书名>`，书不在书架时自动 `upsertBook` 入架（`addedBy: "apk"`）
 - 目录：`/api/m/legado/toc?u=<b64url(bookUrl)>`，章节 `url` 直接是 `/api/m/content?url=…&index=i`
 - 正文：复用 `/api/m/content`，返回 `paragraphs` 数组，书源规则为 `$.paragraphs[*]`
