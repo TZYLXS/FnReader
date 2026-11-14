@@ -23,6 +23,30 @@
 | GET | `/api/m/legado/search?key=&page=` | 书源搜索（返回 Legado 规则可直接解析的结构）|
 | GET | `/api/m/legado/book?u=&s=&n=` | 书籍详情，首次打开会自动加入书架 |
 | GET | `/api/m/legado/toc?u=` | 目录，章节地址直指 `/api/m/content` |
+| POST | `/api/m/remote/result` | 回传软总线任务结果 `{id, ok, data\|error}`，见 `APP同步接口.md` 8.3 |
+| GET | `/api/m/ebook/file/<sha1>` | 下载本地电子书原文件；支持 `Range`（206/416）|
+| POST | `/api/m/ebook/part?sha1=&seq=&total=` | 上传电子书解析分片（明文或 gzip，≤8 MB / 解压后 ≤20 MB）|
+| GET | `/api/m/ebook/parts?sha1=` | 电子书分片断点查询 `{total,received,complete,status,parts}` |
+| GET | `/api/ebook/list` | 本地电子书登记表（sha1/格式/状态/章数）|
+| POST | `/api/ebook/scan` | 立即扫描本地电子书目录 |
+| POST | `/api/ebook/reparse` | 重新解析某本电子书 `{sha1}` |
+| GET | `/api/ebook/settings` | 电子书解析模式与统计 `{mode,dir,total,local,device}` |
+| POST | `/api/ebook/settings` | 切换解析模式 `{mode:"proxy"\|"local"\|"off"}` |
+| POST | `/api/cache/dedupe` | 缓存目录去重（合并「书名 (2)(3)…」）|
+
+## 本地电子书（ebook）链路
+
+服务端扫描到 epub/mobi/pdf/txt 后，书会以 `ebook://<sha1>` 形式进入书架；
+`/api/toc`、`/api/content` 对这类 URL 直接返回解析产物（`via="ebook-json"`）。
+
+客户端要参与 EPUB/MOBI 解析时：
+
+1. `GET /api/m/remote/pending` 领到 `type=ebook-parse`；
+2. `GET /api/m/ebook/file/<sha1>` 下载原文件（带 `X-Api-Token`，支持 Range 续传）；
+3. 解析后 `POST /api/m/ebook/part?sha1=&seq=&total=` 逐片上传（part0 是清单）；
+4. `POST /api/m/remote/result {id, ok:true, data:{chapters,parts,chars}}` 收尾。
+
+详细分片结构与错误码见 `电子书解析引擎接入.md` 与 `APP同步接口.md` 8.4。
 
 ## 示例
 

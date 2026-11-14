@@ -215,6 +215,15 @@ GET /api/m/remote/pending?token=…&wait=10000&limit=5
 
 `age` 是任务已等待的毫秒数。
 
+**未确认缓存位置时本接口返回 409**：
+
+```json
+{"error":"请先在网页端确认缓存保存位置","needConfirm":true,"setupUrl":"/#/setup"}
+```
+
+App 应提示用户「请在网页端确认缓存位置」，并把长轮询间隔放宽到 30 秒一次；
+不要把 409 当网络错误做指数退避重试——网页端确认后接口立即恢复 200。
+
 ### 8.3 App 回结果
 
 ```http
@@ -266,6 +275,15 @@ App 侧建议：收到 409 时提示「请在网页端确认缓存位置」，�
 | `search` | `{source, key}` | `{books: [{name,author,bookUrl,coverUrl,intro,kind}]}` |
 | `toc` | `{source, bookUrl}` | `{chapters: [{title,url}]}` |
 | `content` | `{source, chapterUrl}` | `{paragraphs: ["…"]}` |
+| `bookinfo` | `{bookUrl, source, name, author}` | `{intro, coverUrl, wordCount}`：补简介/封面/字数；失败回 `ok:false` 时服务端回落本机抓取 |
+| `rank` | `{url}` | `{books: [{name, author, bookUrl, coverUrl, intro}]}`：榜单页地址，如 `https://www.qidian.com/rank/recom/` |
+| `ebook-parse` | `{sha1, name, format, size, fileUrl, token, schema, partMaxBytes}` | `{chapters, parts, chars}`：本地电子书分片解析，见 `电子书解析引擎接入.md` |
+
+以上 6 种是 `/api/remote/job` 与软总线白名单内的合法类型，其它 type 建任务时直接返回
+400「不支持的任务类型」。其中 `ebook-parse` 的等待上限单独放宽到 **240 秒**（其它类型 60 秒）。
+
+客户端错误码约定（`ebook-parse`）：`drm` / `corrupt` / `unsupported` / `kf8-unsupported`
+回传 `ok:false` 后服务端**不做本地兜底**；其它错误（网络、超时、上传失败）服务端会兜底本地解析。
 
 ### 8.5 App 侧实现建议
 
