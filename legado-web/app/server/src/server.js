@@ -18,6 +18,7 @@ const introLookup = require('./intro');
 const { buildSyncPayload } = require('./sync');
 const { getDaily } = require('./daily');
 const { dedupeBooks } = require('./dedupe');
+const { dedupeCache, findExistingDir } = require('./cacheclean');
 const tombstone = require('./tombstone');
 const { normalizeChapterList } = require('./chapter-order');
 const pyengine = require('./pyengine');
@@ -1586,8 +1587,12 @@ async function route(req, res, url) {
         .slice(0, 80)
         .trim() || '未命名';
 
-    let dir = path.join(root, safe);
-    for (let i = 2; fs.existsSync(dir); i++) dir = path.join(root, `${safe} (${i})`);
+    // 同一本书重复同步时复用原目录，避免出现「书名 (2)(3)…」一堆同名目录
+    let dir = findExistingDir(root, book.bookUrl, safe) || '';
+    if (!dir) {
+      dir = path.join(root, safe);
+      for (let i = 2; fs.existsSync(dir); i++) dir = path.join(root, `${safe} (${i})`);
+    }
     fs.mkdirSync(path.join(dir, 'raw'), { recursive: true });
     fs.mkdirSync(path.join(dir, 'images'), { recursive: true });
 
@@ -2347,6 +2352,13 @@ function saveCover(target, buf, mime) {
     return json(res, ok ? 200 : 404, ok ? { ok: true } : { error: '设备不存在' });
   }
 
+  // 缓存目录去重：把「书名 (2)(3)…」合并回一本
+  if (p === '/api/cache/dedupe' && method === 'POST') {
+    const root = path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache');
+    const r = dedupeCache(root);
+    return json(res, 200, { ok: true, ...r, root });
+  }
+
   // 书源双向同步（LWW：lastUpdateTime 大的赢）
   if (p === '/api/m/sources/sync' && method === 'GET') {
     const data = pullSince(store, searchParams.get('since') || 0);
@@ -3056,6 +3068,18 @@ try {
     if (kept.length !== store.books.length) store.saveBooks(kept);
   }
   const r = dedupeShelf();
+  // 顺手清理缓存目录里的重复书本目录（延后跑，不拖慢启动）
+  setTimeout(() => {
+    try {
+      const cacheRoot = path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache');
+      const cr = dedupeCache(cacheRoot);
+      if (cr.removed || cr.renamed) {
+        console.log(`[legado-web] 缓存目录去重：合并 ${cr.merged} 个、删除 ${cr.removed} 个、重命名 ${cr.renamed} 个`);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, 5000);
   if (r.removed) console.log('[legado-web] 启动去重：合并 ' + r.removed + ' 条重复书籍');
 } catch (e) {
   console.log('[legado-web] 启动整理失败：' + e.message);
