@@ -28,6 +28,12 @@
 | POST | `/api/m/ebook/part?sha1=&seq=&total=` | 上传电子书解析分片（明文或 gzip，≤8 MB / 解压后 ≤20 MB）|
 | GET | `/api/m/ebook/parts?sha1=` | 电子书分片断点查询 `{total,received,complete,status,parts}` |
 | POST | `/api/m/ebook/chapter?sha1=&index=` | 单章按需回传（toc-only 模式的补章接口）|
+| POST | `/api/m/ebook/upload?name=` | 客户端传书（pdf/mobi/azw3/epub/txt），用 `X-Upload-Token` 鉴权 |
+| GET | `/api/ebook/upload` | 查询传书配置与上传令牌 |
+| POST | `/api/ebook/upload/reset-token` | 重置上传令牌 |
+| POST | `/api/ebook/pages` | 触发 PDF 原页渲染 `{sha1,dpi?}` |
+| GET | `/api/ebook/pages?sha1=` | 原页渲染状态 `{ready,count,rendering}` |
+| GET | `/api/ebook/page/<sha1>/<n>` | PDF 第 n 页 PNG |
 | GET | `/api/ebook/list` | 本地电子书登记表（sha1/格式/状态/章数）|
 | POST | `/api/ebook/scan` | 立即扫描本地电子书目录 |
 | POST | `/api/ebook/reparse` | 重新解析某本电子书 `{sha1}` |

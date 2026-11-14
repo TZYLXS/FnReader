@@ -301,6 +301,21 @@ App 侧建议：收到 409 时提示「请在网页端确认缓存位置」，�
 客户端收到后调 `POST /api/m/ebook/chapter?sha1=&index=` 推送该章，再重新取正文。
 其它形态下 `/api/content` 仍按老约定返回 `{paragraphs:[…]}` 或 404。
 
+### 8.4.2 客户端传书（不经过 WebDAV）
+
+```http
+POST /api/m/ebook/upload?name=<文件名>
+X-Upload-Token: <uploadToken>        // 设置 → 手机接入 → 传书令牌
+<二进制>
+```
+
+- 支持 pdf / mobi / azw3 / epub / txt，默认上限 1024 MB（`uploadMaxMB`）
+- 上传后自动入库并派发，返回 `{ok, sha1, status, name, format, size}`
+- **此接口不校验 `X-Api-Token`**，只校验 `X-Upload-Token`（或 `?token=`）
+- 令牌查询：`GET /api/ebook/upload`；重置：`POST /api/ebook/upload/reset-token`
+
+PDF 另支持原页模式：`/api/ebook/pages` 触发渲染，`/api/content?...&mode=page` 按页取图。
+
 ### 8.5 App 侧实现建议
 
 ```text
