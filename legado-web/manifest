@@ -1,5 +1,5 @@
 appname=legado-web
-version=2.3.1
+version=2.3.2
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=本地电子书改为挂载式：保留书源与 .nb 缓存，默认显示 Python 分章的本地 TXT，阅读页可一键切回网文源；扫描到的电子书自动进书架
+changelog=PDF 文本层乱码兜底：嵌入 CID 字体的中文 PDF 自动改用 Ghostscript txtwrite 重新抽取；无 gs 时报 font-encoding

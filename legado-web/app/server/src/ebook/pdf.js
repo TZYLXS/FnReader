@@ -103,6 +103,37 @@ function decodeHexString(hex, map) {
   return s;
 }
 
+/**
+ * 判断文本层是否乱码：中文 PDF 用 CID 字体时，我们的简易解码会得到大量 Latin-1 噪声，
+ * 特征是「CJK 极少 + 高位字符很多」。
+ */
+function looksGarbled(text) {
+  const t = String(text || '');
+  if (t.length < 200) return false;
+  let cjk = 0;
+  let high = 0;
+  let bad = 0;
+  for (const ch of t) {
+    const c = ch.codePointAt(0);
+    if ((c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef)) cjk++;
+    else if (c >= 0x80 && c <= 0xff) high++;
+    else if (c < 0x20 && c !== 10 && c !== 13 && c !== 9) bad++;
+  }
+  if (bad / t.length > 0.05) return true;
+  return high / t.length > 0.25 && cjk / t.length < 0.03;
+}
+
+/** 用系统 Ghostscript 的 txtwrite 设备重新抽取（能正确处理嵌入字体的 ToUnicode） */
+function gsExtract(file, timeoutMs = 180000) {
+  const { execFileSync } = require('node:child_process');
+  const out = execFileSync(
+    'gs',
+    ['-q', '-dNOPAUSE', '-dBATCH', '-sDEVICE=txtwrite', '-sOutputFile=-', file],
+    { maxBuffer: 256 * 1024 * 1024, timeout: timeoutMs }
+  );
+  return out.toString('utf8');
+}
+
 function extractPageText(content, map) {
   const lines = [];
   const parts = content.split(/\bT[dD]\b|\bT\*\b/);
@@ -130,8 +161,29 @@ function parsePdf(buf, opts = {}) {
     if (!/\bBT\b/.test(s) || !/(Tj|TJ)\b/.test(s)) continue;
     lines.push(...extractPageText(s, map));
   }
-  const text = lines.join('\n');
+  let text = lines.join('\n');
+
+  // 乱码时改用 Ghostscript 重新抽取（同一份文件，不依赖我们的简易解码）
+  if (looksGarbled(text) && opts.file) {
+    try {
+      const gsText = gsExtract(opts.file);
+      if (gsText && !looksGarbled(gsText)) {
+        text = gsText;
+        lines.length = 0;
+        for (const ln of gsText.split(/\r?\n|\f/)) {
+          const t2 = clean(ln);
+          if (t2) lines.push(t2);
+        }
+      }
+    } catch {
+      /* 没装 gs 就保持原样，下面按乱码处理 */
+    }
+  }
+
   if (clean(text).length < 20) throw fail('no-text-layer', 'PDF 没有文本层（可能是扫描件），请先 OCR 或转 EPUB');
+  if (looksGarbled(text)) {
+    throw fail('font-encoding', 'PDF 使用嵌入字体且缺少可解映射，文本层无法正确解码（可安装 Ghostscript 或先转 EPUB）');
+  }
 
   const paragraphs = [];
   for (const line of lines) {

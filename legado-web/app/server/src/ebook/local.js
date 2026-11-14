@@ -16,10 +16,10 @@ function fail(code, message) {
   return err;
 }
 
-function parseByFormat(buf, format, name) {
+function parseByFormat(buf, format, name, file) {
   if (format === 'epub') return parseEpub(buf, { name });
   if (format === 'mobi') return parseMobi(buf, { name });
-  if (format === 'pdf') return parsePdf(buf, { name });
+  if (format === 'pdf') return parsePdf(buf, { name, file });
   return parseTxt(buf, { name });
 }
 
@@ -37,7 +37,7 @@ function parseLocal(dataDir, entry) {
   const file = entry.file;
   if (!fs.existsSync(file)) throw fail('missing', '原文件不存在');
   const buf = fs.readFileSync(file);
-  const parsed = parseByFormat(buf, entry.format, entry.name);
+  const parsed = parseByFormat(buf, entry.format, entry.name, entry.file);
   if (!parsed.chapters || !parsed.chapters.length) throw fail('corrupt', '解析不出任何章节');
   if (parsed.chapters.length > 3000) throw fail('too-large', `章节数超过 3000：${parsed.chapters.length}`);
 
