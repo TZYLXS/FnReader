@@ -60,15 +60,29 @@ function pumpLocal(ctx) {
   }
 }
 
+function ebookMode(cfg) {
+  const mode = String(cfg.ebookMode || 'proxy').toLowerCase();
+  if (mode === 'off' || mode === 'close' || mode === 'disabled') return 'off';
+  if (mode === 'local' || mode === 'server') return 'local';
+  return 'proxy';
+}
+
 function dispatch(ctx, entry) {
   const cfg = ctx.config();
   if (!cfg.ebookEnabled) return;
+  const mode = ebookMode(cfg);
+  if (mode === 'off') return;
   const existing = jobsBySha.get(entry.sha1);
   if (existing) return;
   if (entry.status === 'complete' || entry.status === 'parsing') return;
   // PDF/TXT 手机端不解析，直接本机处理；只有 EPUB/MOBI 才值得走软总线
   if (entry.format !== 'epub' && entry.format !== 'mobi') {
     enqueueLocal(ctx, entry, 'server-format');
+    return;
+  }
+  // 仅本机模式：EPUB/MOBI 也不派给手机
+  if (mode === 'local') {
+    enqueueLocal(ctx, entry, 'local-mode');
     return;
   }
 
@@ -173,4 +187,4 @@ function startWatchdog(ctx, intervalMs = 30000) {
   return timer;
 }
 
-module.exports = { dispatch, enqueueLocal, touchProgress, startWatchdog, jobsBySha };
+module.exports = { dispatch, enqueueLocal, touchProgress, startWatchdog, jobsBySha, ebookMode };

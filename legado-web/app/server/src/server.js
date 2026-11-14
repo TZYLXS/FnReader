@@ -3022,6 +3022,28 @@ function saveCover(target, buf, mime) {
     }
   }
 
+  // 电子书引擎设置：proxy（默认，手机优先）/ local（仅本机）/ off
+  if (p === '/api/ebook/settings' && method === 'GET') {
+    const entries = ebookStore.loadIndex(store.dataDir);
+    return json(res, 200, {
+      mode: ebookBus.ebookMode(store.config),
+      enabled: store.config.ebookEnabled !== false,
+      dir: ebookScan.ebookDir(ebookCtx),
+      scanSec: Number(store.config.ebookScanSec) || 60,
+      local: entries.filter((e) => e.source === 'server').length,
+      device: entries.filter((e) => e.source === 'device').length,
+      total: entries.length,
+    });
+  }
+
+  if (p === '/api/ebook/settings' && method === 'POST') {
+    const body = await readJson(req);
+    const mode = String((body && body.mode) || '').toLowerCase();
+    if (!['proxy', 'local', 'off'].includes(mode)) return json(res, 400, { error: 'mode 只能是 proxy / local / off' });
+    store.saveConfig({ ebookMode: mode, ebookEnabled: mode !== 'off' });
+    return json(res, 200, { ok: true, mode, enabled: mode !== 'off' });
+  }
+
   // 初始化引导：安装/更新后确认缓存保存位置
   if (p === '/api/setup' && method === 'GET') {
     return json(res, 200, setupState());
@@ -3383,7 +3405,7 @@ tcp.listen(PORT, '0.0.0.0', () => console.log(`[legado-web] http://0.0.0.0:${POR
 
   // 本地电子书：定时扫描 + 长任务看门狗
   try {
-    if (store.config.ebookEnabled !== false) {
+    if (store.config.ebookEnabled !== false && ebookBus.ebookMode(store.config) !== 'off') {
       ebookScan.start(ebookCtx, (Number(store.config.ebookScanSec) || 60) * 1000);
       ebookBus.startWatchdog(ebookCtx);
       console.log('[legado-web] 本地电子书引擎已启动，目录: ' + ebookScan.ebookDir(ebookCtx));
