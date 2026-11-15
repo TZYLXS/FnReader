@@ -23,6 +23,7 @@ function formatOf(file) {
   if (ext === '.mobi' || ext === '.prc' || ext === '.azw' || ext === '.azw3') return 'mobi';
   if (ext === '.pdf') return 'pdf';
   if (ext === '.txt') return 'txt';
+  if (ext === '.md' || ext === '.markdown') return 'md';
   return '';
 }
 

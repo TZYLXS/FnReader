@@ -51,6 +51,20 @@ async function api(path, opts = {}) {
 // 页面里由打包脚本写入的版本号（release.py 会同步）
 const APP_VER = (document.querySelector('meta[name="app-version"]') || { content: '' }).content || '';
 
+const THEME_OPTIONS = [
+  ['light', '浅色'],
+  ['sepia', '羊皮纸'],
+  ['dark', '深色'],
+  ['book', '旧书'],
+  ['eink', '墨水屏（高对比）'],
+];
+
+function themeSelectOptions(current) {
+  return THEME_OPTIONS.map(
+    ([v, label]) => `<option value="${v}" ${current === v ? 'selected' : ''}>${label}</option>`
+  ).join('');
+}
+
 const state = {
   books: [],
   sources: [],
@@ -1368,11 +1382,7 @@ function openReaderSettings() {
   box.innerHTML = `
     <h3>阅读设置</h3>
     <div class="row"><div class="label">主题</div>
-      <select class="scope-select theme-select" id="sel-theme">
-        ${['light', 'sepia', 'dark', 'book']
-          .map((t) => `<option value="${t}" ${cfg.theme === t ? 'selected' : ''}>${{ light: '浅色', sepia: '羊皮纸', dark: '深色', book: '旧书' }[t]}</option>`)
-          .join('')}
-      </select>
+      <select class="scope-select theme-select" id="sel-theme">${themeSelectOptions(cfg.theme)}</select>
     </div>
     <div class="row"><div class="label">字号 <span class="desc">${cfg.fontSize}px</span></div>
       <div class="seg">
@@ -2056,6 +2066,49 @@ function maybeShowFirstRunHelp() {
     }, 400);
 }
 
+/* ---------------- 随包文档（Markdown） ---------------- */
+async function showDocs() {
+  const modal = $('#modal');
+  const box = $('#modal-box');
+  box.innerHTML = `
+    <h3 style="margin-bottom:10px">软件协议总线说明</h3>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <select id="doc-pick" style="flex:1;font-size:12px"></select>
+      <button class="btn" id="doc-open" style="padding:5px 10px;font-size:12px">在 GitHub 打开</button>
+    </div>
+    <div id="doc-body" class="doc-body" style="max-height:62vh;overflow:auto;font-size:13px;line-height:1.7">正在加载…</div>
+    <div class="modal-actions"><button class="btn primary" id="doc-ok">关闭</button></div>`;
+  modal.classList.remove('hidden');
+  const close = () => modal.classList.add('hidden');
+  $('#doc-ok').onclick = close;
+  modal.onclick = (e) => {
+    if (e.target === modal) close();
+  };
+
+  const list = await api('/docs').catch(() => ({ docs: [] }));
+  const docs = list.docs || [];
+  const pick = $('#doc-pick');
+  pick.innerHTML = docs.map((d) => `<option value="${esc(d.name)}">${esc(d.title)}</option>`).join('');
+  const preferred = docs.find((d) => /APP同步接口/.test(d.name)) || docs[0];
+  if (preferred) pick.value = preferred.name;
+  $('#doc-open').onclick = () =>
+    window.open('https://github.com/TZYLXS/FnReader/blob/main/docs/' + encodeURIComponent(pick.value), '_blank', 'noopener');
+
+  const render = async () => {
+    const body = $('#doc-body');
+    if (!body) return;
+    body.innerHTML = '正在加载…';
+    try {
+      const r = await api('/docs?html=1&name=' + encodeURIComponent(pick.value));
+      body.innerHTML = r.html || '<div class="empty">空文档</div>';
+    } catch (e) {
+      body.innerHTML = `<div style="color:var(--danger)">读取失败：${esc(e.message)}</div>`;
+    }
+  };
+  pick.onchange = render;
+  await render();
+}
+
 /* ---------------- 更新日志 ---------------- */
 async function showChangelog() {
   const modal = $('#modal');
@@ -2103,11 +2156,7 @@ async function renderSettings() {
       <div class="section">
         <h3>阅读</h3>
         <div class="row"><div class="label">主题</div>
-          <select class="scope-select theme-select" id="set-theme">
-            ${['light', 'sepia', 'dark', 'book']
-              .map((t) => `<option value="${t}" ${cfg.theme === t ? 'selected' : ''}>${{ light: '浅色', sepia: '羊皮纸', dark: '深色', book: '旧书' }[t]}</option>`)
-              .join('')}
-          </select>
+          <select class="scope-select theme-select" id="set-theme">${themeSelectOptions(cfg.theme)}</select>
         </div>
         <div class="row"><div class="label">字号</div>
           <input type="number" id="set-font" min="14" max="30" value="${cfg.fontSize}" style="width:72px" />
@@ -2115,11 +2164,17 @@ async function renderSettings() {
         <div class="row"><div class="label">行距</div>
           <input type="number" id="set-lh" min="1.3" max="2.6" step="0.05" value="${cfg.lineHeight}" style="width:72px" />
         </div>
+        <div class="row"><div class="label">液态玻璃底栏<div class="desc">底栏改为半透明玻璃质感，随主题自动适配</div></div>
+          <div class="switch ${cfg.liquidGlass ? 'on' : ''}" id="sw-glass"></div></div>
       </div>
       <div class="section">
         <h3>TRE 引擎</h3>
         <div class="row"><div class="label">Python 引擎<div class="desc" id="engine-status">检测中…</div></div>
           <div class="switch" id="sw-engine"></div></div>
+        <div class="row"><div class="label">Python 工作模式<div class="desc" id="pymode-desc">检测中…</div></div>
+          <div class="switch" id="sw-pymode"></div></div>
+        <div class="row"><div class="label">TRE 代理解析<div class="desc">EPUB / MOBI 交给在线设备解析（关闭则只用本机）</div></div>
+          <div class="switch ${cfg.treProxy !== false ? 'on' : ''}" id="sw-tre-proxy"></div></div>
         <div class="row"><div class="label">电子书解析<div class="desc" id="stat-ebook-mode">-</div></div>
           <select id="set-ebook-mode" style="max-width:46%;font-size:12px">
             <option value="proxy">代理解析（手机优先）</option>
@@ -2127,22 +2182,24 @@ async function renderSettings() {
             <option value="off">关闭</option>
           </select>
         </div>
-        <div class="row"><div class="label">TRE 代理解析<div class="desc">EPUB / MOBI 交给在线设备解析（关闭则只用本机）</div></div>
-          <div class="switch ${cfg.treProxy !== false ? 'on' : ''}" id="sw-tre-proxy"></div></div>
         <div class="row"><div class="label">扫描目录<div class="desc" id="stat-ebook">检查本地 epub/mobi/txt/pdf</div></div>
           <button class="btn" id="scan-ebook" style="padding:5px 10px;font-size:12px">立即扫描</button>
         </div>
       </div>
       <div class="section">
-        <h3>界面</h3>
-        <div class="row"><div class="label">液态玻璃底栏<div class="desc">底栏改为半透明玻璃质感，随主题自动适配</div></div>
-          <div class="switch ${cfg.liquidGlass ? 'on' : ''}" id="sw-glass"></div></div>
-      </div>
-      <div class="section">
         <h3>手机接入</h3>
-        <div class="row"><div class="label">接口地址<div class="desc" id="api-base" style="word-break:break-all">-</div></div>
-          <button class="btn" id="copy-base" style="padding:5px 10px;font-size:12px">复制</button></div>
-        <div class="row"><div class="label">其它地址<div class="desc" id="api-alts" style="word-break:break-all">-</div></div></div>
+        <div class="row row-url compact">
+          <div class="row-inline">
+            <div class="desc" id="api-base" style="flex:1">-</div>
+            <button class="btn" id="copy-base" style="padding:4px 9px;font-size:12px">复制</button>
+          </div>
+        </div>
+        <div class="row row-url compact">
+          <div class="row-inline">
+            <div class="desc" id="api-alts" style="flex:1">-</div>
+            <button class="btn" id="copy-alts" style="padding:4px 9px;font-size:12px">复制</button>
+          </div>
+        </div>
         <div class="row"><div class="label">访问令牌<div class="desc" id="api-token" style="word-break:break-all">-</div></div>
           <button class="btn" id="copy-token" style="padding:5px 10px;font-size:12px">复制</button>
           <button class="btn ghost" id="reset-token" style="padding:5px 8px;font-size:12px;color:var(--danger)">重置</button></div>
@@ -2155,7 +2212,7 @@ async function renderSettings() {
         </div>
         <div class="row"><div class="label">自定义目录<div class="desc">填绝对路径，如 /vol1/1000/Books</div></div>
           <input id="set-dir-custom" placeholder="/vol1/1000/Books" style="max-width:44%;font-size:12px" />
-          <button class="btn" id="save-dir-custom" style="padding:5px 10px;font-size:12px">保存</button>
+          <button class="btn" id="save-dir-custom" title="保存自定义目录" style="padding:4px 10px;font-size:15px;line-height:1">💾</button>
         </div>
       </div>
       <div class="section">
@@ -2163,6 +2220,8 @@ async function renderSettings() {
         <div class="row"><div class="label">书源数量<div class="desc" id="stat-src">-</div></div></div>
         <div class="row"><div class="label">书籍数量<div class="desc" id="stat-book">-</div></div></div>
         <div class="row"><div class="label">搜索缓存<div class="desc" id="stat-cache">-</div></div><button class="btn" id="clear-cache" style="padding:5px 10px;font-size:12px">清空</button></div>
+        <div class="row"><div class="label">本地电子书<div class="desc" id="stat-ebook-count">-</div></div>
+          <button class="btn" id="export-books" style="padding:5px 10px;font-size:12px">导出全部 TXT</button></div>
       </div>
       <div class="section">
         <h3>书源</h3>
@@ -2193,17 +2252,11 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
+        <div class="row" id="open-docs" style="cursor:pointer"><div class="label">软件协议总线说明<div class="desc">随包文档</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row"><div class="label">刷新封面<div class="desc">清掉封面缓存并重新抓取一次</div></div>
           <button class="btn" id="refresh-covers" style="padding:5px 10px;font-size:12px">刷新</button></div>
-        <div class="row"><div class="label">手机接入说明<div class="desc">安卓 App 通过 /api/m/* 读取书架、目录与正文，请求头带 X-Api-Token；软总线任务走 /api/m/remote/pending</div></div></div>
-        <div class="row"><div class="label">TRE 引擎说明<div class="desc">TRE = 文本解析引擎：扫描本地 epub/mobi/pdf/txt 并解析成 JSON；EPUB/MOBI 可交给在线设备代理解析，PDF/TXT 只在本机解析</div></div></div>
-        <div class="row"><div class="label">传书说明<div class="desc">客户端已内置传书：POST /api/m/ebook/upload（X-Upload-Token），支持 pdf/mobi/azw3/epub/txt；无需在网页端配置</div></div></div>
-        <div class="row"><div class="label">阅读 APK<div class="desc"><a id="apk-dl" href="https://github.com/TZYLXS/yuedu-android4/releases" target="_blank">下载「阅读」兼容版 APK（Android 4.4–5.1）</a></div></div>
-        <div class="row"><div class="label">书源导入<div class="desc" id="apk-src-link" style="word-break:break-all">-</div></div>
-          <button class="btn" id="copy-apk-link" style="padding:5px 10px;font-size:12px">复制</button></div>
-        <div class="row"><div class="label">书源 JSON<div class="desc" id="apk-src-json" style="word-break:break-all">-</div></div>
-          <button class="btn ghost" id="copy-apk-json" style="padding:5px 10px;font-size:12px">复制</button></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.4.5 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row row-url compact"><div class="label" style="margin-bottom:2px">书源导入</div>
+          <div class="desc" id="apk-src-link">-</div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -2215,6 +2268,8 @@ async function renderSettings() {
     }
     const logRow = $('#open-log');
     if (logRow) logRow.onclick = () => showChangelog();
+    const docsRow = $('#open-docs');
+    if (docsRow) docsRow.onclick = () => showDocs();
 
     const swTre = $('#sw-tre-proxy');
     if (swTre) {
@@ -2257,6 +2312,32 @@ async function renderSettings() {
     const [{ sources }, { books }] = await Promise.all([api('/sources'), api('/books')]);
     $('#stat-src').textContent = `${sources.length} 个（${sources.filter((s) => s.enabled).length} 个启用）`;
     $('#stat-book').textContent = `${books.length} 本`;
+
+    // 本地电子书数量（数据区）
+    try {
+      const es = await api('/ebook/settings');
+      const el = $('#stat-ebook-count');
+      if (el) el.textContent = `${es.local} 本可读 · 手机解析 ${es.device} 本 · 共 ${es.total} 本`;
+    } catch {
+      /* 老服务端 */
+    }
+
+    const exportBtn = $('#export-books');
+    if (exportBtn) {
+      exportBtn.onclick = async () => {
+        exportBtn.disabled = true;
+        exportBtn.textContent = '打包中…';
+        try {
+          const r = await api('/export/books-txt', { method: 'POST' });
+          toast(`已导出 ${r.written.length} 本到 ebook 目录，已自动扫描并去重`);
+        } catch (e) {
+          toast('导出失败：' + e.message);
+        } finally {
+          exportBtn.disabled = false;
+          exportBtn.textContent = '导出全部 TXT';
+        }
+      };
+    }
 
     // 搜索缓存统计
     try {
@@ -2375,33 +2456,62 @@ async function renderSettings() {
     const swEngine = $('#sw-engine');
     const stEngine = $('#engine-status');
     if (swEngine) {
+      const swPyMode = $('#sw-pymode');
+      const pyDesc = $('#pymode-desc');
+      const applyEngineState = (r) => {
+        const master = r.engineSwitch === 'python';
+        const core = r.pyMode === 'core';
+        // 引擎开关永远可点（不灰）；切到「解析模式」时引擎显示为关
+        swEngine.classList.toggle('on', master);
+        swEngine.classList.remove('disabled');
+        if (swPyMode) {
+          swPyMode.classList.toggle('on', core);
+          // 只有「引擎关闭」才把模式灰掉
+          swPyMode.classList.toggle('disabled', !master && !core);
+        }
+        if (stEngine) {
+          if (master) stEngine.textContent = '已启用 · Python ' + ((r.python && r.python.engine) || '') + (core ? '（接管规则解析）' : '（仅辅助：下载/去重）');
+          else if (r.python && r.python.ok) stEngine.textContent = '内置 Node 引擎（Python 可用：' + (r.python.engine || '') + '）';
+          else stEngine.textContent = '内置 Node 引擎 · Python 不可用：' + ((r.python && r.python.error) || '未安装');
+        }
+        if (pyDesc) {
+          if (core) pyDesc.textContent = '开：接管 Node 规则解析（搜索 / 目录 / 正文）';
+          else if (master) pyDesc.textContent = '关：接管 TXT 下载 / 去重，不接管 Node 解析';
+          else pyDesc.textContent = 'Python 引擎已关闭，工作模式不可用';
+        }
+      };
       api('/engine')
         .then((r) => {
-          swEngine.classList.toggle('on', r.engine === 'python');
-          if (r.engine === 'python') stEngine.textContent = '已启用 · Python ' + (r.python && r.python.engine ? r.python.engine : '');
-          else if (r.python && r.python.ok) stEngine.textContent = '内置 Node 引擎（Python 引擎可用：' + (r.python.engine || '') + '）';
-          else stEngine.textContent = '内置 Node 引擎 · Python 不可用：' + ((r.python && r.python.error) || '未安装');
+          applyEngineState(r);
         })
         .catch(() => {
           stEngine.textContent = '状态未知';
         });
       swEngine.onclick = async () => {
-        const want = swEngine.classList.contains('on') ? 'node' : 'python';
+        const on = swEngine.classList.contains('on');
         stEngine.textContent = '切换中…';
         try {
-          const r = await api('/engine', { method: 'POST', body: { engine: want } });
-          swEngine.classList.toggle('on', r.engine === 'python');
-          toast(r.engine === 'python' ? '已切换到 Python 解析引擎' : '已切回内置引擎');
-          const st = await api('/engine');
-          stEngine.textContent =
-            r.engine === 'python'
-              ? '已启用 · Python ' + ((st.python && st.python.engine) || '')
-              : '内置 Node 引擎 · Python ' + (st.python && st.python.ok ? '可用' : '不可用');
+          await api('/engine', { method: 'POST', body: { engine: on ? 'node' : 'python' } });
+          toast(on ? '已关闭 Python 引擎（工作模式自动灰显）' : '已开启 Python 引擎');
+          applyEngineState(await api('/engine'));
         } catch (e) {
           stEngine.textContent = e.message;
           toast(e.message);
         }
       };
+      if (swPyMode) {
+        swPyMode.onclick = async () => {
+          if (swPyMode.classList.contains('disabled')) return toast('Python 引擎已关闭，工作模式不可用');
+          const next = swPyMode.classList.contains('on') ? 'aux' : 'core';
+          try {
+            await api('/engine', { method: 'POST', body: { pyMode: next } });
+            toast(next === 'core' ? '工作模式：接管规则解析（搜索/目录/正文）' : '工作模式：只做辅助（TXT 下载 / 去重）');
+            applyEngineState(await api('/engine'));
+          } catch (e) {
+            toast('切换失败：' + e.message);
+          }
+        };
+      }
     }
 
     // 优先手机解析
@@ -2521,7 +2631,10 @@ async function renderSettings() {
     if (baseEl) baseEl.textContent = apiBase;
     const altEl = $('#api-alts');
     if (altEl && Array.isArray(cfg.lanIps) && cfg.lanIps.length > 1) {
-      altEl.textContent = '其它可用地址：' + cfg.lanIps.filter((x) => x !== apiBase).join('  ');
+      const others = (cfg.lanIps || []).filter((x) => x !== apiBase);
+      altEl.textContent = others.join('  ') || '—';
+      const ca = document.getElementById('copy-alts');
+      if (ca) ca.onclick = () => copy(others.join('\n'), '其它地址');
     }
     const tokenEl = $('#api-token');
     const tokenMissing = !cfg.apiToken;

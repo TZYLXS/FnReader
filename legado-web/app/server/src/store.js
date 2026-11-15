@@ -21,6 +21,8 @@ const DEFAULT_CONFIG = {
   ebookMode: 'proxy',
   // TRE 引擎：EPUB/MOBI 是否交给在线设备代理解析
   treProxy: true,
+  // Python 工作模式：aux=辅助（TXT 下载/查重去重/缓存转换），core=接管 Node 规则引擎
+  pyMode: 'aux',
   ebookDir: '',
   ebookScanSec: 60,
   ebookScanDepth: 3,

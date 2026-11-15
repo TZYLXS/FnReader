@@ -111,4 +111,55 @@ function call(action, payload, timeout = 40000) {
   });
 }
 
-module.exports = { probe, call, PY_DIR };
+/**
+ * 后台启动一次桥接调用（不等待），返回 { child, promise }
+ * promise 解析为 { ok, stdout, stderr, code }
+ */
+function start(action, payload, opts = {}) {
+  if (!fs.existsSync(BRIDGE)) return { child: null, promise: Promise.resolve({ ok: false, error: '缺少 legado_bridge.py' }) };
+  const child = spawn(pythonBin(), [BRIDGE, action], {
+    cwd: PY_DIR,
+    detached: true, // 独立进程组，取消时能整组杀掉（含线程池里的子进程）
+    env: { ...process.env, PYTHONPATH: [PY_DIR, path.join(PY_DIR, 'vendor')].join(path.delimiter), PYTHONIOENCODING: 'utf-8' },
+  });
+  let out = '';
+  let err = '';
+  child.stdout.on('data', (d) => (out += d));
+  child.stderr.on('data', (d) => (err += d));
+  try {
+    child.stdin.end(JSON.stringify(payload || {}));
+  } catch {
+    /* ignore */
+  }
+  const promise = new Promise((resolve) => {
+    child.on('close', (code) => {
+      let data = null;
+      try {
+        data = out ? JSON.parse(out) : null;
+      } catch {
+        data = null;
+      }
+      resolve({ ok: code === 0 && data && !data.error, code, data, stdout: out, stderr: err });
+    });
+    child.on('error', (e) => resolve({ ok: false, code: -1, error: e.message, stdout: out, stderr: err }));
+  });
+  return { child, promise };
+}
+
+/** 强杀桥接进程组（SIGTERM 有时杀不掉阻塞在 IO 的 python） */
+function killTree(child) {
+  if (!child) return;
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+    return;
+  } catch {
+    /* 退回单进程杀 */
+  }
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    /* ignore */
+  }
+}
+
+module.exports = { probe, call, start, killTree, PY_DIR };

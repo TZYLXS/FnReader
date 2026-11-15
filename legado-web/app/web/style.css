@@ -733,3 +733,96 @@ html[data-theme="book"] .chip.on { background: var(--accent); color: #fff8ee; }
   background: #fff;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.08);
 }
+
+
+/* 长链接行（接口地址 / 书源导入链接）：手机上改为上下布局，避免被按钮挤成竖排 */
+.row.row-url { flex-direction: column; align-items: stretch; gap: 8px; }
+.row.row-url .label { flex: none; }
+.row.row-url .desc {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.5;
+}
+.row.row-url .btn { align-self: flex-end; }
+
+
+/* 长链接行紧凑版：标题与复制按钮同一行，链接另起一行 */
+.row.row-url.compact { gap: 4px; padding-top: 10px; padding-bottom: 10px; }
+.row.row-url .row-inline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.row.row-url.compact .desc { font-size: 12px; line-height: 1.45; }
+
+
+/* 随包 Markdown 文档渲染 */
+.doc-body h1, .doc-body h2, .doc-body h3, .doc-body h4 { margin: 14px 0 8px; font-size: 15px; color: var(--text); }
+.doc-body p { margin: 6px 0; }
+.doc-body ul, .doc-body ol { margin: 6px 0 6px 18px; padding: 0; }
+.doc-body code { background: color-mix(in srgb, var(--line) 55%, transparent); padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+.doc-body pre.md-code { background: color-mix(in srgb, var(--line) 45%, transparent); padding: 10px; border-radius: 8px; overflow: auto; font-size: 12px; }
+.doc-body blockquote.md-quote { margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--accent); color: var(--text-2); }
+.doc-body table.md-table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 8px 0; }
+.doc-body table.md-table th, .doc-body table.md-table td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; }
+.doc-body hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+
+
+/* 墨水屏（E-INK）高对比主题：纯黑白、无阴影、字重加重、边框加深 */
+html[data-theme='eink'] {
+  --bg: #ffffff;
+  --panel: #ffffff;
+  --text: #000000;
+  --text-2: #1a1a1a;
+  --line: #000000;
+  --accent: #000000;
+  --accent-soft: #e6e6e6;
+  --radius: 4px;
+  --danger: #000000;
+}
+html[data-theme='eink'] body,
+html[data-theme='eink'] .view {
+  background: #ffffff;
+  color: #000000;
+}
+html[data-theme='eink'] .section,
+html[data-theme='eink'] .book-card,
+html[data-theme='eink'] .row,
+html[data-theme='eink'] .tabbar,
+html[data-theme='eink'] .reader-head,
+html[data-theme='eink'] .reader-foot {
+  background: #ffffff !important;
+  border-color: #000000 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html[data-theme='eink'] .reader.kindle .article,
+html[data-theme='eink'] .reader.kindle .article p {
+  color: #000000 !important;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+html[data-theme='eink'] .row .label,
+html[data-theme='eink'] .book-card .name,
+html[data-theme='eink'] h1,
+html[data-theme='eink'] h2,
+html[data-theme='eink'] h3 {
+  color: #000000;
+  font-weight: 700;
+}
+html[data-theme='eink'] .row .desc,
+html[data-theme='eink'] .book-card .meta {
+  color: #1a1a1a;
+}
+html[data-theme='eink'] .btn.primary,
+html[data-theme='eink'] .chip.on {
+  background: #000000;
+  color: #ffffff;
+  border-color: #000000;
+}
+html[data-theme='eink'] img {
+  filter: grayscale(1) contrast(1.15);
+}
+
+
+/* 灰显的开关（条件不满足时不可操作） */
+.switch.disabled { opacity: 0.35; pointer-events: none; filter: grayscale(1); }

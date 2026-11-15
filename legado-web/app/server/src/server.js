@@ -130,7 +130,7 @@ async function loadChapterContent(book, index) {
   }
   const source = resolveSource(book);
   if (!source) throw new Error('该书没有关联书源，且没有本地缓存');
-  if (store.config.engine === 'python') {
+  if (effectiveEngine() === 'python') {
     try {
       const r = await pyengine.call('content', { source, chapterUrl: chapter.url, bookUrl: book.bookUrl });
       if (r && Array.isArray(r.paragraphs) && r.paragraphs.length) {
@@ -294,6 +294,22 @@ function sanitizeBook(book) {
   return { ...rest, chapterCount: chapters ? chapters.length : book.chapterCount || 0 };
 }
 
+/**
+ * 实际生效的解析引擎：
+ * - Python 引擎关 → node
+ * - 引擎开 + 工作模式=解析（core）→ python 接管规则解析
+ * - 引擎开 + 工作模式=辅助（aux）→ node 解析，Python 只做辅助
+ */
+function effectiveEngine() {
+  if (store.config.engine !== 'python') return 'node';
+  return String(store.config.pyMode || 'aux') === 'core' ? 'python' : 'node';
+}
+
+/** Python 是否负责辅助任务（TXT 下载 / 去重 / 缓存转换）：引擎开 + 辅助模式 */
+function pythonAuxEnabled() {
+  return store.config.engine === 'python' && String(store.config.pyMode || 'aux') !== 'core';
+}
+
 /* ---------------- 业务处理 ---------------- */
 
 async function handleSearchSSE(req, res, params) {
@@ -380,7 +396,7 @@ async function handleSearchSSE(req, res, params) {
 
       // 优先手机端解析：软总线有在线设备时先问手机，拿不到再本地跑
       // 选了 Python 引擎就先用它，失败再走内置实现
-      if (store.config.engine === 'python' && !closed) {
+      if (effectiveEngine() === 'python' && !closed) {
         try {
           const r = await pyengine.call('search', { source, key });
           if (r && Array.isArray(r.books) && r.books.length) {
@@ -757,33 +773,20 @@ function downloadSummary(job) {
     done: job.done,
     total: job.total,
     failed: job.failed,
+    via: job.via || '',
     file: job.file ? path.basename(job.file) : '',
     error: job.error || '',
   };
 }
 
-/** 后台把整本书抓成 txt（复用正文缓存，2 并发） */
-function startDownload(book) {
+/** Node 兜底下载（Python 辅助模式关闭时用，2 并发） */
+function startDownloadNode(book) {
   const existing = downloadJobs.get(book.bookUrl);
   if (existing && existing.running) return existing;
-
-  const job = {
-    running: true,
-    done: 0,
-    total: book.chapters.length,
-    failed: 0,
-    file: null,
-    error: '',
-    cancel: false,
-  };
+  const job = { running: true, done: 0, total: book.chapters.length, failed: 0, file: null, error: '', via: 'node', cancel: false };
   downloadJobs.set(book.bookUrl, job);
-
   (async () => {
     const chunks = [];
-    chunks.push({
-      i: -1,
-      text: `${book.name}\n作者：${book.author || '未知'}\n来源：${book.originName || book.origin || ''}\n`,
-    });
     let cursor = 0;
     const worker = async () => {
       for (;;) {
@@ -798,27 +801,18 @@ function startDownload(book) {
           chunks.push({ i, text: `\n\n${ch.title}\n\n（本章抓取失败）` });
         }
         job.done++;
-        // 每几章让出一次事件循环，保证下载期间网页仍然可用
         if (job.done % 5 === 0) await new Promise((r) => setImmediate(r));
       }
     };
     try {
       await Promise.all([worker(), worker()]);
-      if (job.cancel) {
-        job.error = '已取消';
-        return;
-      }
+      if (job.cancel) return (job.error = '已取消');
       const outDir = resolveDownloadDir();
       fs.mkdirSync(outDir, { recursive: true });
       chunks.sort((a, b) => a.i - b.i);
-      const text = '\uFEFF' + chunks.map((c) => c.text).join('');
+      const text = '\uFEFF' + `${book.name}\n作者：${book.author || '未知'}\n来源：${book.originName || book.origin || ''}\n` + chunks.map((c) => c.text).join('');
       const file = path.join(outDir, `${safeFileName(book.name)}.txt`);
       fs.writeFileSync(file, text, { encoding: 'utf8', mode: 0o644 });
-      try {
-        fs.chmodSync(file, 0o644);
-      } catch {
-        /* 某些文件系统不支持 chmod */
-      }
       job.file = file;
       recordDownload(book, file, text.length, job.failed);
     } catch (e) {
@@ -827,6 +821,109 @@ function startDownload(book) {
       job.running = false;
     }
   })();
+  return job;
+}
+
+/** 后台把整本书抓成 txt：交给 Python 引擎，4 线程并发 */
+function startDownload(book) {
+  if (!pythonAuxEnabled()) return startDownloadNode(book);
+  const existing = downloadJobs.get(book.bookUrl);
+  if (existing && existing.running) return existing;
+
+  const job = {
+    running: true,
+    done: 0,
+    total: (book.chapters || []).length,
+    failed: 0,
+    file: null,
+    error: '',
+    via: 'python',
+    threads: 4,
+    cancel: false,
+  };
+  downloadJobs.set(book.bookUrl, job);
+
+  if (!book.chapters || !book.chapters.length) {
+    job.running = false;
+    job.error = '目录为空，先刷新目录';
+    return job;
+  }
+  const source = resolveSource(book);
+  if (!source) {
+    job.running = false;
+    job.error = '未找到书源，无法整本下载';
+    return job;
+  }
+
+  const outDir = resolveDownloadDir();
+  fs.mkdirSync(outDir, { recursive: true });
+  const outPath = path.join(outDir, `${safeFileName(book.name)}.txt`);
+  const progressPath = outPath + '.progress.json';
+  try {
+    fs.rmSync(progressPath, { force: true });
+  } catch {
+    /* ignore */
+  }
+
+  const payload = {
+    source,
+    chapters: book.chapters.map((c) => ({ title: c.title, url: c.url })),
+    outPath,
+    progressPath,
+    threads: 4,
+    header: `${book.name}\n作者：${book.author || '未知'}\n来源：${book.originName || book.origin || ''}\n`,
+  };
+
+  const { child, promise } = pyengine.start('book_txt', payload);
+  job.child = child;
+  const timer = setInterval(() => {
+    if (job.cancel) return;
+    try {
+      const st = JSON.parse(fs.readFileSync(progressPath, 'utf8'));
+      job.done = Number(st.done) || 0;
+      job.failed = Number(st.failed) || 0;
+      job.total = Number(st.total) || job.total;
+      events.broadcast({ type: 'download-progress', bookUrl: book.bookUrl, done: job.done, total: job.total, failed: job.failed });
+    } catch {
+      /* 进度文件还没写 */
+    }
+  }, 1000);
+  timer.unref?.();
+
+  promise
+    .then((r) => {
+      clearInterval(timer);
+      if (job.cancel) {
+        job.error = '已取消';
+        return;
+      }
+      if (!r.ok) {
+        job.error = (r.data && r.data.error) || r.error || (r.stderr || '').slice(-200) || 'Python 下载失败';
+        return;
+      }
+      job.done = r.data.done || job.done;
+      job.failed = r.data.failed || 0;
+      job.total = r.data.total || job.total;
+      job.file = outPath;
+      try {
+        fs.chmodSync(outPath, 0o644);
+      } catch {
+        /* ignore */
+      }
+      recordDownload(book, outPath, r.data.chars || 0, job.failed);
+    })
+    .catch((e) => {
+      clearInterval(timer);
+      job.error = String(e.message || e);
+    })
+    .finally(() => {
+      job.running = false;
+      try {
+        fs.rmSync(progressPath, { force: true });
+      } catch {
+        /* ignore */
+      }
+    });
 
   return job;
 }
@@ -845,6 +942,7 @@ const ebookBus = require('./ebook/bus');
 const ebookRender = require('./ebook/render');
 const ebookLocal = require('./ebook/local');
 const ebookPages = require('./ebook/pdfpages');
+const { splitTxtChapters: splitTxtByRules } = require('./txtrule');
 
 const ebookCtx = {
   dataDir: store.dataDir,
@@ -1036,13 +1134,15 @@ async function mobileSearch(key, group, limit) {
 async function dedupeShelf() {
   // 去重交给 Python 引擎（1.0.1 起），失败再回退 JS 实现
   let r = null;
-  try {
-    const py = await pyengine.call('dedupe', { books: store.books }, 60000);
-    if (py && Array.isArray(py.books)) {
-      r = { list: py.books, removed: Number(py.removed) || 0, via: 'python' };
+  if (pythonAuxEnabled()) {
+    try {
+      const py = await pyengine.call('dedupe', { books: store.books }, 60000);
+      if (py && Array.isArray(py.books)) {
+        r = { list: py.books, removed: Number(py.removed) || 0, via: 'python' };
+      }
+    } catch {
+      /* 回退 JS */
     }
-  } catch {
-    /* 回退 */
   }
   if (!r) {
     const jsr = dedupeBooks(store.books);
@@ -1175,7 +1275,7 @@ async function handleRefreshToc(book) {
     throw new Error('未找到书源，可能已被删除');
   }
   book.tocVia = 'local';
-  if (store.config.engine === 'python') {
+  if (effectiveEngine() === 'python') {
     try {
       const r = await pyengine.call('toc', { source, tocUrl: book.tocUrl || book.bookUrl, bookUrl: book.bookUrl });
       if (r && Array.isArray(r.chapters) && r.chapters.length) {
@@ -1258,15 +1358,20 @@ function lanIp() {
  * 所以固定用「服务端口 + 局域网 IP」。
  */
 function allLanIps() {
-  const skip = /^(docker|br-|veth|virbr|lo|tun|tap|zt|tailscale)/i;
   const out = [];
-  for (const [name, list] of Object.entries(os.networkInterfaces())) {
+  const push = (ip) => {
+    if (!ip || ip === '127.0.0.1' || out.includes(ip)) return;
+    out.push(ip);
+  };
+  for (const list of Object.values(os.networkInterfaces())) {
     for (const n of list || []) {
       if (n.family !== 'IPv4' || n.internal) continue;
-      if (skip.test(name)) continue;
-      if (!out.includes(n.address)) out.push(n.address);
+      push(n.address);
     }
   }
+  // 常见私有网段优先展示（192.168 > 10. > 172.16-31）
+  const score = (ip) => (ip.startsWith('192.168.') ? 0 : ip.startsWith('10.') ? 1 : ip.startsWith('172.') ? 2 : 3);
+  out.sort((a, b) => score(a) - score(b));
   return out.length ? out : ['127.0.0.1'];
 }
 
@@ -2349,6 +2454,23 @@ async function route(req, res, url) {
       }
     }
 
+    // 客户端回传的 .nb 若是整本大块（只有一个章节），用 TXT 目录规则再切一次
+    if (chapters.length === 1) {
+      const blob = chapters
+        .map((c) => String(c.raw || '') + '\n' + (Array.isArray(c.paragraphs) ? c.paragraphs.join('\n') : ''))
+        .join('\n');
+      if (blob.length > 3000) {
+        try {
+          const r = splitTxtByRules(blob, book.name);
+          if (r.chapters.length > 1) {
+            chapters = r.chapters.map((c) => ({ title: c.title, raw: c.paragraphs.map((p) => p.t || p).join('\n') }));
+          }
+        } catch {
+          /* 规则失败就保持原样 */
+        }
+      }
+    }
+
     const saved = [];
     let bytes = 0;
     let imageCount = 0;
@@ -3074,14 +3196,23 @@ function saveCover(target, buf, mime) {
   if (p === '/api/engine' && method === 'GET') {
     const status = await pyengine.probe();
     return json(res, 200, {
-      engine: store.config.engine === 'python' ? 'python' : 'node',
+      engine: effectiveEngine(),
+      engineSwitch: store.config.engine === 'python' ? 'python' : 'node',
+      pyMode: String(store.config.pyMode || 'aux'),
+      pythonAux: pythonAuxEnabled(),
       python: status,
     });
   }
 
   if (p === '/api/engine' && method === 'POST') {
     const body = await readJson(req);
-    const want = body && body.engine === 'python' ? 'python' : 'node';
+    if (body && (body.pyMode === 'aux' || body.pyMode === 'core')) {
+      store.saveConfig({ pyMode: body.pyMode });
+    }
+    if (!body || body.engine === undefined) {
+      return json(res, 200, { ok: true, engine: effectiveEngine(), pyMode: String(store.config.pyMode || 'aux') });
+    }
+    const want = body.engine === 'python' ? 'python' : 'node';
     if (want === 'python') {
       const status = await pyengine.probe(true);
       if (!status.ok) return json(res, 400, { error: 'Python 引擎不可用：' + (status.error || '未知原因'), python: status });
@@ -3572,7 +3703,14 @@ function saveCover(target, buf, mime) {
   if (p === '/api/download/cancel' && method === 'POST') {
     const body = await readJson(req);
     const job = downloadJobs.get(body.url);
-    if (job) job.cancel = true;
+    if (job) {
+      job.cancel = true;
+      try {
+        pyengine.killTree(job.child);
+      } catch {
+        /* ignore */
+      }
+    }
     return json(res, 200, { ok: true });
   }
 
@@ -3625,6 +3763,134 @@ function saveCover(target, buf, mime) {
     return json(res, 200, { ok: true, source, localEbook: book.localEbook });
   }
 
+  // ---- 导出书架所有书为 TXT，直接写进 ebookDir，随后自动扫描 + 去重 ----
+  if (p === '/api/export/books-txt' && method === 'POST') {
+    const dir = ebookScan.ebookDir(ebookCtx);
+    fs.mkdirSync(dir, { recursive: true });
+    const books = [...store.books];
+    const written = [];
+    const skipped = [];
+    const sanitize = (n) => String(n || '未命名').replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 80) || '未命名';
+
+    const ebookText = (book) => {
+      const sha = ebookRender.parseUrl(book.bookUrl) || (book.localEbook && book.localEbook.sha1);
+      if (!sha) return '';
+      const toc = ebookRender.toc(store.dataDir, sha);
+      if (!toc || !toc.chapters) return '';
+      const parts = [];
+      toc.chapters.forEach((c, i) => {
+        const ch = ebookRender.content(store.dataDir, sha, i);
+        if (!ch) return;
+        parts.push(ch.title, ...ch.paragraphs, '');
+      });
+      return parts.join('\n');
+    };
+
+    const cacheText = (book) => {
+      const raw = book.cachedDir;
+      if (!raw) return '';
+      const full = path.isAbsolute(raw) ? raw : path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache', raw);
+      if (!fs.existsSync(full)) return '';
+      let files = [];
+      try {
+        files = fs.readdirSync(full).filter((f) => f.endsWith('.txt')).sort();
+      } catch {
+        return '';
+      }
+      if (!files.length) return '';
+      const parts = [];
+      for (const f of files) {
+        try {
+          parts.push(f.replace(/^\d+\s*/, '').replace(/\.txt$/, ''), fs.readFileSync(path.join(full, f), 'utf8'), '');
+        } catch {
+          /* ignore */
+        }
+      }
+      return parts.join('\n');
+    };
+
+    for (const b of books) {
+      let text = '';
+      try {
+        text = ebookText(b) || cacheText(b);
+      } catch {
+        text = '';
+      }
+      if (!text || text.length < 20) {
+        skipped.push(b.name);
+        continue;
+      }
+      const name = sanitize(b.name) + '.txt';
+      try {
+        const dest = path.join(dir, name);
+        fs.writeFileSync(dest, text, 'utf8');
+        // 回拨 mtime，让紧随其后的扫描立刻收录（scan 有 20 秒保护）
+        try {
+          const old = Date.now() / 1000 - 120;
+          fs.utimesSync(dest, old, old);
+        } catch {
+          /* ignore */
+        }
+        written.push(name);
+      } catch {
+        skipped.push(b.name);
+      }
+    }
+
+    // 导出完自动扫描 + 去重
+    let scan = null;
+    let dedupe = null;
+    try {
+      scan = await ebookScan.scanOnce(ebookCtx);
+    } catch (e) {
+      scan = { error: String(e.message || e) };
+    }
+    try {
+      dedupe = await dedupeShelf();
+    } catch (e) {
+      dedupe = { error: String(e.message || e) };
+    }
+
+    return json(res, 200, {
+      ok: true,
+      dir,
+      written,
+      skipped,
+      scan,
+      dedupe: dedupe && { removed: dedupe.removed || 0, via: dedupe.via || '' },
+    });
+  }
+
+  // ---- 随包文档：列表 + Markdown 渲染 ----
+  if (p === '/api/docs' && method === 'GET') {
+    const wantHtml = searchParams.get('html') === '1';
+    const name = String(searchParams.get('name') || '').trim();
+    if (!wantHtml) {
+      let files = [];
+      try {
+        files = fs
+          .readdirSync(path.join(APP_DEST, 'web', 'docs'))
+          .filter((f) => /\.md$/i.test(f))
+          .map((f) => ({ name: f, title: f.replace(/\.md$/i, '') }));
+      } catch {
+        files = [];
+      }
+      return json(res, 200, { docs: files });
+    }
+    if (!name || !/\.md$/i.test(name) || name.includes('/') || name.includes('\\') || name.includes('..')) {
+      return json(res, 400, { error: '文档名不合法' });
+    }
+    try {
+      const file = path.join(APP_DEST, 'web', 'docs', path.basename(name));
+      if (!fs.existsSync(file)) return json(res, 404, { error: '文档不存在' });
+      const text = fs.readFileSync(file, 'utf8');
+      const md = require('./markdown');
+      return json(res, 200, { name: path.basename(name), html: md.mdToHtml(text), bytes: text.length });
+    } catch (e) {
+      return json(res, 500, { error: String(e.message || e) });
+    }
+  }
+
   // 封面刷新：清掉本地封面缓存，前端带 ?v= 重新抓取
   if (p === '/api/covers/refresh' && method === 'POST') {
     let cleared = 0;
@@ -3647,15 +3913,18 @@ function saveCover(target, buf, mime) {
   // 电子书引擎设置：proxy（默认，手机优先）/ local（仅本机）/ off
   if (p === '/api/ebook/settings' && method === 'GET') {
     const entries = ebookStore.loadIndex(store.dataDir);
+    const alive = entries.filter((e) => e.status !== 'missing');
     return json(res, 200, {
       mode: ebookBus.ebookMode(store.config),
       treProxy: store.config.treProxy !== false,
       enabled: store.config.ebookEnabled !== false,
       dir: ebookScan.ebookDir(ebookCtx),
       scanSec: Number(store.config.ebookScanSec) || 60,
-      local: entries.filter((e) => e.source === 'server').length,
-      device: entries.filter((e) => e.source === 'device').length,
-      total: entries.length,
+      // 本机 = 已经落盘可读的（不区分解析来源）；手机 = 由设备解析的
+      local: alive.filter((e) => e.status === 'complete' || e.status === 'partial' || e.status === 'toc-only').length,
+      device: alive.filter((e) => e.source === 'device').length,
+      skipping: entries.filter((e) => e.status === 'missing').length,
+      total: alive.length,
     });
   }
 

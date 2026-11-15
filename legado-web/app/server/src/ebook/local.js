@@ -5,6 +5,8 @@ const { parseEpub } = require('./epub');
 const { parseMobi } = require('./mobi');
 const { parsePdf } = require('./pdf');
 const { parseTxt } = require('./text');
+const { mdToChapters } = require('../markdown');
+const { splitTxtChapters } = require('../txtrule');
 const { clean } = require('./html');
 const store = require('./store');
 
@@ -20,6 +22,21 @@ function parseByFormat(buf, format, name, file) {
   if (format === 'epub') return parseEpub(buf, { name });
   if (format === 'mobi') return parseMobi(buf, { name });
   if (format === 'pdf') return parsePdf(buf, { name, file });
+  if (format === 'txt') {
+    const r = splitTxtChapters(buf.toString('utf8'), name);
+    if (r.chapters && r.chapters.length > 1) {
+      return {
+        meta: { title: name, author: '' },
+        chapters: r.chapters,
+        chars: r.chapters.reduce((n, c) => n + c.paragraphs.reduce((m, p) => m + (p.t || '').length, 0), 0),
+        rule: r.rule,
+      };
+    }
+  }
+  if (format === 'md') {
+    const chapters = mdToChapters(buf.toString('utf8'), name);
+    return { meta: { title: name, author: '' }, chapters, chars: chapters.reduce((n, c) => n + c.paragraphs.reduce((m, p) => m + (p.t || '').length, 0), 0) };
+  }
   return parseTxt(buf, { name });
 }
 
