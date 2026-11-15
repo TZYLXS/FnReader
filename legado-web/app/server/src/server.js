@@ -3215,7 +3215,7 @@ function saveCover(target, buf, mime) {
     if (!['search', 'toc', 'content', 'bookinfo', 'rank', 'ebook-parse', 'ebook-chapter'].includes(type)) {
       return json(res, 400, { error: '不支持的任务类型' });
     }
-    if (!busEnabled()) return json(res, 409, { error: '请先在网页端确认缓存保存位置', needConfirm: true });
+    // 软总线不因升级后的「确认缓存位置」而中断，否则客户端会拿不到任务、代理解析全空
     const isEbook = type === 'ebook-parse';
     const wait = isEbook ? 240000 : Math.min(60000, Number((body && body.waitMs) || 20000));
     const result = await remote.request(type, body.payload || {}, wait);
@@ -3337,14 +3337,6 @@ function saveCover(target, buf, mime) {
 
   // 手机端领任务（长轮询：没有任务就等一会儿再返回）
   if (p === '/api/m/remote/pending' && method === 'GET') {
-    // 还没确认缓存位置时，先不让软总线接任务（网页端确认后自动放行）
-    if (!busEnabled()) {
-      return json(res, 409, {
-        error: '请先在网页端确认缓存保存位置',
-        needConfirm: true,
-        setupUrl: '/#/setup',
-      });
-    }
     // 设备报到：id/name/model 由 App 带上来
     remote.hello({
       id: searchParams.get('id') || req.headers['x-device-id'] || '',
