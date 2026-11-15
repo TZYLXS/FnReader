@@ -459,6 +459,18 @@ async function getToc(source, book, opts = {}) {
     }
   }
 
+  // 规则在书页上完全没匹配到（站点改版，目录移到独立页面）：再找一次完整目录页
+  if (!chapters.length) {
+    const candidates = await findFullTocUrls(source, book).catch(() => []);
+    for (const fullUrl of candidates) {
+      const more = await parseTocFrom(fullUrl, source, book).catch(() => []);
+      if (more.length) {
+        chapters = more;
+        break;
+      }
+    }
+  }
+
   if (!chapters.length) throw new Error('目录为空，可能书源规则不匹配或站点改版');
   return chapters;
 }
