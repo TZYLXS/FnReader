@@ -80,6 +80,34 @@ const prefetching = new Set();
 const inflight = new Map(); // 同一章并发请求只抓一次
 
 /** 取章节正文：内存 → 磁盘 → 网络 */
+/** 清掉正文里的 HTML 片段（<br>/<div>/<p> 等），按标签断行并还原实体 */
+function cleanParagraphs(list) {
+  const out = [];
+  const push = (t) => {
+    const v = String(t || '').replace(/\u3000/g, ' ').trim();
+    if (v) out.push(v);
+  };
+  for (const raw of list || []) {
+    let t = String(raw == null ? '' : raw);
+    if (!/[<&]/.test(t)) {
+      push(t);
+      continue;
+    }
+    t = t.replace(/<br\s*\/?>/gi, '\n');
+    t = t.replace(/<\/(p|div|section|article|li|h[1-6])\s*>/gi, '\n');
+    t = t.replace(/<[^>]+>/g, '');
+    t = t
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&amp;/gi, '&')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/g, "'");
+    t.split('\n').forEach(push);
+  }
+  return out;
+}
+
 async function loadChapterContent(book, index) {
   const chapter = book.chapters[index];
   if (!chapter) throw new Error('章节不存在');
@@ -108,25 +136,25 @@ async function loadChapterContent(book, index) {
     const hit = readPhoneCache(book.bookUrl, index, 'content');
     if (hit && Array.isArray(hit.paragraphs) && hit.paragraphs.length) {
       cacheSet(key, hit.paragraphs);
-      return { paragraphs: hit.paragraphs, cached: true, via: 'phone-cache' };
+      return { paragraphs: cleanParagraphs(hit.paragraphs), cached: true, via: 'phone-cache' };
     }
     const paragraphs = await remoteContent(book, chapter).catch(() => null);
     if (paragraphs && paragraphs.length) {
       cacheSet(key, paragraphs);
       writePhoneCache(book.bookUrl, index, 'content', { paragraphs, title: chapter.title, at: Date.now() });
-      return { paragraphs, cached: false, via: 'phone' };
+      return { paragraphs: cleanParagraphs(paragraphs), cached: false, via: 'phone' };
     }
   }
   const mem = cacheGet(key);
-  if (mem) return { paragraphs: mem, cached: true };
+  if (mem) return { paragraphs: cleanParagraphs(mem), cached: true };
   const disk = diskCache.get(key);
   if (disk && disk.paragraphs) {
     cacheSet(key, disk.paragraphs);
-    return { paragraphs: disk.paragraphs, cached: true };
+    return { paragraphs: cleanParagraphs(disk.paragraphs), cached: true };
   }
   if (inflight.has(key)) {
     const paragraphs = await inflight.get(key);
-    return { paragraphs, cached: true };
+    return { paragraphs: cleanParagraphs(paragraphs), cached: true };
   }
   const source = resolveSource(book);
   if (!source) throw new Error('该书没有关联书源，且没有本地缓存');
@@ -134,7 +162,7 @@ async function loadChapterContent(book, index) {
     try {
       const r = await pyengine.call('content', { source, chapterUrl: chapter.url, bookUrl: book.bookUrl });
       if (r && Array.isArray(r.paragraphs) && r.paragraphs.length) {
-        const paragraphs = r.paragraphs.map((x) => String(x).trim()).filter(Boolean);
+        const paragraphs = cleanParagraphs(r.paragraphs);
         cacheSet(key, paragraphs);
         return { paragraphs, cached: false, via: 'python' };
       }
@@ -142,7 +170,8 @@ async function loadChapterContent(book, index) {
       /* 回退内置 */
     }
   }
-  const promise = getContent(source, book, chapter).then((paragraphs) => {
+  const promise = getContent(source, book, chapter).then((raw) => {
+    const paragraphs = cleanParagraphs(raw);
     cacheSet(key, paragraphs);
     diskCache.set(key, { paragraphs, title: chapter.title });
     return paragraphs;
