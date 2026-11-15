@@ -4,7 +4,7 @@ const zlib = require('node:zlib');
 
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' +
-  'Chrome/122.0 Safari/537.36';
+  'Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0';
 
 const cookieJar = new Map(); // host -> Map(name -> value)
 
