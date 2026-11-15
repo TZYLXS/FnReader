@@ -451,7 +451,7 @@ async function handleSearchSSE(req, res, params) {
 
       const preferRemote = store.config.preferRemote === true || params.get('remote') === '1';
       if (preferRemote && !closed && busAvailable()) {
-        const rr = await phoneSearch(source.bookSourceUrl, key, 8000);
+        const rr = await phoneSearch(source.bookSourceUrl, key, 20000);
         if (!closed && rr.ok && rr.data && Array.isArray(rr.data.books) && rr.data.books.length) {
           const books = rr.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
           found += books.length;
@@ -494,7 +494,7 @@ async function handleSearchSSE(req, res, params) {
       } catch (e) {
         // 本机解析失败：只要软总线有在线设备就交给手机再试一次
         if (!closed && (params.get('remote') === '1' || busAvailable())) {
-          const r = await phoneSearch(source.bookSourceUrl, key, 8000);
+          const r = await phoneSearch(source.bookSourceUrl, key, 20000);
           if (!closed && r.ok && r.data && Array.isArray(r.data.books) && r.data.books.length) {
             const fromPhone = r.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
             found += fromPhone.length;
@@ -1730,11 +1730,13 @@ function releasePhoneSlot() {
 }
 
 /** 通过软总线搜一个源（带排队 + 熔断） */
-async function phoneSearch(source, key, waitMs = 8000) {
+async function phoneSearch(source, key, waitMs = 20000) {
   if (Date.now() < phoneBlockedUntil) return { ok: false, error: 'bus-cooling' };
   await acquirePhoneSlot();
   try {
-    const r = await remote.request('search', { source, name: source.bookSourceName, key }, waitMs);
+    // 客户端契约：source 传书源 URL 字符串
+    const sourceUrl = typeof source === 'string' ? source : String((source && (source.bookSourceUrl || source.url)) || '');
+    const r = await remote.request('search', { source: sourceUrl, key }, waitMs);
     if (r.ok) {
       phoneFails = 0;
     } else if (String(r.error || '').includes('timeout')) {
