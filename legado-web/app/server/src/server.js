@@ -1033,12 +1033,27 @@ async function mobileSearch(key, group, limit) {
 }
 
 /** 书架去重：同名同作者只留一条（章数多的优先），其余来源记进 altOrigins */
-function dedupeShelf() {
-  const r = dedupeBooks(store.books);
+async function dedupeShelf() {
+  // 去重交给 Python 引擎（1.0.1 起），失败再回退 JS 实现
+  let r = null;
+  try {
+    const py = await pyengine.call('dedupe', { books: store.books }, 60000);
+    if (py && Array.isArray(py.books)) {
+      r = { list: py.books, removed: Number(py.removed) || 0, via: 'python' };
+    }
+  } catch {
+    /* 回退 */
+  }
+  if (!r) {
+    const jsr = dedupeBooks(store.books);
+    r = { list: jsr.list, removed: jsr.removed, via: 'js' };
+  }
   if (r.removed > 0) {
     store.saveBooks(r.list);
-    events.broadcast({ type: 'shelf', action: 'dedupe', removed: r.removed, via: 'server' });
+    events.broadcast({ type: 'shelf', action: 'dedupe', removed: r.removed, via: r.via });
+    console.log('[legado-web] 书架去重（' + r.via + '）：合并 ' + r.removed + ' 条');
   }
+  return r;
   return r;
 }
 
@@ -2627,7 +2642,7 @@ function saveCover(target, buf, mime) {
       }
     }
     if (added) events.broadcast({ type: 'shelf', action: 'add', count: added, via: 'app' });
-    if (added || updated) dedupeShelf();
+    if (added || updated) await dedupeShelf();
     return json(res, 200, { ok: true, added, updated, skippedDeleted, total: store.books.length });
   }
 
@@ -2940,7 +2955,7 @@ function saveCover(target, buf, mime) {
 
   if (p === '/api/books' && method === 'GET') {
     ensureTombstone();
-    dedupeShelf();
+    await dedupeShelf();
     const books = [...store.books].sort((a, b) => (b.durChapterTime || 0) - (a.durChapterTime || 0));
     // 老版本入库的 ebook:// 条目没有 ebookFormat，这里按登记表补上（前端据此显示「文/图」按钮）
     let fmtMap = null;
@@ -3305,7 +3320,7 @@ function saveCover(target, buf, mime) {
     ensureTombstone();
     tombstone.remove(book.bookUrl); // 网页显式加书视为用户重新加进来
     store.upsertBook(book);
-    dedupeShelf();
+    await dedupeShelf();
     // 手机解析来的书：后台预热目录与前几章，避免手机一离线就没正文
     const saved = store.findBook(book.bookUrl);
     if (saved && saved.viaPhone) {
@@ -3610,11 +3625,31 @@ function saveCover(target, buf, mime) {
     return json(res, 200, { ok: true, source, localEbook: book.localEbook });
   }
 
+  // 封面刷新：清掉本地封面缓存，前端带 ?v= 重新抓取
+  if (p === '/api/covers/refresh' && method === 'POST') {
+    let cleared = 0;
+    for (const b of store.books) {
+      if (!b.coverUrl) continue;
+      const key = crypto.createHash('sha1').update(String(b.coverUrl)).digest('hex');
+      const file = path.join(IMG_DIR, key);
+      if (fs.existsSync(file)) {
+        try {
+          fs.unlinkSync(file);
+          cleared++;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return json(res, 200, { ok: true, cleared, total: store.books.length });
+  }
+
   // 电子书引擎设置：proxy（默认，手机优先）/ local（仅本机）/ off
   if (p === '/api/ebook/settings' && method === 'GET') {
     const entries = ebookStore.loadIndex(store.dataDir);
     return json(res, 200, {
       mode: ebookBus.ebookMode(store.config),
+      treProxy: store.config.treProxy !== false,
       enabled: store.config.ebookEnabled !== false,
       dir: ebookScan.ebookDir(ebookCtx),
       scanSec: Number(store.config.ebookScanSec) || 60,
@@ -3974,19 +4009,20 @@ function main() {
   const tcp = http.createServer(server.listeners('request')[0]);
   
 // 启动即整理一次书架：删掉墓碑里残留的、合并重复条目
-try {
-  ensureTombstone();
-  const gone = tombstone.all().map((x) => x.bookUrl);
-  if (gone.length) {
-    const kept = store.books.filter((b) => !gone.includes(b.bookUrl));
-    if (kept.length !== store.books.length) store.saveBooks(kept);
+(async () => {
+  try {
+    ensureTombstone();
+    const gone = tombstone.all().map((x) => x.bookUrl);
+    if (gone.length) {
+      const kept = store.books.filter((b) => !gone.includes(b.bookUrl));
+      if (kept.length !== store.books.length) store.saveBooks(kept);
+    }
+    const r = await dedupeShelf();
+    if (r.removed) console.log('[legado-web] 启动去重：合并 ' + r.removed + ' 条重复书籍（' + r.via + '）');
+  } catch (e) {
+    console.log('[legado-web] 启动整理失败：' + e.message);
   }
-  const r = dedupeShelf();
-  // 缓存目录去重改为手动/接口触发（扫几千个目录会卡事件循环）
-  if (r.removed) console.log('[legado-web] 启动去重：合并 ' + r.removed + ' 条重复书籍');
-} catch (e) {
-  console.log('[legado-web] 启动整理失败：' + e.message);
-}
+})();
 
 tcp.listen(PORT, '0.0.0.0', () => console.log(`[legado-web] http://0.0.0.0:${PORT}`));
   tcp.on('error', (e) => console.error('[legado-web] tcp listen error:', e.message));

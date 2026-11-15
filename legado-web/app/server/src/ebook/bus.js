@@ -80,9 +80,9 @@ function dispatch(ctx, entry) {
     enqueueLocal(ctx, entry, 'server-format');
     return;
   }
-  // 仅本机模式：EPUB/MOBI 也不派给手机
-  if (mode === 'local') {
-    enqueueLocal(ctx, entry, 'local-mode');
+  // 仅本机模式，或 TRE 代理解析开关关闭：EPUB/MOBI 也不派给手机
+  if (mode === 'local' || cfg.treProxy === false) {
+    enqueueLocal(ctx, entry, mode === 'local' ? 'local-mode' : 'tre-proxy-off');
     return;
   }
 

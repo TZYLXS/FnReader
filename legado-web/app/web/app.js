@@ -8,7 +8,11 @@ const toastEl = $('#toast');
 
 function coverSrc(url, bookUrl) {
   if (!url) return '';
-  return './api/image?url=' + encodeURIComponent(url) + (bookUrl ? '&book=' + encodeURIComponent(bookUrl) : '');
+  return (
+    './api/image?url=' + encodeURIComponent(url) +
+    (bookUrl ? '&book=' + encodeURIComponent(bookUrl) : '') +
+    (state.coverVer ? '&v=' + state.coverVer : '')
+  );
 }
 
 function esc(s) {
@@ -2113,9 +2117,21 @@ async function renderSettings() {
         </div>
       </div>
       <div class="section">
-        <h3>解析引擎</h3>
+        <h3>TRE 引擎</h3>
         <div class="row"><div class="label">Python 引擎<div class="desc" id="engine-status">检测中…</div></div>
           <div class="switch" id="sw-engine"></div></div>
+        <div class="row"><div class="label">电子书解析<div class="desc" id="stat-ebook-mode">-</div></div>
+          <select id="set-ebook-mode" style="max-width:46%;font-size:12px">
+            <option value="proxy">代理解析（手机优先）</option>
+            <option value="local">仅本机解析</option>
+            <option value="off">关闭</option>
+          </select>
+        </div>
+        <div class="row"><div class="label">TRE 代理解析<div class="desc">EPUB / MOBI 交给在线设备解析（关闭则只用本机）</div></div>
+          <div class="switch ${cfg.treProxy !== false ? 'on' : ''}" id="sw-tre-proxy"></div></div>
+        <div class="row"><div class="label">扫描目录<div class="desc" id="stat-ebook">检查本地 epub/mobi/txt/pdf</div></div>
+          <button class="btn" id="scan-ebook" style="padding:5px 10px;font-size:12px">立即扫描</button>
+        </div>
       </div>
       <div class="section">
         <h3>界面</h3>
@@ -2130,37 +2146,12 @@ async function renderSettings() {
         <div class="row"><div class="label">访问令牌<div class="desc" id="api-token" style="word-break:break-all">-</div></div>
           <button class="btn" id="copy-token" style="padding:5px 10px;font-size:12px">复制</button>
           <button class="btn ghost" id="reset-token" style="padding:5px 8px;font-size:12px;color:var(--danger)">重置</button></div>
-        <div class="row"><div class="label">说明<div class="desc">安卓 App 通过 /api/m/* 读取书架、目录与正文，请求头带 X-Api-Token</div></div></div>
-        <div class="row"><div class="label">传书令牌<div class="desc" id="upload-token" style="word-break:break-all">-</div></div>
-          <button class="btn" id="copy-upload-token" style="padding:5px 10px;font-size:12px">复制</button>
-          <button class="btn ghost" id="reset-upload-token" style="padding:5px 8px;font-size:12px;color:var(--danger)">重置</button></div>
-        <div class="row"><div class="label">传书接口<div class="desc" id="upload-endpoint" style="word-break:break-all">-</div></div></div>
-        <div class="row"><div class="label">说明<div class="desc">客户端可直接 POST 二进制上传 pdf/mobi/azw3/epub/txt，绕过 WebDAV；请求头 X-Upload-Token 或在 query 带 token</div></div></div>
-      </div>
-      <div class="section">
-        <h3>阅读 APK 接入</h3>
-        <div class="row"><div class="label">书源导入链接<div class="desc" id="apk-src-link" style="word-break:break-all">-</div></div>
-          <button class="btn" id="copy-apk-link" style="padding:5px 10px;font-size:12px">复制</button></div>
-        <div class="row"><div class="label">书源 JSON<div class="desc" id="apk-src-json" style="word-break:break-all">-</div></div>
-          <button class="btn ghost" id="copy-apk-json" style="padding:5px 10px;font-size:12px">复制</button></div>
-        <div class="row"><div class="label">APK<div class="desc"><a id="apk-dl" href="https://github.com/TZYLXS/yuedu-android4/releases" target="_blank">下载「阅读」兼容版 APK（Android 4.4–5.1）</a></div></div></div>
-        <div class="row"><div class="label">用法<div class="desc">手机装好 APK 后，复制上面的导入链接，在「阅读」里「我的 → 书源管理 → 网络导入」粘贴即可；之后搜书、目录、正文、封面全部走本机飞牛书库。</div></div></div>
       </div>
       <div class="section">
         <h3>下载</h3>
         <a class="row" href="#/downloads" style="text-decoration:none"><div class="label">已下载书籍<div class="desc" id="stat-dl">-</div></div><span style="color:var(--text-2)">›</span></a>
         <div class="row"><div class="label">保存位置<div class="desc" id="stat-dir">-</div></div>
           <select id="set-dir" style="max-width:46%;font-size:12px"></select>
-        </div>
-        <div class="row"><div class="label">电子书解析<div class="desc" id="stat-ebook-mode">-</div></div>
-          <select id="set-ebook-mode" style="max-width:46%;font-size:12px">
-            <option value="proxy">代理解析（手机优先）</option>
-            <option value="local">仅本机解析</option>
-            <option value="off">关闭</option>
-          </select>
-        </div>
-        <div class="row"><div class="label">扫描目录<div class="desc" id="stat-ebook">检查本地 epub/mobi/txt/pdf</div></div>
-          <button class="btn" id="scan-ebook" style="padding:5px 10px;font-size:12px">立即扫描</button>
         </div>
         <div class="row"><div class="label">自定义目录<div class="desc">填绝对路径，如 /vol1/1000/Books</div></div>
           <input id="set-dir-custom" placeholder="/vol1/1000/Books" style="max-width:44%;font-size:12px" />
@@ -2202,7 +2193,17 @@ async function renderSettings() {
         <h3>关于</h3>
         <div class="row" id="open-help" style="cursor:pointer"><div class="label">使用帮助<div class="desc">各版块功能与常用操作</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row" id="open-log" style="cursor:pointer"><div class="label">更新日志<div class="desc" id="log-row-ver">查看历史版本</div></div><span style="color:var(--text-2)">›</span></div>
-        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.3.2 · 兼容 Legado 3.x 书源规则</div></div></div>
+        <div class="row"><div class="label">刷新封面<div class="desc">清掉封面缓存并重新抓取一次</div></div>
+          <button class="btn" id="refresh-covers" style="padding:5px 10px;font-size:12px">刷新</button></div>
+        <div class="row"><div class="label">手机接入说明<div class="desc">安卓 App 通过 /api/m/* 读取书架、目录与正文，请求头带 X-Api-Token；软总线任务走 /api/m/remote/pending</div></div></div>
+        <div class="row"><div class="label">TRE 引擎说明<div class="desc">TRE = 文本解析引擎：扫描本地 epub/mobi/pdf/txt 并解析成 JSON；EPUB/MOBI 可交给在线设备代理解析，PDF/TXT 只在本机解析</div></div></div>
+        <div class="row"><div class="label">传书说明<div class="desc">客户端已内置传书：POST /api/m/ebook/upload（X-Upload-Token），支持 pdf/mobi/azw3/epub/txt；无需在网页端配置</div></div></div>
+        <div class="row"><div class="label">阅读 APK<div class="desc"><a id="apk-dl" href="https://github.com/TZYLXS/yuedu-android4/releases" target="_blank">下载「阅读」兼容版 APK（Android 4.4–5.1）</a></div></div>
+        <div class="row"><div class="label">书源导入<div class="desc" id="apk-src-link" style="word-break:break-all">-</div></div>
+          <button class="btn" id="copy-apk-link" style="padding:5px 10px;font-size:12px">复制</button></div>
+        <div class="row"><div class="label">书源 JSON<div class="desc" id="apk-src-json" style="word-break:break-all">-</div></div>
+          <button class="btn ghost" id="copy-apk-json" style="padding:5px 10px;font-size:12px">复制</button></div>
+        <div class="row"><div class="label">阅读 · fnOS 网页版<div class="desc">版本 V2.4.5 · 兼容 Legado 3.x 书源规则</div></div></div>
       </div>`;
 
     const helpRow = $('#open-help');
@@ -2214,6 +2215,40 @@ async function renderSettings() {
     }
     const logRow = $('#open-log');
     if (logRow) logRow.onclick = () => showChangelog();
+
+    const swTre = $('#sw-tre-proxy');
+    if (swTre) {
+      swTre.onclick = async () => {
+        const next = !(swTre.classList.contains('on'));
+        swTre.classList.toggle('on', next);
+        try {
+          await saveConfig({ treProxy: next });
+          toast(next ? 'TRE 代理解析已开启（EPUB/MOBI 交给手机）' : 'TRE 代理解析已关闭（只用本机）');
+        } catch (e) {
+          swTre.classList.toggle('on', !next);
+          toast('设置失败：' + e.message);
+        }
+      };
+    }
+
+    const refreshCovers = $('#refresh-covers');
+    if (refreshCovers) {
+      refreshCovers.onclick = async () => {
+        refreshCovers.disabled = true;
+        refreshCovers.textContent = '刷新中…';
+        try {
+          const r = await api('/covers/refresh', { method: 'POST' });
+          state.coverVer = Date.now();
+          toast(`封面已刷新（清理 ${r.cleared || 0} 个缓存）`);
+          if (location.hash.startsWith('#/shelf')) renderShelf();
+        } catch (e) {
+          toast('刷新失败：' + e.message);
+        } finally {
+          refreshCovers.disabled = false;
+          refreshCovers.textContent = '刷新';
+        }
+      };
+    }
 
     $('#set-theme').onchange = (e) => saveConfig({ theme: e.target.value });
     $('#set-font').onchange = (e) => saveConfig({ fontSize: Number(e.target.value) || 19 });
@@ -2518,31 +2553,6 @@ async function renderSettings() {
           toast('重置失败：' + e.message);
         }
       };
-
-    // 客户端传书：令牌 + 接口
-    try {
-      const up = await api('/ebook/upload');
-      const utEl = $('#upload-token');
-      if (utEl) utEl.textContent = up.token || '-';
-      const ueEl = $('#upload-endpoint');
-      if (ueEl) ueEl.textContent = `${apiBase}${up.endpoint.replace('/api/m', 'api/m')}（上限 ${up.maxMB} MB）`;
-      const cu = $('#copy-upload-token');
-      if (cu) cu.onclick = () => copy(up.token || '', '传书令牌');
-      const ru = $('#reset-upload-token');
-      if (ru)
-        ru.onclick = async () => {
-          if (!confirm('重置后客户端需要重新填写传书令牌，继续？')) return;
-          try {
-            const r = await api('/ebook/upload/reset-token', { method: 'POST' });
-            if (utEl) utEl.textContent = r.token;
-            toast('传书令牌已重置');
-          } catch (e) {
-            toast('重置失败：' + e.message);
-          }
-        };
-    } catch {
-      /* 老服务端没有该接口 */
-    }
 
     // 阅读 APK 接入：一键生成 legado:// 书源导入链接
     const apkJsonUrl = `${apiBase}api/m/booksource?token=${encodeURIComponent(cfg.apiToken || '')}`;

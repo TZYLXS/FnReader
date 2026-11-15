@@ -19,6 +19,8 @@ const DEFAULT_CONFIG = {
   ebookEnabled: true,
   // 电子书解析模式：proxy=优先手机上解析（默认），local=只用本机，off=关闭
   ebookMode: 'proxy',
+  // TRE 引擎：EPUB/MOBI 是否交给在线设备代理解析
+  treProxy: true,
   ebookDir: '',
   ebookScanSec: 60,
   ebookScanDepth: 3,
