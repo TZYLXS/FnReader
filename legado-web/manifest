@@ -1,12 +1,12 @@
 appname=legado-web
-version=2.6.10
+version=2.6.11
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
 platform=all
-maintainer=legado-web
-maintainer_url=https://github.com/gedoor/legado
-distributor=legado-web
+maintainer=TZYLXS
+maintainer_url=https://github.com/TZYLXS
+distributor=TZYLXS
 desktop_uidir=ui
 desktop_applaunchname=legado-web.main
 install_dep_apps=nodejs_v22

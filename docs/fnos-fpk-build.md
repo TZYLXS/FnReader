@@ -44,9 +44,9 @@ legado-web.fpk
 | `desc` | 是 | 一句话描述 | `在飞牛中读书…` |
 | `source` | 是 | 来源，第三方填 `thirdparty` | `thirdparty` |
 | `platform` | 是 | 架构，纯脚本/Node 填 `all` | `all` |
-| `maintainer` | 是 | 维护者 | `legado-web` |
-| `maintainer_url` | 否 | 维护者主页 | `https://github.com/...` |
-| `distributor` | 否 | 分发者 | `legado-web` |
+| `maintainer` | 是 | 维护者 | `TZYLXS` |
+| `maintainer_url` | 否 | 维护者主页 | `https://github.com/TZYLXS` |
+| `distributor` | 否 | 分发者 | `TZYLXS` |
 | `desktop_uidir` | 是 | 桌面入口目录，相对包根 | `ui` |
 | `desktop_applaunchname` | 是 | 默认启动入口 key，对应 `app/ui/config` 里的 `.url` 键 | `legado-web.main` |
 | `install_dep_apps` | 否 | 依赖的官方应用（逗号分隔） | `nodejs_v22` |
