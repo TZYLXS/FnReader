@@ -80,11 +80,15 @@ function online(dev) {
 function listDevices() {
   const now = Date.now();
   return [...devices.values()]
-    .map((d) => ({
-      ...d,
-      online: now - d.lastSeen < ONLINE_MS,
-      idle: Math.round((now - d.lastSeen) / 1000),
-    }))
+    .map((d) => {
+      // 隐藏性能分与内部统计：对外只保留设备身份与在线状态
+      const { score, ok, fail, totalMs, samples, inflight, lockedBy, lastResultAt, ...pub } = d;
+      return {
+        ...pub,
+        online: now - d.lastSeen < ONLINE_MS,
+        idle: Math.round((now - d.lastSeen) / 1000),
+      };
+    })
     .sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || b.lastSeen - a.lastSeen);
 }
 
@@ -184,7 +188,11 @@ function pending(limit = 5, deviceId = '') {
   if (!enabled) return [];
   if (!dev) return [];
 
-  const slots = Math.max(0, weights.maxInflight(dev) - (dev.inflight || 0));
+  // 以实际锁定在手的任务重算在途数，避免异常路径导致 inflight 泄漏把设备卡死
+  let realInflight = 0;
+  for (const j of jobs.values()) if (j.dispatchedTo === dev.id) realInflight++;
+  dev.inflight = realInflight;
+  const slots = Math.max(0, weights.maxInflight(dev) - realInflight);
   if (!slots) return [];
   const cap = Math.min(limit, slots);
   const now = Date.now();
