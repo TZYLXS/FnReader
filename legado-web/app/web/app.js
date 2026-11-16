@@ -2193,6 +2193,12 @@ async function renderSettings() {
             <button class="btn" id="copy-alts" style="padding:4px 9px;font-size:12px">复制</button>
           </div>
         </div>
+        <div class="row row-url compact" id="row-ipv6" style="display:none">
+          <div class="row-inline">
+            <div class="desc" id="api-ipv6" style="flex:1">-</div>
+            <button class="btn" id="copy-ipv6" style="padding:4px 9px;font-size:12px">复制</button>
+          </div>
+        </div>
         <div class="row"><div class="label">访问令牌<div class="desc" id="api-token" style="word-break:break-all">-</div></div>
           <button class="btn" id="copy-token" style="padding:5px 10px;font-size:12px">复制</button>
           <button class="btn ghost" id="reset-token" style="padding:5px 8px;font-size:12px;color:var(--danger)">重置</button></div>
@@ -2655,13 +2661,23 @@ async function renderSettings() {
     const altEl = $('#api-alts');
     if (altEl && Array.isArray(cfg.lanIps) && cfg.lanIps.length > 1) {
       const others = (cfg.lanIps || []).filter((x) => x !== apiBase);
-      const v6 = cfg.ipv6Lans || [];
-      // IPv4 一行，IPv6 另起一行
-      altEl.innerHTML =
-        (others.length ? esc(others.join('  ')) : '') +
-        (v6.length ? (others.length ? '<br />' : '') + esc(v6.join('  ')) : '') || '—';
+      const v6 = (cfg.ipv6Lans || []).filter((x) => !String(x).includes('::1]'));
+      altEl.textContent = others.join('  ') || '—';
       const ca = document.getElementById('copy-alts');
-      if (ca) ca.onclick = () => copy(others.concat(v6).join('\n'), '其它地址');
+      if (ca) ca.onclick = () => copy(others.join('\n'), 'IPv4 地址');
+      // IPv6 独占一行，单独复制按钮
+      const v6El = document.getElementById('api-ipv6');
+      const v6Row = document.getElementById('row-ipv6');
+      if (v6Row && v6El) {
+        if (v6.length) {
+          v6El.textContent = v6.join('  ');
+          v6Row.style.display = '';
+          const cv6 = document.getElementById('copy-ipv6');
+          if (cv6) cv6.onclick = () => copy(v6.join('\n'), 'IPv6 地址');
+        } else {
+          v6Row.style.display = 'none';
+        }
+      }
     }
     const tokenEl = $('#api-token');
     const tokenMissing = !cfg.apiToken;
