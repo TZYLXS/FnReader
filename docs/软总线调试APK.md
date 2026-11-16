@@ -199,6 +199,19 @@ apksigner sign --ks bus-debug.jks --ks-key-alias busdebug \
 
 ---
 
+## 6.1 调试设备隔离（服务端 2.6.12+）
+
+服务端会把「调试设备」与真实手机分开，避免调试工具的假回传污染结果：
+
+- 判定：设备 ID 含 `bus-debug`/`debug`，或设备名含「调试」
+- 调试设备只会收到 `payload.debug === true` 的任务（调试工具手动下发的任务）
+- 真实手机不会收到这类调试任务
+- **调试设备的回传一律丢弃**：`POST /api/m/remote/result` 返回
+  `{ok:true, accepted:false, ignored:true}`，任务保持等待直到超时
+
+对应地，`GET /api/m/remote/pending` 返回里会带 `debug: true/false`，
+`GET /api/bus` 的设备列表里也带 `debug` 字段。
+
 ## 7. 常见问题
 
 | 现象 | 原因 | 解决 |

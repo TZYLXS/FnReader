@@ -3402,21 +3402,25 @@ function saveCover(target, buf, mime) {
       model: searchParams.get('model') || req.headers['x-device-model'] || '',
       version: searchParams.get('ver') || '',
     });
+    const deviceId = searchParams.get('id') || req.headers['x-device-id'] || '';
     const wait = Math.min(30000, Number(searchParams.get('wait') || 10000));
     const deadline = Date.now() + wait;
-    let list = remote.pending(Number(searchParams.get('limit') || 5));
+    let list = remote.pending(Number(searchParams.get('limit') || 5), deviceId);
     while (!list.length && Date.now() < deadline && !res.writableEnded) {
       await new Promise((r) => setTimeout(r, 800));
-      list = remote.pending(5);
+      list = remote.pending(5, deviceId);
     }
-    return json(res, 200, { jobs: list, waitMs: wait });
+    return json(res, 200, { jobs: list, waitMs: wait, debug: remote.isDebugDevice(deviceId, '') });
   }
 
   if (p === '/api/m/remote/result' && method === 'POST') {
     const body = await readJson(req);
     if (!body || !body.id) return json(res, 400, { error: '缺少任务 id' });
-    const ok = remote.complete(body.id, body.ok !== false, body.data, body.error);
     const devId = body.deviceId || req.headers['x-device-id'] || '';
+    const ok = remote.complete(body.id, body.ok !== false, body.data, body.error, devId);
+    if (ok === 'ignored') {
+      return json(res, 200, { ok: true, accepted: false, ignored: true, reason: '调试设备结果已忽略' });
+    }
     if (ok) {
       if (devId) remote.bumpHandled(devId);
       else {

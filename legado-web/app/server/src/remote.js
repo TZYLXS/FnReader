@@ -22,6 +22,7 @@ function hello(info = {}) {
     lastSeen: Date.now(),
     handled: prev.handled || 0,
     enabled: prev.enabled !== false,
+    debug: isDebugDevice(id, info.name || prev.name),
   };
   devices.set(id, dev);
   return dev;
@@ -58,6 +59,12 @@ function setEnabled(id, enabled) {
   return true;
 }
 const WAIT_MS = 20000;
+
+/** 调试设备：ID 含 bus-debug/debug，或名称含“调试” */
+function isDebugDevice(id, name) {
+  const text = String(id || '') + ' ' + String(name || '');
+  return /(bus[-_]?debug|\bdebug\b)/i.test(text) || /调试/.test(text);
+}
 const MAX_AGE = 120000;
 
 function purge() {
@@ -88,7 +95,10 @@ function create(type, payload, opts = {}) {
       if (jobs.has(id)) jobs.delete(id);
       resolve({ ok: false, error: 'timeout' });
     }, waitMs);
-    jobs.set(id, { id, type, payload, createdAt, expireAt: createdAt + ttlMs, resolve, timer });
+    jobs.set(id, {
+      id, type, payload, createdAt, expireAt: createdAt + ttlMs, resolve, timer,
+      debug: !!(payload && payload.debug === true),
+    });
   });
   return { id, promise };
 }
@@ -109,9 +119,12 @@ function abandon(id) {
 }
 
 /** 手机领任务：把当前待处理的任务吐出去（不删，等回结果） */
-function pending(limit = 5) {
+function pending(limit = 5, deviceId = '') {
   purge();
-  return [...jobs.values()].slice(0, limit).map((j) => ({
+  const dev = devices.get(String(deviceId || ''));
+  const debugDevice = !!(dev && dev.debug) || isDebugDevice(deviceId, '');
+  const list = [...jobs.values()].filter((j) => (debugDevice ? j.debug : !j.debug));
+  return list.slice(0, limit).map((j) => ({
     id: j.id,
     type: j.type,
     payload: j.payload,
@@ -119,7 +132,13 @@ function pending(limit = 5) {
   }));
 }
 
-function complete(id, ok, data, error) {
+function complete(id, ok, data, error, deviceId = '') {
+  const dev = devices.get(String(deviceId || ''));
+  if ((dev && dev.debug) || isDebugDevice(deviceId, '')) {
+    // 调试设备的回传一律丢弃：不 resolve、不写 recent，任务等真正设备或超时
+    console.log('[softbus] 忽略调试设备回传 device=' + deviceId + ' job=' + id);
+    return 'ignored';
+  }
   const job = jobs.get(id);
   if (!job) return false;
   try {
@@ -147,4 +166,4 @@ function stats() {
   return { pending: jobs.size, recent: recent.slice(-5) };
 }
 
-module.exports = { request, create, abandon, pending, complete, stats, hello, touch, bumpHandled, listDevices, setEnabled };
+module.exports = { request, create, abandon, pending, complete, stats, hello, touch, bumpHandled, listDevices, setEnabled, isDebugDevice };
