@@ -183,9 +183,7 @@ async function loadChapterContent(book, index) {
     const paragraphs = await inflight.get(key);
     return { paragraphs: cleanParagraphs(paragraphs), cached: true };
   }
-  const source = resolveSource(book);
-  if (!source) throw new Error('该书没有关联书源，且没有本地缓存');
-  // 优先手机代理正文：开了 preferRemote 且总线有在线设备时，先让手机解析
+  // 优先手机代理正文：即使本机没有对应书源，只要手机在线就让它先试
   if ((store.config.preferRemote === true || book.viaPhone) && busAvailable()) {
     const paras = await remoteContent(book, chapter).catch(() => null);
     if (paras && paras.length) {
@@ -196,6 +194,8 @@ async function loadChapterContent(book, index) {
       return { paragraphs: cleaned, cached: false, via: 'phone' };
     }
   }
+  const source = resolveSource(book);
+  if (!source) throw new Error('该书没有关联书源，且没有本地缓存');
   bumpUsage('localContent');
   if (effectiveEngine() === 'python') {
     try {
@@ -476,8 +476,31 @@ async function handleSearchSSE(req, res, params) {
       const startedAt = Date.now();
       send({ type: 'source-start', source: source.bookSourceName, id: source.bookSourceUrl });
 
-      // 优先手机端解析：软总线有在线设备时先问手机，拿不到再本地跑
-      // 选了 Python 引擎就先用它，失败再走内置实现
+      // 优先手机端解析：开了 preferRemote 且总线有在线设备时，先问手机，拿不到再本地跑
+      const preferRemote = store.config.preferRemote === true || params.get('remote') === '1';
+      if (preferRemote && !closed && busAvailable()) {
+        const rr = await phoneSearch(source.bookSourceUrl, key, 20000);
+        if (!closed && rr.ok && rr.data && Array.isArray(rr.data.books) && rr.data.books.length) {
+          bumpUsage('phoneSearch');
+          const books = rr.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
+          found += books.length;
+          send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books, via: 'phone' });
+          doneCount++;
+          send({
+            type: 'source-done',
+            source: source.bookSourceName,
+            count: books.length,
+            ms: Date.now() - startedAt,
+            done: doneCount,
+            total: sources.length,
+            via: 'phone',
+          });
+          continue;
+        }
+        if (closed) return;
+      }
+
+      // Python 引擎其次（本地解析），失败再走内置实现
       if (effectiveEngine() === 'python' && !closed) {
         try {
           const r = await pyengine.call('search', { source, key });
@@ -500,29 +523,6 @@ async function handleSearchSSE(req, res, params) {
         } catch (e) {
           send({ type: 'log', message: `python 引擎失败（${source.bookSourceName}）：${e.message}` });
         }
-      }
-
-      const preferRemote = store.config.preferRemote === true || params.get('remote') === '1';
-      if (preferRemote && !closed && busAvailable()) {
-        const rr = await phoneSearch(source.bookSourceUrl, key, 20000);
-        if (!closed && rr.ok && rr.data && Array.isArray(rr.data.books) && rr.data.books.length) {
-          bumpUsage('phoneSearch');
-          const books = rr.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
-          found += books.length;
-          send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books, via: 'phone' });
-          doneCount++;
-          send({
-            type: 'source-done',
-            source: source.bookSourceName,
-            count: books.length,
-            ms: Date.now() - startedAt,
-            done: doneCount,
-            total: sources.length,
-            via: 'phone',
-          });
-          continue;
-        }
-        if (closed) return;
       }
 
       try {
