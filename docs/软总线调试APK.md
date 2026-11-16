@@ -77,6 +77,8 @@ POST /api/m/remote/result?token=<API_TOKEN>
 | `toc` | `{source, bookUrl}` | `{chapters:[{title,url}]}` |
 | `content` | `{source, chapterUrl, bookUrl}` | `{paragraphs:[string]}` |
 | `bookinfo` | `{bookUrl}` | `{intro,coverUrl,author,kind,wordCount,lastChapter,totalChapterNum}` |
+| `cover` | `{bookUrl, source}` | `{coverUrl}`（2.6.17+ 拆分任务） |
+| `intro` | `{bookUrl, source}` | `{intro, author, kind, wordCount, lastChapter, totalChapterNum}` |
 | `ebook-parse` | `{name,format,dataBase64}` | `{chapters:[…]}` |
 | `ebook-chapter` | `{name,format,dataBase64,index}` | `{paragraphs:[…]}` |
 
@@ -211,6 +213,14 @@ apksigner sign --ks bus-debug.jks --ks-key-alias busdebug \
 
 对应地，`GET /api/m/remote/pending` 返回里会带 `debug: true/false`，
 `GET /api/bus` 的设备列表里也带 `debug` 字段。
+
+## 6.2 任务路由与设备评分
+
+设备会被服务端打一个**隐藏性能分**（0–100）：成功 +4、失败 −8、慢请求额外扣分。
+高分设备优先领「书籍(search/toc)」与「正文(content)」，低分设备负责「封面/简介(cover/intro)」。
+任务领取后锁定 30 秒，其它设备不会重复领取；重复回传返回 `duplicate`。
+
+完整规则（含调参入口、观测字段）见 [`软总线路由与权重.md`](./软总线路由与权重.md)。
 
 ## 7. 常见问题
 

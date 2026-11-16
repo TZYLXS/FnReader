@@ -277,15 +277,20 @@ App 侧建议：收到 409 时提示「请在网页端确认缓存位置」，�
 | `toc` | `{source, bookUrl}` | `{chapters: [{title,url}]}` |
 | `content` | `{source, chapterUrl}` | `{paragraphs: ["…"]}` |
 | `bookinfo` | `{bookUrl, source, name, author}` | `{intro, coverUrl, wordCount}`：补简介/封面/字数；失败回 `ok:false` 时服务端回落本机抓取 |
+| `cover` | `{bookUrl, source, name, author}` | `{coverUrl}`：只取封面（2.6.17+ 拆分任务，客户端不支持时服务端回退 `bookinfo`） |
+| `intro` | `{bookUrl, source, name, author}` | `{intro, author, kind, wordCount, lastChapter, totalChapterNum}`：只取简介与元数据（同上回退） |
 | `rank` | `{url}` | `{books: [{name, author, bookUrl, coverUrl, intro}]}`：榜单页地址，如 `https://www.qidian.com/rank/recom/` |
 | `ebook-parse` | `{sha1, name, format, size, fileUrl, token, schema, partMaxBytes}` | `{chapters, parts, chars}`：本地电子书分片解析，见 `电子书解析引擎接入.md` |
 | `ebook-chapter` | `{sha1, index, name, format, fileUrl, token, schema}` | `{title, paragraphs:[{k,t}]}`：toc-only/partial 书缺章时由服务端发起，客户端用原文件取该章回传 |
 
-以上 7 种是 `/api/remote/job` 与软总线白名单内的合法类型，其它 type 建任务时直接返回
+以上 9 种是 `/api/remote/job` 与软总线白名单内的合法类型，其它 type 建任务时直接返回
 400「不支持的任务类型」。其中 `ebook-parse` 的等待上限单独放宽到 **240 秒**（其它类型 60 秒）。
 
 客户端错误码约定（`ebook-parse`）：`drm` / `corrupt` / `unsupported` / `kf8-unsupported`
 回传 `ok:false` 后服务端**不做本地兜底**；其它错误（网络、超时、上传失败）服务端会兜底本地解析。
+
+> 软总线的**任务分类、设备隐藏性能分、领取锁定与幂等规则**见
+> [`软总线路由与权重.md`](./软总线路由与权重.md)。
 
 ### 8.4.1 本地电子书的两种形态
 
