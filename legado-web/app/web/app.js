@@ -2656,10 +2656,12 @@ async function renderSettings() {
     if (altEl && Array.isArray(cfg.lanIps) && cfg.lanIps.length > 1) {
       const others = (cfg.lanIps || []).filter((x) => x !== apiBase);
       const v6 = cfg.ipv6Lans || [];
-      const all = others.concat(v6);
-      altEl.textContent = all.join('  ') || '—';
+      // IPv4 一行，IPv6 另起一行
+      altEl.innerHTML =
+        (others.length ? esc(others.join('  ')) : '') +
+        (v6.length ? (others.length ? '<br />' : '') + esc(v6.join('  ')) : '') || '—';
       const ca = document.getElementById('copy-alts');
-      if (ca) ca.onclick = () => copy(all.join('\n'), '其它地址');
+      if (ca) ca.onclick = () => copy(others.concat(v6).join('\n'), '其它地址');
     }
     const tokenEl = $('#api-token');
     const tokenMissing = !cfg.apiToken;
