@@ -185,6 +185,18 @@ async function loadChapterContent(book, index) {
   }
   const source = resolveSource(book);
   if (!source) throw new Error('该书没有关联书源，且没有本地缓存');
+  // 优先手机代理正文：开了 preferRemote 且总线有在线设备时，先让手机解析
+  if ((store.config.preferRemote === true || book.viaPhone) && busAvailable()) {
+    const paras = await remoteContent(book, chapter).catch(() => null);
+    if (paras && paras.length) {
+      const cleaned = cleanParagraphs(paras);
+      cacheSet(key, cleaned);
+      writePhoneCache(book.bookUrl, index, 'content', { paragraphs: cleaned, title: chapter.title, at: Date.now() });
+      bumpUsage('phoneContent');
+      return { paragraphs: cleaned, cached: false, via: 'phone' };
+    }
+  }
+  bumpUsage('localContent');
   if (effectiveEngine() === 'python') {
     try {
       const r = await pyengine.call('content', { source, chapterUrl: chapter.url, bookUrl: book.bookUrl });
@@ -494,6 +506,7 @@ async function handleSearchSSE(req, res, params) {
       if (preferRemote && !closed && busAvailable()) {
         const rr = await phoneSearch(source.bookSourceUrl, key, 20000);
         if (!closed && rr.ok && rr.data && Array.isArray(rr.data.books) && rr.data.books.length) {
+          bumpUsage('phoneSearch');
           const books = rr.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
           found += books.length;
           send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books, via: 'phone' });
@@ -1334,6 +1347,7 @@ async function handleRefreshToc(book) {
       book.chapters = chapters;
       book.totalChapterNum = chapters.length;
       book.tocVia = 'phone';
+      bumpUsage('phoneToc');
       store.upsertBook(book);
       writePhoneCache(book.bookUrl, 0, 'toc', { chapters, at: Date.now() });
       return chapters;
@@ -1822,6 +1836,15 @@ function isOfficialSource(src) {
 function isJunkSource(src) {
   const text = String((src && src.bookSourceName) || '') + ' ' + String((src && src.bookSourceUrl) || '');
   return /词典|知道|翻译|单词|dict\.cn|zhidao\.baidu/i.test(text);
+}
+
+// 软总线使用统计（便于观察利用率）
+const busUsage = { phoneSearch: 0, phoneToc: 0, phoneContent: 0, localToc: 0, localContent: 0 };
+function bumpUsage(k) {
+  if (Object.prototype.hasOwnProperty.call(busUsage, k)) {
+    busUsage[k]++;
+    if (busUsage[k] > 1e9) busUsage[k] = 1;
+  }
 }
 
 /** 是否有在线的解析设备（软总线） */
@@ -3339,7 +3362,7 @@ function saveCover(target, buf, mime) {
 
 
   if (p === '/api/bus' && method === 'GET') {
-    return json(res, 200, { devices: remote.listDevices(), ...remote.stats() });
+    return json(res, 200, { devices: remote.listDevices(), ...remote.stats(), usage: busUsage });
   }
 
   if (p === '/api/bus/toggle' && method === 'POST') {
