@@ -1273,6 +1273,47 @@ async function remoteBookInfo(bookUrl, source, timeout = 10000) {
   };
 }
 
+/**
+ * 拆分任务：封面（cover）与简介（intro）分别下发，交给低分设备处理；
+ * 客户端若不支持这两种类型，会回失败，这里再回退到原来的 bookinfo。
+ */
+async function remoteMedia(bookUrl, source, timeout = 8000) {
+  if (!busAvailable()) return null;
+  const book = bookUrl ? store.findBook(bookUrl) : null;
+  const base = {
+    bookUrl,
+    source: source || (book && book.origin) || '',
+    name: (book && book.name) || '',
+    author: (book && book.author) || '',
+  };
+  const [cover, intro] = await Promise.all([
+    remote.request('cover', base, timeout).catch(() => null),
+    remote.request('intro', base, timeout).catch(() => null),
+  ]);
+  const out = {
+    coverUrl: '',
+    intro: '',
+    author: '',
+    kind: '',
+    wordCount: '',
+    lastChapter: '',
+    totalChapterNum: 0,
+  };
+  if (cover && cover.ok && cover.data) {
+    out.coverUrl = String(cover.data.coverUrl || cover.data.url || '').trim();
+  }
+  if (intro && intro.ok && intro.data) {
+    out.intro = String(intro.data.intro || '').trim();
+    out.author = String(intro.data.author || '').trim();
+    out.kind = String(intro.data.kind || '').trim();
+    out.wordCount = String(intro.data.wordCount || '').trim();
+    out.lastChapter = String(intro.data.lastChapter || '').trim();
+    out.totalChapterNum = Number(intro.data.totalChapterNum) || 0;
+  }
+  if (!out.coverUrl && !out.intro) return null;
+  return out;
+}
+
 /** 把手机补全的信息写回书架 */
 function applyRemoteBookInfo(book, info) {
   if (!book || !info) return;
@@ -3293,7 +3334,7 @@ function saveCover(target, buf, mime) {
   if (p === '/api/remote/job' && method === 'POST') {
     const body = await readJson(req);
     const type = String((body && body.type) || '');
-    if (!['search', 'toc', 'content', 'bookinfo', 'rank', 'ebook-parse', 'ebook-chapter'].includes(type)) {
+    if (!['search', 'toc', 'content', 'bookinfo', 'cover', 'intro', 'rank', 'ebook-parse', 'ebook-chapter'].includes(type)) {
       return json(res, 400, { error: '不支持的任务类型' });
     }
     // 软总线不因升级后的「确认缓存位置」而中断，否则客户端会拿不到任务、代理解析全空
@@ -3493,7 +3534,7 @@ function saveCover(target, buf, mime) {
       });
       // 本地书源/晋江都拿不到时，让手机端补全
       if (!r.intro) {
-        const info = await remoteBookInfo(bookUrlParam, originParam);
+        const info = (await remoteMedia(bookUrlParam, originParam)) || (await remoteBookInfo(bookUrlParam, originParam));
         if (info && info.intro) {
           const book = store.findBook(bookUrlParam);
           if (book) applyRemoteBookInfo(book, info);
@@ -3527,7 +3568,7 @@ function saveCover(target, buf, mime) {
     }
     // 本地书源抓不到简介：让手机补
     if (!book.intro || !book.coverUrl) {
-      const info = await remoteBookInfo(url, origin);
+      const info = (await remoteMedia(url, origin)) || (await remoteBookInfo(url, origin));
       if (info && (info.intro || info.coverUrl)) {
         applyRemoteBookInfo(inShelf || book, info);
         Object.assign(book, {
