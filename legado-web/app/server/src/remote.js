@@ -63,7 +63,10 @@ const WAIT_MS = 20000;
 /** 调试设备：ID 含 bus-debug/debug，或名称含“调试” */
 function isDebugDevice(id, name) {
   const text = String(id || '') + ' ' + String(name || '');
-  return /(bus[-_]?debug|\bdebug\b)/i.test(text) || /调试/.test(text);
+  // ID：bus-debug / busmon / monitor / mock / fake / e2e / debug
+  // 名称：调试 / 监控 / 测试机
+  return /(bus[-_]?debug|busmon|\bmonitor\b|\bmock\b|\bfake\b|\be2e\b|\bdebug\b)/i.test(text) ||
+    /(调试|监控|测试机)/.test(text);
 }
 const MAX_AGE = 120000;
 
