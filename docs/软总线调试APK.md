@@ -6,6 +6,17 @@
 
 源码在 `tools/bus-debug-app/`，本文档面向「让 AI 重新构建 / 修改这个 APK」的场景。
 
+## 0. 直接下载（不想自己构建）
+
+Release 里已经挂好现成 APK：
+
+```
+https://github.com/TZYLXS/FnReader/releases/download/v2.6.11/bus-debug.apk
+```
+
+也由 GitHub Actions 自动构建（`.github/workflows/build-bus-debug.yml`），
+每次 `tools/bus-debug-app/**` 变更会自动产出 `bus-debug-apk` Artifact。
+
 ---
 
 ## 1. 它能做什么
