@@ -36,6 +36,17 @@
 7. **纯 bug 修复没有增删功能**时，可以不改接口文档，但仍要写更新日志
 8. 文档改动随同一版本一起提交/发版（纯文档改动可按例外不发版）
 
+## 工具调用约定（用户要求，2026-11-17）
+
+**执行命令只能用 `ops_bash` 工具。本环境不存在名为 `bash` 的工具**，调用它会直接报
+`Error: unknown tool "bash"`。生成工具调用时必须检查工具名：
+
+- ✅ `ops_bash`（唯一可执行 shell 命令的入口，Windows 下是 MSYS Bash）
+- ❌ `bash` / `shell` / `run` / `exec` —— 都不存在
+- 同一轮里不要用 `echo x` 之类的占位调用热身，直接写真实命令
+- 读文件用 `read`/`ops_read_files`，搜内容用 `grep`/`ops_grep`，找文件用 `glob`/`ops_glob`
+- 后台任务用 `ops_bash` 的 `run_in_background`，用 `job_output` 收结果
+
 ## 环境备忘
 
 - 本机**没有 git**，也没有 MSYS2 常规路径；推送用 GitHub API（token 从 Windows 凭据管理器读：
