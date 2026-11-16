@@ -331,7 +331,20 @@ function applySuffixes(values, seg) {
  * @param {object} opts {scope: node, all: bool}
  * @returns {{values: string[], nodes: any[]}}
  */
+let evalDepth = 0;
+
+/** 规则引擎递归保护：部分书源规则会自我引用，深层递归会爆栈 */
 function evalRule(ruleStr, ctx, opts = {}) {
+  if (evalDepth > 200) throw new Error('书源规则循环引用（递归超过 200 层），已中止解析');
+  evalDepth++;
+  try {
+    return evalRuleInner(ruleStr, ctx, opts);
+  } finally {
+    evalDepth--;
+  }
+}
+
+function evalRuleInner(ruleStr, ctx, opts = {}) {
   let rule = ruleStr == null ? '' : String(ruleStr);
 
   // JSON 节点里的 {{$.field}} / {$..field} / {{field}} 模板替换

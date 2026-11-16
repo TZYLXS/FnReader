@@ -3763,7 +3763,10 @@ function saveCover(target, buf, mime) {
     try {
       result = await loadChapterContent(book, index);
     } catch (e) {
-      return json(res, 502, { error: String(e.message || e) });
+      const msg = String(e.message || e);
+      return json(res, 502, {
+        error: /Maximum call stack|递归/.test(msg) ? '书源规则递归过深，已中止解析（请检查该源的 ruleToc/ruleContent）' : msg,
+      });
     }
     const chapter = book.chapters[index];
     // 后台预取后面两章，翻页时直接命中
@@ -4558,8 +4561,13 @@ const server = http.createServer((req, res) => {
   }
   route(req, res, url).catch((e) => {
     console.error('[error]', e);
-    if (!res.headersSent) json(res, 500, { error: String(e.message || e) });
-    else res.end();
+    if (!res.headersSent) {
+      const msg = String(e.message || e);
+      const friendly = /Maximum call stack|递归/.test(msg)
+        ? '书源规则递归过深，已中止解析（请检查该源的 ruleToc/ruleContent）'
+        : msg;
+      json(res, /Maximum call stack|递归/.test(msg) ? 502 : 500, { error: friendly });
+    } else res.end();
   });
 });
 
