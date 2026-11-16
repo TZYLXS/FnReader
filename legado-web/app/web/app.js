@@ -160,7 +160,7 @@ async function router() {
   if (path === '/bus') return renderBus();
   if (path === '/detail') return renderDetail();
   if (path === '/feeds') return renderFeeds();
-  if (path === '/downloads') return renderDownloads();
+  if (path === '/downloads' || path === '/offline') return renderOffline();
   if (path === '/setup') return renderSetup();
   if (path.startsWith('/read')) return openReader(params.get('url'), params.get('title'));
   return renderShelf();
@@ -1954,119 +1954,112 @@ function formatSize(bytes) {
   return (bytes / 1024 / 1024).toFixed(1) + ' MB';
 }
 
-async function renderDownloads() {
-  view.innerHTML = `
-    <header class="topbar"><h1>已下载</h1><a class="btn ghost" href="#/settings">设置</a></header>
-    <div id="dl-body"><div class="empty">加载中…</div></div>`;
+async function checkUpdateNotice() {
   try {
-    const { items } = await api('/downloads');
-    const body = $('#dl-body');
+    const r = await api('/update/check');
+    if (!r || !r.hasUpdate) return;
+    const ignored = localStorage.getItem('legado.ignoreUpdate') || '';
+    if (ignored === r.latest) return;
+    const modal = $('#modal');
+    const box = $('#modal-box');
+    box.innerHTML = `
+      <h3>发现新版本 V${esc(r.latest)}</h3>
+      <div class="desc" style="font-size:12px;color:var(--text-2);margin-top:4px">当前 V${esc(r.current)}</div>
+      <pre class="md-code" style="white-space:pre-wrap;max-height:34vh;overflow:auto;font-size:12px;margin-top:10px">${esc((r.notes || '').slice(0, 600))}</pre>
+      <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button class="btn ghost" id="up-ignore">忽略此版本</button>
+        <button class="btn" id="up-later">稍后</button>
+        ${
+          r.url
+            ? `<a class="btn primary" href="${esc(r.url)}" target="_blank" rel="noopener">查看更新</a>`
+            : '<span class="desc">暂无下载地址</span>'
+        }
+      </div>`;
+    modal.classList.remove('hidden');
+    const close = () => modal.classList.add('hidden');
+    box.querySelector('#up-later').onclick = close;
+    box.querySelector('#up-ignore').onclick = () => {
+      try {
+        localStorage.setItem('legado.ignoreUpdate', r.latest);
+      } catch {
+        /* ignore */
+      }
+      close();
+    };
+  } catch {
+    /* 更新检查失败静默 */
+  }
+}
+
+async function renderOffline() {
+  view.innerHTML = `
+    <header class="topbar"><h1>离线缓存</h1><span class="desc" style="color:var(--text-2);font-size:12px">全部</span></header>
+    <div id="off-body"><div class="empty">加载中…</div></div>`;
+  const body = $('#off-body');
+  try {
+    const data = await api('/offline');
+    const items = data.items || [];
     if (!items.length) {
-      body.innerHTML = `<div class="empty"><div class="big">📥</div>还没有下载过书籍<br />在书架长按书封，选「下载整本为 TXT」</div>`;
+      body.innerHTML = `<div class="empty"><div class="big">📥</div>还没有离线内容<br />在书架长按书封「下载整本 TXT」，或扫描本地电子书</div>`;
       return;
     }
-    body.innerHTML = `<div class="section" style="margin-top:12px">${items
-      .map(
-        (it) => `<div class="source-item">
-        <div class="name">
-          <b>${esc(it.name)}</b>
-          <span>${esc(it.author || '')} · ${it.chapters} 章 · ${formatSize(it.size)} · ${formatDate(it.time)}${it.exists ? '' : ' · 文件已丢失'}</span>
-          <span style="color:var(--text-2)">${esc(String(it.file || '').replace(/\/[^/]*$/, '') || '')}</span>
-        </div>
-        ${
-          it.exists
-            ? `<a class="btn" download style="padding:6px 10px;font-size:12px" href="./api/download/file?url=${encodeURIComponent(it.bookUrl)}">保存</a>`
-            : ''
+    body.innerHTML =
+      `<div class="section" style="margin-top:12px">` +
+      items
+        .map((it) => {
+          const pct = it.total ? Math.round((it.downloaded / it.total) * 100) : 0;
+          const sub = [
+            it.author || '',
+            it.format ? it.format.toUpperCase() : '',
+            `已下载 ${it.downloaded}/${it.total || it.downloaded}`,
+            it.size ? formatSize(it.size) : '',
+          ]
+            .filter(Boolean)
+            .join(' · ');
+          const href =
+            it.kind === 'ebook'
+              ? `./api/ebook/export?sha1=${encodeURIComponent(it.sha1)}`
+              : it.hasTxt
+                ? `./api/download/file?url=${encodeURIComponent(it.bookUrl)}`
+                : '';
+          return `<div class="source-item">
+            <div class="name">
+              <b>${esc(it.name)}</b>
+              <span>${esc(sub)}</span>
+              <span style="color:var(--text-2);font-size:11px">${pct}% · ${it.kind === 'ebook' ? '本地电子书' : '在线书籍'}</span>
+            </div>
+            ${
+              href
+                ? `<a class="btn" download style="padding:6px 10px;font-size:12px" href="${href}">导出</a>`
+                : `<span style="color:var(--text-2);font-size:12px">仅章节缓存</span>`
+            }
+          </div>`;
+        })
+        .join('') +
+      `</div>
+      <div class="row" style="margin:12px 16px"><div class="label">合计<div class="desc">在线 ${data.books} 本 · 电子书 ${data.ebooks} 本</div></div>
+      <button class="btn" id="off-export-all" style="padding:5px 10px;font-size:12px">导出全部 TXT</button></div>`;
+    const all = $('#off-export-all');
+    if (all)
+      all.onclick = async () => {
+        all.disabled = true;
+        all.textContent = '导出中…';
+        try {
+          const r = await api('/export/books-txt', { method: 'POST' });
+          toast(`已导出 ${r.written.length} 本到 ebook 目录，已自动扫描并去重`);
+        } catch (e) {
+          toast('导出失败：' + e.message);
+        } finally {
+          all.disabled = false;
+          all.textContent = '导出全部 TXT';
         }
-        <button class="btn ghost" data-del="${esc(it.bookUrl)}" style="padding:6px 8px;color:var(--danger);font-size:12px">删除</button>
-      </div>`
-      )
-      .join('')}</div>`;
-    body.onclick = async (e) => {
-      const bookUrl = e.target.dataset.del;
-      if (!bookUrl) return;
-      if (!confirm('删除这本书的 TXT 文件？')) return;
-      try {
-        await api('/downloads?url=' + encodeURIComponent(bookUrl), { method: 'DELETE' });
-        toast('已删除');
-        renderDownloads();
-      } catch (err) {
-        toast('删除失败：' + err.message);
-      }
-    };
+      };
   } catch (e) {
-    $('#dl-body').innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+    body.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
   }
 }
 
-/* ---------------- 使用帮助 ---------------- */
-const HELP_KEY = 'legado-help-v1';
 
-function showHelp(manual = false) {
-  const modal = $('#modal');
-  const box = $('#modal-box');
-  box.innerHTML = `
-    <h3 style="margin-bottom:2px">欢迎使用 阅读</h3>
-    <p style="color:var(--text-2);font-size:12.5px;margin:0 0 6px">在飞牛里读书 · 兼容 Legado 3.x 书源</p>
-
-    <div class="help-item">
-      <div class="help-ico">书</div>
-      <div><b>书架</b><p>点封面继续阅读；点右上角「⋯」或长按封面可下载整本 TXT、刷新目录、从书架删除。</p></div>
-    </div>
-    <div class="help-item">
-      <div class="help-ico">搜</div>
-      <div><b>搜索（找书 / 订阅）</b><p>「找书」按书名或作者搜，可只搜「仅可用」书源，也能按分组搜；「订阅」添加 RSS / Atom 地址。</p></div>
-    </div>
-    <div class="help-item">
-      <div class="help-ico">源</div>
-      <div><b>书源</b><p>粘贴或导入 Legado 书源 JSON。书源很多时先点「检测」，跑完点「停用未通过」，之后搜索会快很多。</p></div>
-    </div>
-    <div class="help-item">
-      <div class="help-ico">设</div>
-      <div><b>设置</b><p>阅读主题 / 字号 / 行距；下载位置（可选 fnOS 授权目录）、已下载书籍列表。</p></div>
-    </div>
-    <div class="help-item">
-      <div class="help-ico">读</div>
-      <div><b>阅读页</b><p>底部「上一章 / 下一章」翻页；右上角「☰」是目录、「Aa」调主题和字号，整本下载也在里面。进度自动保存。</p></div>
-    </div>
-
-    <div class="modal-actions">
-      <button class="btn primary" id="help-ok">知道了</button>
-    </div>`;
-  modal.classList.remove('hidden');
-  const close = () => {
-    modal.classList.add('hidden');
-    try {
-      localStorage.setItem(HELP_KEY, '1');
-    } catch {
-      /* 隐私模式下可能不可写 */
-    }
-  };
-  $('#help-ok').onclick = close;
-  modal.onclick = (e) => {
-    if (e.target === modal) close();
-  };
-}
-
-function maybeShowFirstRunHelp() {
-  if (parseHash().params.get('log') === '1') return;
-  if (parseHash().params.get('help') === '0') return;
-  let seen = false;
-  try {
-    seen = localStorage.getItem(HELP_KEY) === '1';
-  } catch {
-    seen = true;
-  }
-  if (!seen)
-    setTimeout(() => {
-      const m = $('#modal');
-      // 已经有别的弹窗（比如更新日志）就先不打扰
-      if (m && !m.classList.contains('hidden')) return;
-      showHelp();
-    }, 400);
-}
-
-/* ---------------- 随包文档（Markdown） ---------------- */
 async function showDocs() {
   const modal = $('#modal');
   const box = $('#modal-box');
@@ -2206,7 +2199,7 @@ async function renderSettings() {
       </div>
       <div class="section">
         <h3>下载</h3>
-        <a class="row" href="#/downloads" style="text-decoration:none"><div class="label">已下载书籍<div class="desc" id="stat-dl">-</div></div><span style="color:var(--text-2)">›</span></a>
+        <a class="row" href="#/offline" style="text-decoration:none"><div class="label">已下载书籍<div class="desc" id="stat-dl">-</div></div><span style="color:var(--text-2)">›</span></a>
         <div class="row"><div class="label">保存位置<div class="desc" id="stat-dir">-</div></div>
           <select id="set-dir" style="max-width:46%;font-size:12px"></select>
         </div>
@@ -2220,8 +2213,7 @@ async function renderSettings() {
         <div class="row"><div class="label">书源数量<div class="desc" id="stat-src">-</div></div></div>
         <div class="row"><div class="label">书籍数量<div class="desc" id="stat-book">-</div></div></div>
         <div class="row"><div class="label">搜索缓存<div class="desc" id="stat-cache">-</div></div><button class="btn" id="clear-cache" style="padding:5px 10px;font-size:12px">清空</button></div>
-        <div class="row"><div class="label">本地电子书<div class="desc" id="stat-ebook-count">-</div></div>
-          <button class="btn" id="export-books" style="padding:5px 10px;font-size:12px">导出全部 TXT</button></div>
+        <a class="row" href="#/offline" style="text-decoration:none"><div class="label">离线缓存<div class="desc" id="stat-ebook-count">-</div></div><span style="color:var(--text-2)">›</span></a>
         <div class="row"><div class="label">导出日志<div class="desc">含版本、配置、书源/电子书统计、最近运行日志（JSON）</div></div>
           <button class="btn" id="export-logs" style="padding:5px 10px;font-size:12px">导出 .json</button></div>
       </div>
@@ -2315,11 +2307,11 @@ async function renderSettings() {
     $('#stat-src').textContent = `${sources.length} 个（${sources.filter((s) => s.enabled).length} 个启用）`;
     $('#stat-book').textContent = `${books.length} 本`;
 
-    // 本地电子书数量（数据区）
+    // 离线缓存统计（数据区 → #/offline）
     try {
-      const es = await api('/ebook/settings');
+      const off = await api('/offline');
       const el = $('#stat-ebook-count');
-      if (el) el.textContent = `${es.local} 本可读 · 手机解析 ${es.device} 本 · 共 ${es.total} 本`;
+      if (el) el.textContent = `在线 ${off.books} 本 · 电子书 ${off.ebooks} 本 · 共 ${off.total} 本`;
     } catch {
       /* 老服务端 */
     }
@@ -2827,5 +2819,8 @@ document.addEventListener('keydown', (e) => {
   }
   router();
   maybeShowFirstRunHelp();
-  if (!parseHash().params.has('noevents')) connectEvents();
+  if (!parseHash().params.has('noevents')) {
+    connectEvents();
+    setTimeout(() => checkUpdateNotice(), 1500);
+  }
 })();

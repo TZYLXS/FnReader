@@ -3825,6 +3825,144 @@ function saveCover(target, buf, mime) {
     return json(res, 200, { ok: true, source, localEbook: book.localEbook });
   }
 
+  // ---- 离线缓存：书架缓存章节 + 整本 TXT + 本地电子书 合并列表 ----
+  if (p === '/api/offline' && method === 'GET') {
+    const items = [];
+    const dlIndex = readJSON(DOWNLOAD_INDEX, []);
+    const byUrl = new Map(dlIndex.map((x) => [x.bookUrl, x]));
+    const countCacheFiles = (dir) => {
+      if (!dir) return 0;
+      const full = path.isAbsolute(dir) ? dir : path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache', dir);
+      try {
+        return fs.readdirSync(full).filter((f) => f.endsWith('.txt')).length;
+      } catch {
+        return 0;
+      }
+    };
+    for (const b of store.books) {
+      const cached = countCacheFiles(b.cachedDir);
+      const dl = byUrl.get(b.bookUrl);
+      const total = (b.chapters && b.chapters.length) || 0;
+      const downloaded = Math.max(cached, dl ? total : 0);
+      if (!downloaded && !dl) continue;
+      items.push({
+        kind: 'book',
+        name: b.name,
+        author: b.author || '',
+        bookUrl: b.bookUrl,
+        downloaded,
+        total,
+        size: dl ? dl.size : 0,
+        hasTxt: !!dl,
+        format: '',
+        sha1: b.localEbook && b.localEbook.sha1,
+      });
+    }
+    let ebooks = [];
+    try {
+      ebooks = ebookStore.loadIndex(store.dataDir);
+    } catch {
+      ebooks = [];
+    }
+    for (const e of ebooks) {
+      if (e.status !== 'complete' && e.status !== 'partial') continue;
+      let chapters = 0;
+      let size = 0;
+      try {
+        const dir = path.join(store.dataDir, 'ebooks', e.sha1);
+        const toc = require('./ebook/render').toc(store.dataDir, e.sha1);
+        chapters = (toc && toc.chapters && toc.chapters.length) || 0;
+        const st = fs.statSync(path.join(store.dataDir, 'ebooks', e.sha1, 'book.json'));
+        size = st.size;
+      } catch {
+        /* ignore */
+      }
+      items.push({
+        kind: 'ebook',
+        name: e.name,
+        author: e.author || '',
+        bookUrl: 'ebook://' + e.sha1,
+        downloaded: chapters,
+        total: chapters,
+        size,
+        hasTxt: true,
+        format: e.format || '',
+        sha1: e.sha1,
+      });
+    }
+    items.sort((a, b) => (b.size || 0) - (a.size || 0));
+    return json(res, 200, {
+      total: items.length,
+      books: items.filter((x) => x.kind === 'book').length,
+      ebooks: items.filter((x) => x.kind === 'ebook').length,
+      items,
+    });
+  }
+
+  // ---- 本地电子书导出 TXT ----
+  if (p === '/api/ebook/export' && method === 'GET') {
+    const sha1 = String(searchParams.get('sha1') || '').trim();
+    if (!sha1) return json(res, 400, { error: '缺少 sha1' });
+    const meta = ebookStore.loadIndex(store.dataDir).find((e) => e.sha1 === sha1);
+    if (!meta) return json(res, 404, { error: '电子书不存在' });
+    const toc = ebookRender.toc(store.dataDir, sha1);
+    if (!toc || !toc.chapters || !toc.chapters.length) return json(res, 404, { error: '还没有解析出目录' });
+    const parts = [];
+    toc.chapters.forEach((c, i) => {
+      const ch = ebookRender.content(store.dataDir, sha1, i);
+      if (!ch) return;
+      parts.push(String(ch.title || '').trim(), ...(ch.paragraphs || []).map((x) => String(x).trim()).filter(Boolean), '');
+    });
+    const text = parts.join('\n');
+    const safe = String(meta.name || 'book').replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 80);
+    res.writeHead(200, {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(safe)}.txt`,
+      'Cache-Control': 'no-store',
+    });
+    return res.end(text);
+  }
+
+  // ---- 检查更新（GitHub 最新 release，6 小时缓存） ----
+  if (p === '/api/update/check' && method === 'GET') {
+    const now = Date.now();
+    if (!updateCheckCache.at || now - updateCheckCache.at > 6 * 3600 * 1000) {
+      updateCheckCache.at = now;
+      try {
+        const resp = await request('https://api.github.com/repos/TZYLXS/FnReader/releases/latest', {
+          headers: { 'User-Agent': 'FnReader', Accept: 'application/vnd.github+json' },
+          timeout: 8000,
+        });
+        const j = JSON.parse(resp.body || '{}');
+        updateCheckCache.latest = String(j.tag_name || '').replace(/^v/i, '');
+        updateCheckCache.url = j.html_url || '';
+        updateCheckCache.notes = String(j.body || '').slice(0, 2000);
+        updateCheckCache.publishedAt = j.published_at || '';
+        updateCheckCache.asset = (j.assets || []).find((a) => /legado-web\.fpk$/i.test(a.name)) ? (j.assets.find((a) => /legado-web\.fpk$/i.test(a.name)).browser_download_url || '') : '';
+      } catch (e) {
+        updateCheckCache.error = String(e.message || e);
+      }
+    }
+    const cmp = (a, b) => {
+      const pa = String(a || '0').split('.').map(Number);
+      const pb = String(b || '0').split('.').map(Number);
+      for (let i = 0; i < 3; i++) {
+        if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+      }
+      return 0;
+    };
+    return json(res, 200, {
+      current: APP_VERSION,
+      latest: updateCheckCache.latest || '',
+      hasUpdate: !!(updateCheckCache.latest && cmp(updateCheckCache.latest, APP_VERSION) > 0),
+      url: updateCheckCache.url || '',
+      asset: updateCheckCache.asset || '',
+      notes: updateCheckCache.notes || '',
+      publishedAt: updateCheckCache.publishedAt || '',
+      error: updateCheckCache.error || '',
+    });
+  }
+
   // ---- 导出诊断日志（JSON，给外部模型排障用） ----
   if (p === '/api/logs/export' && method === 'GET') {
     const os = require('node:os');
