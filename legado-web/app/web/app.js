@@ -2655,9 +2655,11 @@ async function renderSettings() {
     const altEl = $('#api-alts');
     if (altEl && Array.isArray(cfg.lanIps) && cfg.lanIps.length > 1) {
       const others = (cfg.lanIps || []).filter((x) => x !== apiBase);
-      altEl.textContent = others.join('  ') || '—';
+      const v6 = cfg.ipv6Lans || [];
+      const all = others.concat(v6);
+      altEl.textContent = all.join('  ') || '—';
       const ca = document.getElementById('copy-alts');
-      if (ca) ca.onclick = () => copy(others.join('\n'), '其它地址');
+      if (ca) ca.onclick = () => copy(all.join('\n'), '其它地址');
     }
     const tokenEl = $('#api-token');
     const tokenMissing = !cfg.apiToken;

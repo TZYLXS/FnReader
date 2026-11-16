@@ -1427,6 +1427,21 @@ function lanIp() {
  * 走 fnOS 网关（:5666）时 req.host 是网关端口，手机 App 连不了那儿，
  * 所以固定用「服务端口 + 局域网 IP」。
  */
+function allLanIpv6() {
+  const out = [];
+  const nets = os.networkInterfaces();
+  for (const list of Object.values(nets)) {
+    for (const n of list || []) {
+      if (n.family !== 'IPv6' || n.internal) continue;
+      const ip = String(n.address || '').split('%')[0];
+      // 只展示公网段（2xxx/3xxx），跳过 ULA(fd..) 与 link-local(fe80..)
+      if (!/^[23]/.test(ip)) continue;
+      if (!out.includes(ip)) out.push(ip);
+    }
+  }
+  return out;
+}
+
 function allLanIps() {
   const out = [];
   const push = (ip) => {
@@ -4457,6 +4472,7 @@ function mergeFeedIntoBook(feed) {
       directBase: directBase(),
       lanIp: lanIp(),
       lanIps: allLanIps().map((ip) => `http://${ip}:${process.env.TRIM_SERVICE_PORT || process.env.PORT || 1122}`),
+      ipv6Lans: allLanIpv6().map((ip) => `http://[${ip}]:${process.env.TRIM_SERVICE_PORT || process.env.PORT || 1122}`),
     };
     // 令牌只给本机（fnOS 网关）或已带令牌的请求，避免局域网里随手读走
     const trusted = isLocalRequest(req) || checkApiToken(req, url);
@@ -4571,7 +4587,7 @@ function main() {
   }
 })();
 
-tcp.listen(PORT, '0.0.0.0', () => console.log(`[legado-web] http://0.0.0.0:${PORT}`));
+tcp.listen(PORT, '::', () => console.log(`[legado-web] http://[::]:${PORT}（IPv4/IPv6 双栈）`));
   tcp.on('error', (e) => console.error('[legado-web] tcp listen error:', e.message));
 
   // 本地电子书：定时扫描 + 长任务看门狗
