@@ -7,6 +7,33 @@ const zlib = require('node:zlib');
 const crypto = require('node:crypto');
 const store = require('./store');
 const diskCache = require('./cache');
+
+// ---- 运行日志环形缓冲：导出日志给外部模型定位问题 ----
+const LOG_RING = [];
+const LOG_MAX = 800;
+function logPush(line) {
+  const t = new Date().toISOString();
+  for (const l of String(line == null ? '' : line).split('\n')) {
+    if (!l.trim()) continue;
+    LOG_RING.push(`${t} ${l}`);
+    if (LOG_RING.length > LOG_MAX) LOG_RING.splice(0, LOG_RING.length - LOG_MAX);
+  }
+}
+(() => {
+  const wrap = (stream) => {
+    const orig = stream.write.bind(stream);
+    stream.write = (chunk, enc, cb) => {
+      try {
+        logPush(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk);
+      } catch {
+        /* ignore */
+      }
+      return orig(chunk, enc, cb);
+    };
+  };
+  wrap(process.stdout);
+  wrap(process.stderr);
+})();
 const { execFileSync } = require('node:child_process');
 const { normalizeSource, sourceId } = require('./books');
 const { searchSource, getBookInfo, getToc, getContent } = require('./books');
@@ -340,6 +367,20 @@ function pythonAuxEnabled() {
 }
 
 /* ---------------- 业务处理 ---------------- */
+
+/** 对标题/正文应用「替换·屏蔽」规则 */
+function applyReplaceRules(book, chapter, paragraphs) {
+  try {
+    const rules = replaceRules.load(store.dataDir);
+    if (!rules || !rules.length) return { title: chapter.title, paragraphs };
+    const title = replaceRules.applyText(rules, chapter.title, 'title');
+    let out = replaceRules.applyToParagraphs(rules, paragraphs);
+    if ((!out || !out.length) && paragraphs && paragraphs.length) out = paragraphs;
+    return { title, paragraphs: out };
+  } catch {
+    return { title: chapter.title, paragraphs };
+  }
+}
 
 async function handleSearchSSE(req, res, params) {
   const key = String(params.get('key') || '').trim();
@@ -2071,14 +2112,16 @@ async function route(req, res, url) {
       const result = await loadChapterContent(book, index);
       const chapter = book.chapters[index];
       prefetchChapter(book, index + 1);
+      // 客户端同样需要净化（替换/屏蔽规则）
+      const cleaned = applyReplaceRules(book, chapter, result.paragraphs);
       return json(res, 200, {
         bookUrl: book.bookUrl,
-        title: chapter.title,
+        title: cleaned.title,
         index,
         total: book.chapters.length,
         prev: index > 0 ? book.chapters[index - 1].title : '',
         next: index + 1 < book.chapters.length ? book.chapters[index + 1].title : '',
-        paragraphs: result.paragraphs,
+        paragraphs: cleaned.paragraphs,
         cached: result.cached,
       });
     } catch (e) {
@@ -3685,13 +3728,9 @@ function saveCover(target, buf, mime) {
     prefetchChapter(book, index + 1);
     prefetchChapter(book, index + 2);
     // 应用「替换 / 屏蔽」规则（去掉正文里的广告、推广信息）
-    const rules = replaceRules.load(store.dataDir);
-    const title = replaceRules.applyText(rules, chapter.title, 'title');
-    let paragraphs = replaceRules.applyToParagraphs(rules, result.paragraphs);
-    // 兜底：规则把内容全过滤掉时，退回原文，避免「正文为空」
-    if ((!paragraphs || !paragraphs.length) && result.paragraphs && result.paragraphs.length) {
-      paragraphs = result.paragraphs;
-    }
+    const cleaned = applyReplaceRules(book, chapter, result.paragraphs);
+    const title = cleaned.title;
+    const paragraphs = cleaned.paragraphs;
     return json(res, 200, {
       title,
       index,
@@ -3784,6 +3823,84 @@ function saveCover(target, buf, mime) {
     book.contentSource = source;
     store.saveBooks(store.books);
     return json(res, 200, { ok: true, source, localEbook: book.localEbook });
+  }
+
+  // ---- 导出诊断日志（JSON，给外部模型排障用） ----
+  if (p === '/api/logs/export' && method === 'GET') {
+    const os = require('node:os');
+    const mask = (v) => (v ? String(v).slice(0, 4) + '****' + String(v).slice(-2) : '');
+    let ebooks = [];
+    try {
+      ebooks = require('./ebook/store').loadIndex(store.dataDir);
+    } catch {
+      ebooks = [];
+    }
+    let fileLog = [];
+    try {
+      const logFile = path.join(store.dataDir, 'app.log');
+      if (fs.existsSync(logFile)) {
+        const st = fs.statSync(logFile);
+        const size = Math.min(st.size, 512 * 1024);
+        const fd = fs.openSync(logFile, 'r');
+        const buf = Buffer.alloc(size);
+        fs.readSync(fd, buf, 0, size, Math.max(0, st.size - size));
+        fs.closeSync(fd);
+        fileLog = buf.toString('utf8').split('\n').filter(Boolean).slice(-400);
+      }
+    } catch {
+      /* ignore */
+    }
+    const rules = (() => {
+      try {
+        return replaceRules.load(store.dataDir);
+      } catch {
+        return [];
+      }
+    })();
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      app: 'legado-web',
+      version: APP_VERSION,
+      node: process.version,
+      platform: `${os.platform()} ${os.release()} ${os.arch()}`,
+      uptimeSec: Math.round(process.uptime()),
+      config: {
+        theme: store.config.theme,
+        fontSize: store.config.fontSize,
+        lineHeight: store.config.lineHeight,
+        engine: effectiveEngine(),
+        engineSwitch: store.config.engine,
+        pyMode: String(store.config.pyMode || 'aux'),
+        pythonAux: pythonAuxEnabled(),
+        ebookMode: ebookBus.ebookMode(store.config),
+        treProxy: store.config.treProxy !== false,
+        preferRemote: store.config.preferRemote === true,
+        downloadDir: resolveDownloadDir(),
+        apiToken: mask(apiToken()),
+        lanIps: allLanIps(),
+      },
+      counts: {
+        books: store.books.length,
+        sources: store.sources.length,
+        enabledSources: store.sources.filter((x) => x.enabled !== false).length,
+        ebooks: ebooks.length,
+        replaceRules: rules.length,
+        replaceRulesEnabled: rules.filter((r) => r.isEnabled !== false).length,
+      },
+      devices: remote.listDevices(),
+      replaceRules: rules.slice(0, 200),
+      logs: LOG_RING.slice(-600),
+      fileLog,
+    };
+    if (searchParams.get('download') === '1') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': `attachment; filename="legado-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.json"`,
+        'Cache-Control': 'no-store',
+      });
+      return res.end(JSON.stringify(payload, null, 2));
+    }
+    return json(res, 200, payload);
   }
 
   // ---- 导出书架所有书为 TXT，直接写进 ebookDir，随后自动扫描 + 去重 ----

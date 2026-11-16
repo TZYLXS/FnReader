@@ -2222,6 +2222,8 @@ async function renderSettings() {
         <div class="row"><div class="label">搜索缓存<div class="desc" id="stat-cache">-</div></div><button class="btn" id="clear-cache" style="padding:5px 10px;font-size:12px">清空</button></div>
         <div class="row"><div class="label">本地电子书<div class="desc" id="stat-ebook-count">-</div></div>
           <button class="btn" id="export-books" style="padding:5px 10px;font-size:12px">导出全部 TXT</button></div>
+        <div class="row"><div class="label">导出日志<div class="desc">含版本、配置、书源/电子书统计、最近运行日志（JSON）</div></div>
+          <button class="btn" id="export-logs" style="padding:5px 10px;font-size:12px">导出 .json</button></div>
       </div>
       <div class="section">
         <h3>书源</h3>
@@ -2320,6 +2322,35 @@ async function renderSettings() {
       if (el) el.textContent = `${es.local} 本可读 · 手机解析 ${es.device} 本 · 共 ${es.total} 本`;
     } catch {
       /* 老服务端 */
+    }
+
+    const logBtn = $('#export-logs');
+    if (logBtn) {
+      logBtn.onclick = async () => {
+        logBtn.disabled = true;
+        logBtn.textContent = '导出中…';
+        try {
+          const resp = await fetch('./api/logs/export?download=1');
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          const cd = resp.headers.get('Content-Disposition') || '';
+          const m = /filename="([^"]+)"/.exec(cd);
+          a.download = m ? m[1] : 'legado-log.json';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 4000);
+          toast('日志已导出');
+        } catch (e) {
+          toast('导出失败：' + e.message);
+        } finally {
+          logBtn.disabled = false;
+          logBtn.textContent = '导出 .json';
+        }
+      };
     }
 
     const exportBtn = $('#export-books');

@@ -826,3 +826,23 @@ html[data-theme='eink'] img {
 
 /* 灰显的开关（条件不满足时不可操作） */
 .switch.disabled { opacity: 0.35; pointer-events: none; filter: grayscale(1); }
+
+
+/* 墨水屏：图标/开关不能用 --line 当底色，否则变实心黑块 */
+html[data-theme='eink'] .tabbar a { color: #000 !important; }
+html[data-theme='eink'] .tabbar a .ico {
+  background: transparent !important;
+  border: 1.5px solid #000;
+  box-sizing: border-box;
+  color: #000 !important;
+}
+html[data-theme='eink'] .tabbar a.active .ico { background: #000 !important; color: #fff !important; }
+html[data-theme='eink'] .switch {
+  background: #fff !important;
+  border: 1.5px solid #000;
+  box-sizing: border-box;
+}
+html[data-theme='eink'] .switch::after { background: #000 !important; box-shadow: none !important; }
+html[data-theme='eink'] .switch.on { background: #000 !important; }
+html[data-theme='eink'] .switch.on::after { background: #fff !important; }
+html[data-theme='eink'] .result .thumb { background: #fff !important; border: 1px solid #000; }
