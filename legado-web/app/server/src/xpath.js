@@ -115,6 +115,8 @@ function parseStep(raw) {
   if (s === 'node()') return { kind: 'node', predicates };
   if (s === '*') return { kind: 'any', predicates };
   if (s.startsWith('@')) return { kind: 'attr', name: s.slice(1), predicates };
+  const sib = s.match(/^(following|preceding)-sibling::([\w*-]+)$/);
+  if (sib) return { kind: `${sib[1]}Sibling`, name: sib[2], predicates };
   return { kind: 'tag', name: s.replace(/^[\w-]+:/, ''), predicates };
 }
 
@@ -185,6 +187,17 @@ function stepNodes(context, step) {
       // /@href 作用于节点本身
       if (isElement(ctx) && ctx.attribs && ctx.attribs[parsed.name] !== undefined) {
         pool.push({ type: 'attribute', value: ctx.attribs[parsed.name], parent: ctx });
+      }
+    } else if (parsed.kind === 'followingSibling' || parsed.kind === 'precedingSibling') {
+      // following-sibling::dd / preceding-sibling::* ：书源目录规则常用轴
+      const parent = ctx.parent;
+      if (!parent) continue;
+      const kids = childNodes(parent);
+      const at = kids.indexOf(ctx);
+      if (at < 0) continue;
+      const range = parsed.kind === 'followingSibling' ? kids.slice(at + 1) : kids.slice(0, at).reverse();
+      for (const c of range) {
+        if (parsed.name === '*' ? isElement(c) : isElement(c) && c.name === parsed.name) pool.push(c);
       }
     } else {
       const cands = step.axis === '//' ? descendants(ctx) : childNodes(ctx);

@@ -60,7 +60,9 @@ sed -e 's/legado-web/legado-web-debug/g' -e 's/"port": "1122"/"port": "1123"/' \
 cp "$SRC/app/ui/images/"*.png "$OUT/app/ui/images/"
 cp -r "$SRC/app/web/." "$OUT/app/web/"
 [ -f "$SRC/app/server/server.bundle.js" ] || { echo "请先用 esbuild --target=node26 生成 server.bundle.js"; exit 1; }
+[ -f "$SRC/app/server/parse-worker.bundle.js" ] || { echo "请先用 esbuild --bundle 生成 parse-worker.bundle.js"; exit 1; }
 cp "$SRC/app/server/server.bundle.js" "$OUT/app/server/"
+cp "$SRC/app/server/parse-worker.bundle.js" "$OUT/app/server/parse-worker.js"
 cp -r "$SRC/app/server/python" "$OUT/app/server/python"
 mkdir -p "$OUT/app/server/src/java"
 cp "$SRC/app/server/src/java/FnReaderJavaWorker.java" "$OUT/app/server/src/java/"
@@ -133,7 +135,7 @@ PYTHONPATH="$OUT/app/server/python:$OUT/app/server/python/vendor" \
 
 printf '==> 7/7 fnpack 构建与结构验收\n'
 for f in manifest config/privilege config/resource ICON.PNG ICON_256.PNG \
-  app/ui/config app/server/server.bundle.js app/server/java/FnReaderJavaWorker.class \
+  app/ui/config app/server/server.bundle.js app/server/parse-worker.js app/server/java/FnReaderJavaWorker.class \
   app/server/runtime/node/bin/node app/server/runtime/java/bin/java \
   app/server/runtime/python/bin/python3 app/web/index.html app/web/reader-gesture.js; do
   [ -e "$OUT/$f" ] || { echo "缺少文件：$f"; exit 1; }

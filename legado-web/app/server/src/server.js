@@ -160,6 +160,8 @@ function cacheGet(key) {
   return contentCache.get(key);
 }
 function cacheSet(key, val) {
+  // 空正文不写缓存，避免一次失败把整章永久钉死
+  if (!Array.isArray(val) || !val.length) return;
   if (contentCache.size > 300) contentCache.delete(contentCache.keys().next().value);
   contentCache.set(key, val);
 }
@@ -194,6 +196,14 @@ function cleanParagraphs(list) {
     t.split('\n').forEach(push);
   }
   return out;
+}
+
+/** 反爬占位页/目录页残留：这类“正文”不能当成功结果，应回落到手机代理解析 */
+function contentLooksJunk(paragraphs) {
+  const text = (paragraphs || []).join('\n').trim();
+  if (!text) return true;
+  if (text.length > 800) return false;
+  return /退出阅读模式|退出#?阅读|章节缺失|请使用其它.{0,4}浏览器|网页版.{0,6}最新内容|请退出转码|最快.{0,4}免费阅读|最新网址/.test(text);
 }
 
 async function loadChapterContent(book, index) {
@@ -234,9 +244,9 @@ async function loadChapterContent(book, index) {
     }
   }
   const mem = cacheGet(key);
-  if (mem) return { paragraphs: cleanParagraphs(mem), cached: true };
+  if (mem && mem.length) return { paragraphs: cleanParagraphs(mem), cached: true };
   const disk = diskCache.get(key);
-  if (disk && disk.paragraphs) {
+  if (disk && Array.isArray(disk.paragraphs) && disk.paragraphs.length) {
     cacheSet(key, disk.paragraphs);
     return { paragraphs: cleanParagraphs(disk.paragraphs), cached: true };
   }
@@ -270,15 +280,26 @@ async function loadChapterContent(book, index) {
       /* 回退内置 */
     }
   }
-  const promise = getContent(source, book, chapter).then((raw) => {
-    const paragraphs = cleanParagraphs(raw);
-    cacheSet(key, paragraphs);
-    diskCache.set(key, { paragraphs, title: chapter.title });
-    return paragraphs;
-  });
+  const promise = getContent(source, book, chapter).then((raw) => cleanParagraphs(raw));
   inflight.set(key, promise);
   try {
     const paragraphs = await promise;
+    // 反爬占位页（“退出阅读模式 / 章节缺失”等）不能当正文缓存，优先交给手机重解析。
+    if (contentLooksJunk(paragraphs) && busAvailable()) {
+      const remote = await remoteContent(book, chapter).catch(() => null);
+      if (remote && remote.length) {
+        const cleanedRemote = cleanParagraphs(remote);
+        if (!contentLooksJunk(cleanedRemote)) {
+          cacheSet(key, cleanedRemote);
+          diskCache.set(key, { paragraphs: cleanedRemote, title: chapter.title });
+          writePhoneCache(book.bookUrl, index, 'content', { paragraphs: cleanedRemote, title: chapter.title, at: Date.now() });
+          bumpUsage('phoneContent');
+          return { paragraphs: cleanedRemote, cached: false, via: 'phone' };
+        }
+      }
+    }
+    cacheSet(key, paragraphs);
+    diskCache.set(key, { paragraphs, title: chapter.title });
     return { paragraphs, cached: false };
   } finally {
     inflight.delete(key);
@@ -1132,7 +1153,10 @@ function checkApiToken(req, url) {
 }
 
 /* ---------------- 应用内更新 ---------------- */
-const UPDATE_REPO = 'TZYLXS/FnReader';
+// 只有 debug 包指向测试仓库；正式包继续指向生产仓库。
+const IS_DEBUG_APP = /(?:^|-)debug(?:$|-)/i.test(APPNAME) || /debug/i.test(APP_VERSION);
+const UPDATE_REPO = process.env.TRIM_UPDATE_REPO || (IS_DEBUG_APP ? 'TZYLXS/FnReader-Alpha' : 'TZYLXS/FnReader');
+const UPDATE_ASSET_RE = IS_DEBUG_APP ? /legado-web(?:-debug)?[-.].*\.fpk$/i : /legado-web\.fpk$/i;
 const UPDATE_CACHE_MS = 10 * 60 * 1000;
 let updateCache = { at: 0, data: null };
 
@@ -1152,6 +1176,42 @@ function semverGt(a, b) {
     if (xa !== yb) return xa > yb;
   }
   return false;
+}
+
+/**
+ * 旧版 App 上传缓存/加书时可能不带 origin，服务端以前只补 originName「手机缓存」，
+ * 客户端同步过去就变成打不开的无源书。这里按 bookUrl 主机找回启用书源：
+ * 先精确匹配 host，再按站点主域匹配（3yt.info → 3yt.com / 3yt.la）。
+ */
+function resolveSourceForBookUrl(bookUrl) {
+  let host = '';
+  try {
+    host = new URL(String(bookUrl || '')).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+  if (!host) return null;
+  const sources = (store.sources || []).filter((s) => s && s.bookSourceUrl && s.enabled !== false);
+  const hostOf = (u) => {
+    try {
+      return new URL(String(u || '')).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  };
+  const siteKey = (h) => {
+    const parts = String(h || '').split('.');
+    if (parts.length < 2) return '';
+    const key = parts.length >= 3 ? parts[parts.length - 2] : parts[0];
+    return key.length >= 3 ? key : '';
+  };
+  const exact = sources.find((s) => hostOf(s.bookSourceUrl) === host);
+  if (exact) return exact;
+  const key = siteKey(host);
+  if (!key) return null;
+  return sources
+    .filter((s) => siteKey(hostOf(s.bookSourceUrl)) === key)
+    .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0) || Number(a.customOrder || 0) - Number(b.customOrder || 0))[0] || null;
 }
 
 /** 已缓存书籍清单：书名 + 来源 + 章节数（供 App 同步书架） */
@@ -1435,6 +1495,20 @@ async function remoteContent(book, chapter) {
 }
 
 async function refreshToc(book) {
+  // 客户端可能把 `,{'webView': true}` 这类配置拼进 tocUrl（还可能被 URL 编码），先剥掉再解析
+  const cleanBookUrl = (u) => {
+    let s = String(u || '').trim();
+    if (/^https?%3A/i.test(s) || /%7B/i.test(s)) {
+      try {
+        s = decodeURIComponent(s);
+      } catch {
+        /* 保持原样 */
+      }
+    }
+    return s.replace(/,\s*\{[\s\S]*?\}\s*$/, '').trim();
+  };
+  if (book.tocUrl) book.tocUrl = cleanBookUrl(book.tocUrl);
+  if (book.bookUrl) book.bookUrl = cleanBookUrl(book.bookUrl);
   // 目录优先走软总线：只要有手机在线就先让它解析（手机能过反爬/登录态），
   // 拿不到（无设备、源不在手机上、超时）再回落到本机解析
   if (book.viaPhone || busAvailable()) {
@@ -1463,6 +1537,12 @@ async function refreshToc(book) {
     throw new Error('未找到书源，可能已被删除');
   }
   book.tocVia = 'local';
+
+  // 同一站点可能挂着多个书源（例如“通用书源”和站点专用源）。
+  // 专用源规则坏了就按候选顺序换下一个，不要一本书失败就整本 502。
+  const candidates = resolveSourceCandidates(book, source);
+  let lastErr = null;
+
   if (effectiveEngine() === 'python') {
     try {
       const r = await pyengine.call('toc', { source, tocUrl: book.tocUrl || book.bookUrl, bookUrl: book.bookUrl });
@@ -1484,15 +1564,30 @@ async function refreshToc(book) {
       /* 回退到内置解析 */
     }
   }
-  if (!book.tocUrl) await getBookInfo(source, book);
-  const chapters = await getToc(source, book);
-  book.chapters = chapters;
-  book.totalChapterNum = chapters.length;
-  store.upsertBook(book);
-  // 拿到目录后先把「当前阅读位置」和第一章缓存起来
-  prefetchChapter(book, book.durChapterIndex || 0);
-  if (!book.durChapterIndex) prefetchChapter(book, 1);
-  return chapters;
+
+  for (const cand of candidates) {
+    try {
+      // tocUrl 与 bookUrl 相同，说明客户端只存了详情页地址；重新跑一次详情规则拿真正的目录页
+      if (!book.tocUrl || book.tocUrl === book.bookUrl) await getBookInfo(cand, book);
+      book.tocUrl = cleanBookUrl(book.tocUrl);
+      const chapters = await getToc(cand, book);
+      if (!chapters || !chapters.length) {
+        lastErr = new Error('目录为空，可能书源规则不匹配或站点改版');
+        continue;
+      }
+      book.chapters = chapters;
+      book.totalChapterNum = chapters.length;
+      book.origin = cand.bookSourceUrl || book.origin;
+      book.originName = cand.bookSourceName || book.originName;
+      store.upsertBook(book);
+      prefetchChapter(book, book.durChapterIndex || 0);
+      if (!book.durChapterIndex) prefetchChapter(book, 1);
+      return chapters;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('目录为空，可能书源规则不匹配或站点改版');
 }
 
 // 同一本书的并发目录刷新只执行一次，调用方共享结果，避免重复占用软总线 TOC 槽位。
@@ -1594,6 +1689,45 @@ function allLanIps() {
 }
 
 /** 找一本对应的书源：origin → URL 主机 → 源名 */
+/** 同一站点的可用书源候选，供目录解析失败时逐个重试 */
+function resolveSourceCandidates(book, primary) {
+  const out = [];
+  const seen = new Set();
+  const push = (s) => {
+    if (!s || !s.bookSourceUrl || s.enabled === false) return;
+    const key = String(s.bookSourceUrl);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(s);
+  };
+  push(primary);
+  let host = '';
+  try {
+    host = new URL(String(book.bookUrl || '')).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    host = '';
+  }
+  const hostOf = (u) => {
+    try {
+      return new URL(String(u || '')).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  };
+  if (host) {
+    const exact = (store.sources || [])
+      .filter((s) => s && s.enabled !== false && hostOf(s.bookSourceUrl) === host)
+      .sort((a, b) => {
+        const an = String(a.bookSourceName || '') === String(book.originName || '') ? 1 : 0;
+        const bn = String(b.bookSourceName || '') === String(book.originName || '') ? 1 : 0;
+        return bn - an || Number(b.weight || 0) - Number(a.weight || 0) || Number(a.customOrder || 0) - Number(b.customOrder || 0);
+      });
+    exact.forEach(push);
+  }
+  push(resolveSourceForBookUrl(book.bookUrl));
+  return out;
+}
+
 function resolveSource(book) {
   if (!book) return null;
   if (book.origin) {
@@ -1621,6 +1755,15 @@ function resolveSource(book) {
       store.upsertBook(book);
       return pick;
     }
+  }
+  // 精确主机没命中时按主域回退（3yt.info → 3yt.com / 3yt.la），
+  // 兼容旧客户端上传的空 origin 书籍，避免服务端一直报「未找到书源」。
+  const inferred = resolveSourceForBookUrl(book.bookUrl);
+  if (inferred && inferred.bookSourceUrl) {
+    book.origin = inferred.bookSourceUrl;
+    book.originName = inferred.bookSourceName || book.originName || '';
+    store.upsertBook(book);
+    return inferred;
   }
   if (book.originName) {
     const hit = store.sources.find((s) => s.bookSourceName === book.originName);
@@ -2802,6 +2945,8 @@ async function route(req, res, url) {
 
     // 登记到书架：正文已在本地，读章节直接读文件
     const stored = store.findBook(book.bookUrl) || {};
+    const explicitOrigin = String(book.origin || stored.origin || '').trim();
+    const inferredSource = explicitOrigin ? null : resolveSourceForBookUrl(book.bookUrl);
     store.upsertBook({
       ...stored,
       bookUrl: book.bookUrl,
@@ -2809,8 +2954,10 @@ async function route(req, res, url) {
       author: String(book.author || stored.author || ''),
       coverUrl: coverUrl || stored.coverUrl || '',
       intro: String(book.intro || stored.intro || ''),
-      origin: String(book.origin || stored.origin || ''),
-      originName: String(book.originName || stored.originName || '手机缓存'),
+      origin: explicitOrigin || inferredSource?.bookSourceUrl || '',
+      originName: inferredSource
+        ? inferredSource.bookSourceName
+        : String(book.originName || stored.originName || '手机缓存'),
       chapters: saved.map((c) => ({ title: c.title, url: c.url, file: c.file })),
       totalChapterNum: saved.length,
       cachedDir: dir,
@@ -2974,6 +3121,7 @@ function saveCover(target, buf, mime) {
         });
         updated++;
       } else {
+        const inferredSource = String(item.origin || '').trim() ? null : resolveSourceForBookUrl(bookUrl);
         store.upsertBook({
           bookUrl,
           name: String(item.name || '未命名'),
@@ -2981,8 +3129,10 @@ function saveCover(target, buf, mime) {
           coverUrl: inlineCover || String(item.coverUrl || ''),
           intro: String(item.intro || ''),
           kind: String(item.kind || ''),
-          origin: String(item.origin || ''),
-          originName: String(item.originName || item.origin || '手机端'),
+          origin: String(item.origin || inferredSource?.bookSourceUrl || ''),
+          originName: inferredSource
+            ? inferredSource.bookSourceName
+            : String(item.originName || item.origin || '手机端'),
           tocUrl: '',
           chapters: [],
           durChapterIndex: Number(item.index != null ? item.index : item.durChapterIndex) || 0,
@@ -4111,7 +4261,7 @@ function saveCover(target, buf, mime) {
     if (!updateCheckCache.at || now - updateCheckCache.at > 6 * 3600 * 1000) {
       updateCheckCache.at = now;
       try {
-        const resp = await request('https://api.github.com/repos/TZYLXS/FnReader/releases/latest', {
+        const resp = await request(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
           headers: { 'User-Agent': 'FnReader', Accept: 'application/vnd.github+json' },
           timeout: 8000,
         });
@@ -4120,7 +4270,8 @@ function saveCover(target, buf, mime) {
         updateCheckCache.url = j.html_url || '';
         updateCheckCache.notes = String(j.body || '').slice(0, 2000);
         updateCheckCache.publishedAt = j.published_at || '';
-        updateCheckCache.asset = (j.assets || []).find((a) => /legado-web\.fpk$/i.test(a.name)) ? (j.assets.find((a) => /legado-web\.fpk$/i.test(a.name)).browser_download_url || '') : '';
+        const hit = (j.assets || []).find((a) => UPDATE_ASSET_RE.test(a.name));
+        updateCheckCache.asset = hit ? (hit.browser_download_url || '') : '';
       } catch (e) {
         updateCheckCache.error = String(e.message || e);
       }

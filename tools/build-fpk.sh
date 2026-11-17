@@ -27,11 +27,14 @@ ESB=node_modules/esbuild/bin/esbuild
 if [ -f "$ESB" ] && "$ESB" --version >/dev/null 2>&1; then
   # Linux 下是原生可执行文件，直接跑
   "$ESB" src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
+  "$ESB" src/parse-worker.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=parse-worker.bundle.js >/dev/null
 elif [ -f "$ESB" ]; then
   # Windows 下是 JS 包装脚本，用 node 跑
   "$NODE_BIN" "$ESB" src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
+  "$NODE_BIN" "$ESB" src/parse-worker.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=parse-worker.bundle.js >/dev/null
 else
   npx --yes esbuild src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
+  npx --yes esbuild src/parse-worker.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=parse-worker.bundle.js >/dev/null
 fi
 
 echo "==> 2/4 组装应用目录"
@@ -46,6 +49,7 @@ chmod +x "$OUT"/cmd/*
 cp "$SRC/app/ui/config" "$OUT/app/ui/config"
 cp "$SRC/app/ui/images/"*.png "$OUT/app/ui/images/"
 cp "$SRC/app/server/server.bundle.js" "$OUT/app/server/"
+cp "$SRC/app/server/parse-worker.bundle.js" "$OUT/app/server/parse-worker.js"
 
 # Python 规则引擎（可选，缺 legado_rule 时自动回退 Node）
 if [ -d "$SRC/app/server/python" ]; then
