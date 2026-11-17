@@ -84,4 +84,13 @@ function prune(maxBytes = 200 * 1024 * 1024) {
   }
 }
 
-module.exports = { get, set, prune, dir: CACHE_DIR };
+/** 删除单章缓存：发现反爬占位或坏数据时清掉，避免永久钉死 */
+function del(key) {
+  try {
+    fs.unlinkSync(fileOf(key));
+  } catch {
+    /* 没文件也算失败 */
+  }
+}
+
+module.exports = { get, set, del, prune, dir: CACHE_DIR };

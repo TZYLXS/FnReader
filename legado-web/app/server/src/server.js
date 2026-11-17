@@ -160,8 +160,12 @@ function cacheGet(key) {
   return contentCache.get(key);
 }
 function cacheSet(key, val) {
-  // 空正文不写缓存，避免一次失败把整章永久钉死
+  // 空正文与反爬占位页都不写缓存，避免一次失败把整章永久钉死
   if (!Array.isArray(val) || !val.length) return;
+  if (contentLooksJunk(val)) {
+    contentCache.delete(key);
+    return;
+  }
   if (contentCache.size > 300) contentCache.delete(contentCache.keys().next().value);
   contentCache.set(key, val);
 }
@@ -202,8 +206,11 @@ function cleanParagraphs(list) {
 function contentLooksJunk(paragraphs) {
   const text = (paragraphs || []).join('\n').trim();
   if (!text) return true;
+  // 反爬占位页通常很短；超过 800 字基本是真正文
   if (text.length > 800) return false;
-  return /退出阅读模式|退出#?阅读|章节缺失|请使用其它.{0,4}浏览器|网页版.{0,6}最新内容|请退出转码|最快.{0,4}免费阅读|最新网址/.test(text);
+  return /退出阅读模式|退出#?阅读|#退#出#阅#读|章节缺失|章节#?缺失|请使用其它.{0,4}浏览器|网页版.{0,6}最新内容|请退出转码|最快.{0,4}免费阅读|最新网址|本章未完|#中间#有#缺失|quyoulai|q#u#y#o#u#l#a#i/.test(
+    text,
+  );
 }
 
 async function loadChapterContent(book, index) {
@@ -220,7 +227,7 @@ async function loadChapterContent(book, index) {
           .split(/\n{2,}/)
           .map((x) => x.trim())
           .filter(Boolean);
-        if (paragraphs.length) {
+        if (paragraphs.length && !contentLooksJunk(paragraphs)) {
           cacheSet(key, paragraphs);
           return { paragraphs, cached: false, fromCache: true };
         }
@@ -232,7 +239,7 @@ async function loadChapterContent(book, index) {
   if (book.viaPhone) {
     // 手机解析过的章节落过盘，就不必再问手机
     const hit = readPhoneCache(book.bookUrl, index, 'content');
-    if (hit && Array.isArray(hit.paragraphs) && hit.paragraphs.length) {
+    if (hit && Array.isArray(hit.paragraphs) && hit.paragraphs.length && !contentLooksJunk(hit.paragraphs)) {
       cacheSet(key, hit.paragraphs);
       return { paragraphs: cleanParagraphs(hit.paragraphs), cached: true, via: 'phone-cache' };
     }
@@ -244,18 +251,26 @@ async function loadChapterContent(book, index) {
     }
   }
   const mem = cacheGet(key);
-  if (mem && mem.length) return { paragraphs: cleanParagraphs(mem), cached: true };
+  if (mem && mem.length) {
+    if (!contentLooksJunk(mem)) return { paragraphs: cleanParagraphs(mem), cached: true };
+    contentCache.delete(key); // 反爬占位不当作缓存命中，清掉后重新解析
+  }
   const disk = diskCache.get(key);
   if (disk && Array.isArray(disk.paragraphs) && disk.paragraphs.length) {
-    cacheSet(key, disk.paragraphs);
-    return { paragraphs: cleanParagraphs(disk.paragraphs), cached: true };
+    if (!contentLooksJunk(disk.paragraphs)) {
+      cacheSet(key, disk.paragraphs);
+      return { paragraphs: cleanParagraphs(disk.paragraphs), cached: true };
+    }
+    diskCache.del(key);
   }
   if (inflight.has(key)) {
     const paragraphs = await inflight.get(key);
     return { paragraphs: cleanParagraphs(paragraphs), cached: true };
   }
-  // 优先手机代理正文：即使本机没有对应书源，只要手机在线就让它先试
-  if ((store.config.preferRemote === true || book.viaPhone) && busAvailable()) {
+  // 只有“手机专属书”或本机确实没有书源时才手机优先；
+  // 其余书本地优先，避免所有章节都去挤软总线队列（软件总线应只做兜底）
+  const source = resolveSource(book);
+  if ((book.viaPhone || !source) && busAvailable()) {
     const paras = await remoteContent(book, chapter).catch(() => null);
     if (paras && paras.length) {
       const cleaned = cleanParagraphs(paras);
@@ -265,7 +280,6 @@ async function loadChapterContent(book, index) {
       return { paragraphs: cleaned, cached: false, via: 'phone' };
     }
   }
-  const source = resolveSource(book);
   if (!source) throw new Error('该书没有关联书源，且没有本地缓存');
   bumpUsage('localContent');
   if (effectiveEngine() === 'python') {
@@ -283,7 +297,26 @@ async function loadChapterContent(book, index) {
   const promise = getContent(source, book, chapter).then((raw) => cleanParagraphs(raw));
   inflight.set(key, promise);
   try {
-    const paragraphs = await promise;
+    let paragraphs;
+    try {
+      paragraphs = await promise;
+    } catch (localErr) {
+      // 本地解析报错（反爬/403/站点改版）时，若手机在线就交给手机重试一次
+      if (busAvailable()) {
+        const remote = await remoteContent(book, chapter).catch(() => null);
+        if (remote && remote.length) {
+          const cleanedRemote = cleanParagraphs(remote);
+          if (!contentLooksJunk(cleanedRemote)) {
+            cacheSet(key, cleanedRemote);
+            diskCache.set(key, { paragraphs: cleanedRemote, title: chapter.title });
+            writePhoneCache(book.bookUrl, index, 'content', { paragraphs: cleanedRemote, title: chapter.title, at: Date.now() });
+            bumpUsage('phoneContent');
+            return { paragraphs: cleanedRemote, cached: false, via: 'phone' };
+          }
+        }
+      }
+      throw localErr;
+    }
     // 反爬占位页（“退出阅读模式 / 章节缺失”等）不能当正文缓存，优先交给手机重解析。
     if (contentLooksJunk(paragraphs) && busAvailable()) {
       const remote = await remoteContent(book, chapter).catch(() => null);
@@ -298,8 +331,12 @@ async function loadChapterContent(book, index) {
         }
       }
     }
-    cacheSet(key, paragraphs);
-    diskCache.set(key, { paragraphs, title: chapter.title });
+    if (!contentLooksJunk(paragraphs)) {
+      cacheSet(key, paragraphs);
+      diskCache.set(key, { paragraphs, title: chapter.title });
+    } else {
+      diskCache.del(key); // 反爬占位不落盘，交给下次手机重解析
+    }
     return { paragraphs, cached: false };
   } finally {
     inflight.delete(key);
