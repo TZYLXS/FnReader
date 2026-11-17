@@ -1277,7 +1277,7 @@ async function fetchLatestRelease(force) {
   const asset = (rel.assets || []).find((a) => /\.fpk$/i.test(a.name)) || null;
   const data = {
     tag: rel.tag_name,
-    version: String(rel.tag_name || '').replace(/^v/i, ''),
+    version: String(rel.tag_name || '').replace(/^v/i, '').replace(/^(?:debug|alpha|beta|test)[-_]/i, ''),
     name: rel.name || rel.tag_name,
     body: rel.body || '',
     publishedAt: rel.published_at,
@@ -2226,7 +2226,9 @@ async function route(req, res, url) {
       return json(res, 200, {
         current: APP_VERSION,
         latest: rel.version,
-        hasUpdate: semverGt(rel.version, APP_VERSION),
+        hasUpdate: IS_DEBUG_APP
+          ? !!(rel.asset && (semverGt(rel.version, APP_VERSION) || rel.version === APP_VERSION))
+          : semverGt(rel.version, APP_VERSION),
         name: rel.name,
         notes: rel.body,
         publishedAt: rel.publishedAt,
@@ -2242,7 +2244,7 @@ async function route(req, res, url) {
     try {
       const rel = await fetchLatestRelease(true);
       if (!rel.asset) return json(res, 404, { error: '最新版本没有附带 fpk 文件' });
-      if (!semverGt(rel.version, APP_VERSION)) {
+      if (!IS_DEBUG_APP && !semverGt(rel.version, APP_VERSION)) {
         return json(res, 200, { ok: true, upToDate: true, current: APP_VERSION, latest: rel.version });
       }
       const dir = path.join(store.dataDir, 'updates');
@@ -4266,7 +4268,7 @@ function saveCover(target, buf, mime) {
           timeout: 8000,
         });
         const j = JSON.parse(resp.body || '{}');
-        updateCheckCache.latest = String(j.tag_name || '').replace(/^v/i, '');
+        updateCheckCache.latest = String(j.tag_name || '').replace(/^v/i, '').replace(/^(?:debug|alpha|beta|test)[-_]/i, '');
         updateCheckCache.url = j.html_url || '';
         updateCheckCache.notes = String(j.body || '').slice(0, 2000);
         updateCheckCache.publishedAt = j.published_at || '';
