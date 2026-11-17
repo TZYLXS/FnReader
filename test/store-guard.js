@@ -5,7 +5,7 @@ const _tmp = require('node:path').join(require('node:os').tmpdir(), 'legado-stor
 require('node:fs').rmSync(_tmp, { recursive: true, force: true });
 process.env.LEGADO_DATA = _tmp;   // store.js 认这个变量
 
-const store = require('../fnos-legado/app/server/src/store');
+const store = require('../legado-web/app/server/src/store');
 
 let ok = 0;
 let fail = 0;

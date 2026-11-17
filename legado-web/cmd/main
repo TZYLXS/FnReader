@@ -1,12 +1,20 @@
 #!/bin/bash
 # Legado 阅读 - fnOS 生命周期脚本（启动/停止/状态）
 
-NODE_BIN="/var/apps/nodejs_v22/target/bin/node"
-DATA_DIR="${TRIM_PKGVAR:-/var/apps/legado-web/var}"
+NODE_BIN="${TRIM_APPDEST}/server/runtime/node/bin/node"
+DATA_DIR="${TRIM_PKGVAR:-/var/apps/${TRIM_APPNAME:-legado-web}/var}"
 PID_FILE="$DATA_DIR/app.pid"
 LOG_FILE="$DATA_DIR/app.log"
 SERVER="${TRIM_APPDEST}/server/server.bundle.js"
 LOGFILE="${TRIM_TEMP_LOGFILE:-/dev/null}"
+# Node 26：磁盘编译缓存由主线程和 worker_threads 共同继承，冷启动后的模块编译明显更少。
+export NODE_COMPILE_CACHE="${NODE_COMPILE_CACHE:-$DATA_DIR/cache/node-compile-cache}"
+export UV_THREADPOOL_SIZE="${UV_THREADPOOL_SIZE:-16}"
+# Node 26 官方 Linux 二进制需要 libatomic；仅加载本应用私有运行库，不改系统环境。
+NODE_RUNTIME_LIB="${TRIM_APPDEST}/server/runtime/node/lib"
+if [ -d "$NODE_RUNTIME_LIB" ]; then
+  export LD_LIBRARY_PATH="$NODE_RUNTIME_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 
 is_running() {
   [ -f "$PID_FILE" ] || return 1
@@ -21,11 +29,14 @@ do_start() {
     return 0
   fi
 
+  if [ ! -x "$NODE_BIN" ] && [ -x "/var/apps/nodejs_v26/target/bin/node" ]; then
+    NODE_BIN="/var/apps/nodejs_v26/target/bin/node"
+  fi
   if [ ! -x "$NODE_BIN" ]; then
     NODE_BIN=$(command -v node 2>/dev/null)
   fi
   if [ -z "$NODE_BIN" ] || [ ! -x "$NODE_BIN" ]; then
-    echo "未找到 Node.js 运行时（nodejs_v22），请检查应用依赖是否安装成功。" > "$LOGFILE"
+    echo "未找到 Node.js 26 运行时（内置 runtime 或 nodejs_v26），请重新安装 debug FPK。" > "$LOGFILE"
     return 1
   fi
   if [ ! -f "$SERVER" ]; then
@@ -33,7 +44,7 @@ do_start() {
     return 1
   fi
 
-  mkdir -p "$DATA_DIR" 2>/dev/null
+  mkdir -p "$DATA_DIR" "$NODE_COMPILE_CACHE" 2>/dev/null
   export TRIM_APPNAME TRIM_APPDEST TRIM_PKGVAR TRIM_SERVICE_PORT
   cd "$TRIM_APPDEST" || return 1
 

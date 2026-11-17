@@ -1039,8 +1039,9 @@ function renderReaderShell() {
   view.innerHTML = `
     <div class="reader kindle">
       <header class="reader-head" id="reader-head">
-        <button class="icon-btn" id="back">‹</button>
+        <button class="icon-btn" id="back" aria-label="返回书架">‹</button>
         <div class="title" id="book-title">${esc(book.name)}</div>
+        <div class="reader-actions">
         ${
           book.localEbook
             ? `<button class="icon-btn" id="toggle-local" title="切换本地副本 / 网文源">${book.contentSource === 'source' ? '本' : '网'}</button>`
@@ -1051,12 +1052,14 @@ function renderReaderShell() {
             ? `<button class="icon-btn" id="toggle-page-mode" title="文字 / 原图">${state.reader.pageMode ? '文' : '图'}</button>`
             : ''
         }
-        <button class="icon-btn" id="switch-src" title="换源">⇄</button>
-        <button class="icon-btn" id="catalog">☰</button>
-        <button class="icon-btn" id="reader-settings">Aa</button>
+          <button class="icon-btn" id="switch-src" title="换源" aria-label="换源">⇄</button>
+          <button class="icon-btn" id="catalog" title="目录" aria-label="目录">☰</button>
+          <button class="icon-btn" id="reader-settings" title="阅读设置" aria-label="阅读设置">Aa</button>
+        </div>
       </header>
-      <main class="article-wrap">
+      <main class="article-wrap" id="article-wrap" aria-label="正文，左右滑动或点击两侧翻页">
         <article class="article" id="article"></article>
+        <div class="gesture-tip" aria-hidden="true"><span>左右滑动翻页</span><span>点击两侧亦可</span></div>
       </main>
       <footer class="reader-foot" id="reader-foot">
         <button class="foot-btn" id="prev">‹ 上一章</button>
@@ -1131,6 +1134,25 @@ function renderReaderShell() {
   $('#prev').onclick = () => gotoChapter(state.reader.index - 1);
   $('#next').onclick = () => gotoChapter(state.reader.index + 1);
   $('#reader-settings').onclick = openReaderSettings;
+  if (window.ReaderGestures) {
+    window.ReaderGestures.bind($('#article-wrap'), {
+      navigate: (delta) => {
+        const r = state.reader;
+        if (!r) return;
+        r.turnDirection = delta;
+        gotoChapter(r.index + delta);
+      },
+      hasSelection: () => {
+        const selection = window.getSelection && window.getSelection();
+        return !!(selection && !selection.isCollapsed && String(selection).trim());
+      },
+      isBlocked: () => {
+        const drawer = $('#drawer');
+        const modal = $('#modal');
+        return !!((drawer && !drawer.classList.contains('hidden')) || (modal && !modal.classList.contains('hidden')));
+      },
+    });
+  }
 
   const list = $('#chapter-list');
   list.innerHTML = state.reader.chapters
@@ -1249,6 +1271,13 @@ async function loadChapter(index) {
     article.appendChild(el);
   }
   updateReaderMeta();
+  if (r.turnDirection && article.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    article.animate(
+      [{ opacity: 0.72, transform: `translateX(${r.turnDirection * 14}px)` }, { opacity: 1, transform: 'translateX(0)' }],
+      { duration: 180, easing: 'ease-out' }
+    );
+  }
+  r.turnDirection = 0;
   // 内容整体替换后浏览器会把位置「锚」在底部，翻章后要重置到顶部
   article.style.overflowAnchor = 'none';
   const toTop = () => {
@@ -2166,6 +2195,8 @@ async function renderSettings() {
           <div class="switch" id="sw-engine"></div></div>
         <div class="row"><div class="label">Python 工作模式<div class="desc" id="pymode-desc">检测中…</div></div>
           <div class="switch" id="sw-pymode"></div></div>
+        <div class="row"><div class="label">Java 21 TOC 引擎<div class="desc" id="java-engine-status">接管目录去重、过滤与排序</div></div>
+          <div class="switch" id="sw-java-engine"></div></div>
         <div class="row"><div class="label">TRE 代理解析<div class="desc">EPUB / MOBI 交给在线设备解析（关闭则只用本机）</div></div>
           <div class="switch ${cfg.treProxy !== false ? 'on' : ''}" id="sw-tre-proxy"></div></div>
         <div class="row"><div class="label">电子书解析<div class="desc" id="stat-ebook-mode">-</div></div>
@@ -2484,6 +2515,8 @@ async function renderSettings() {
     // 解析引擎切换（Node 内置 / Python legado_rule）
     const swEngine = $('#sw-engine');
     const stEngine = $('#engine-status');
+    const swJavaEngine = $('#sw-java-engine');
+    const stJavaEngine = $('#java-engine-status');
     if (swEngine) {
       const swPyMode = $('#sw-pymode');
       const pyDesc = $('#pymode-desc');
@@ -2507,6 +2540,12 @@ async function renderSettings() {
           if (core) pyDesc.textContent = '开：接管 Node 规则解析（搜索 / 目录 / 正文）';
           else if (master) pyDesc.textContent = '关：接管 TXT 下载 / 去重，不接管 Node 解析';
           else pyDesc.textContent = 'Python 引擎已关闭，工作模式不可用';
+        }
+        if (swJavaEngine) swJavaEngine.classList.toggle('on', r.javaEngine === true);
+        if (stJavaEngine) {
+          if (r.java && r.java.ok) stJavaEngine.textContent = '运行中 · ' + (r.java.java || 'Java') + (r.java.virtualThreads ? ' · 虚拟线程' : ' · 线程池');
+          else if (r.javaEngine) stJavaEngine.textContent = '已开启，但不可用：' + ((r.java && r.java.lastError) || '未知原因');
+          else stJavaEngine.textContent = '已关闭 · TOC 后处理回退 JS';
         }
       };
       api('/engine')
@@ -2541,6 +2580,22 @@ async function renderSettings() {
           }
         };
       }
+    }
+
+    if (swJavaEngine) {
+      swJavaEngine.onclick = async () => {
+        const next = !swJavaEngine.classList.contains('on');
+        stJavaEngine.textContent = next ? '正在启动 Java 21…' : '正在关闭…';
+        try {
+          await api('/engine', { method: 'POST', body: { javaEngine: next } });
+          toast(next ? 'Java 21 TOC 引擎已开启' : 'Java TOC 引擎已关闭');
+          applyEngineState(await api('/engine'));
+        } catch (e) {
+          stJavaEngine.textContent = e.message;
+          toast(e.message);
+          applyEngineState(await api('/engine'));
+        }
+      };
     }
 
     // 优先手机解析

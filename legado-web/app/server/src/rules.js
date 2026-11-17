@@ -308,18 +308,26 @@ function getterValue($, node, getter) {
 function applySuffixes(values, seg) {
   let out = values;
   if (seg.regex) {
-    const re = new RegExp(seg.regex);
-    out = out
-      .map((v) => {
-        const m = String(v).match(re);
-        if (!m) return '';
-        return m.length > 1 && m[1] !== undefined ? m[1] : m[0];
-      })
-      .filter((v) => v !== '');
+    try {
+      const re = new RegExp(seg.regex);
+      out = out
+        .map((v) => {
+          const m = String(v).match(re);
+          if (!m) return '';
+          return m.length > 1 && m[1] !== undefined ? m[1] : m[0];
+        })
+        .filter((v) => v !== '');
+    } catch {
+      // 书源里的正则可能带尾部 `/g`、未闭合分组等；坏规则只跳过该段，不能拖垮整本书
+    }
   }
   if (seg.replace) {
-    const re = new RegExp(seg.replace.pattern, 'g');
-    out = out.map((v) => String(v).replace(re, seg.replace.replacement));
+    try {
+      const re = new RegExp(seg.replace.pattern, 'g');
+      out = out.map((v) => String(v).replace(re, seg.replace.replacement));
+    } catch {
+      // 同上：替换规则非法时保留原值
+    }
   }
   return out;
 }
@@ -389,6 +397,23 @@ function evalRuleInner(ruleStr, ctx, opts = {}) {
 
   // 顶层 JSONPath：书源规则直接写 $.a.b / $..list[*]
   const head = rule.trim();
+
+  // 整条规则以 @js: 开头时，后面的 JS 里可能含 || / && / ##，不能再按规则分隔符切
+  if (/^@js:/i.test(head)) {
+    const out = runJs(head.slice(4), {
+      result: ctx.result,
+      baseUrl: ctx.baseUrl,
+      book: ctx.book,
+      source: ctx.source,
+      key: ctx.key,
+      page: ctx.page,
+      getString: (r) => evalRule(r, ctx, opts).values.join('\n'),
+      getStringList: (r) => evalRule(r, ctx, opts).values,
+      getElements: (r) => evalRule(r, ctx, opts).nodes,
+    });
+    const values = Array.isArray(out) ? out.map((v) => String(v)) : [String(out)];
+    return { values, nodes: [] };
+  }
   if ((head.startsWith('$') || head.startsWith('[')) && ctx.json !== undefined) {
     try {
       const vals = jsonPath(ctx.json, head);
@@ -406,7 +431,18 @@ function evalRuleInner(ruleStr, ctx, opts = {}) {
   }
 
   // 显式前缀（@css: / @text: …）与 && 拼接
-  const prefixed = evalWithPrefixes(rule, ctx, opts);
+  // 只有「段首带前缀」才交给前缀解析；像 `#pb_next@class\n@js:…` 这种
+  // 「选择器 + @js 后缀」的规则必须走通用解析，否则会自己回调自己直到递归上限。
+  let prefixed = null;
+  const seen = ctx.__prefixGuard || (ctx.__prefixGuard = new Set());
+  if (!seen.has(rule)) {
+    seen.add(rule);
+    try {
+      prefixed = evalWithPrefixes(rule, ctx, opts);
+    } finally {
+      seen.delete(rule);
+    }
+  }
   if (prefixed) return prefixed;
 
   const alternatives = parseRule(rule);
@@ -473,6 +509,7 @@ function evalRuleInner(ruleStr, ctx, opts = {}) {
           key: ctx.key,
           page: ctx.page,
           getString: (r) => evalRule(r, ctx, opts).values.join('\n'),
+          getStringList: (r) => evalRule(r, ctx, opts).values,
           getElements: (r) => evalRule(r, ctx, opts).nodes,
         });
         localValues = [String(out)];
@@ -572,6 +609,7 @@ function evalPrefixed(piece, ctx, opts = {}) {
       key: ctx.key,
       page: ctx.page,
       getString: (r) => evalRule(r, ctx, opts).values.join('\n'),
+      getStringList: (r) => evalRule(r, ctx, opts).values,
     });
     return { values: [String(out)], nodes: [] };
   }
@@ -587,6 +625,9 @@ function evalWithPrefixes(ruleStr, ctx, opts = {}) {
   const alternatives = splitTop(text, '||');
   for (const alt of alternatives) {
     const pieces = splitTop(alt, '&&').map((x) => x.trim()).filter(Boolean);
+    // 段首没有显式前缀（如 `#nr1@html`、`#pb_next@class@js:…`）不属于前缀规则
+    const hasPrefix = pieces.some((p) => /^@?(?:text|css|xpath|json|regex|js):/i.test(p));
+    if (!hasPrefix) continue;
     const values = [];
     const nodes = [];
     let first = null;

@@ -82,14 +82,21 @@ input, textarea, select { font: inherit; color: inherit; }
 .topbar {
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px;
+  min-height: 52px;
+  box-sizing: border-box;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   backdrop-filter: blur(18px);
   border-bottom: 1px solid transparent;
 }
 .topbar.scrolled { border-bottom-color: var(--line); }
-.topbar h1 { font-size: 22px; margin: 0; letter-spacing: -0.3px; flex: 1; }
-.topbar .sub { font-size: 12px; color: var(--text-2); }
+.topbar h1 {
+  font-size: 22px; margin: 0; letter-spacing: -0.3px; flex: 1 1 auto;
+  min-width: 0; line-height: 1.2;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.topbar .sub, .topbar .desc { font-size: 12px; color: var(--text-2); flex: 0 0 auto; white-space: nowrap; }
+.topbar > .icon-btn, .topbar > .btn { flex: 0 0 auto; align-self: center; line-height: 1; }
 
 .btn {
   padding: 8px 14px; border-radius: 10px; background: var(--panel);
@@ -432,6 +439,65 @@ details.section[open] > summary { border-bottom: 1px solid var(--line); }
   width: 0;
   background: var(--accent);
   transition: width 0.2s ease;
+}
+
+/* 阅读页布局与手势：正文保持单栏，宽屏有纸张边界，窄屏优先正文空间。 */
+.reader.kindle { min-height: 100dvh; padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+.reader.kindle .reader-head {
+  gap: 6px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) 8px max(10px, env(safe-area-inset-left, 0px));
+}
+.reader.kindle .reader-head .title { min-width: 0; }
+.reader.kindle .reader-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.reader.kindle .icon-btn { width: 44px; height: 44px; flex: none; }
+.reader.kindle .article-wrap {
+  width: min(100%, calc(var(--page-width, 720px) + 48px));
+  box-sizing: border-box;
+  padding: clamp(20px, 4vw, 34px) clamp(16px, 4vw, 32px) 44px;
+  touch-action: pan-y pinch-zoom;
+  -webkit-tap-highlight-color: transparent;
+}
+.reader.kindle .article { min-height: 38vh; }
+.reader.kindle .gesture-tip {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.68;
+  user-select: none;
+  pointer-events: none;
+}
+.reader.kindle .foot-btn { min-width: 88px; min-height: 44px; }
+.reader.kindle .reader-foot { padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+
+@media (min-width: 900px) {
+  .reader.kindle .article-wrap {
+    margin: 24px auto 32px;
+    border: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--panel) 42%, var(--bg));
+    box-shadow: 0 12px 36px color-mix(in srgb, var(--text) 5%, transparent);
+  }
+}
+@media (max-width: 600px) {
+  .reader.kindle .reader-head { gap: 2px; }
+  .reader.kindle .reader-actions { gap: 0; }
+  .reader.kindle .article-wrap { padding: 18px 16px 32px; }
+  .reader.kindle .article .chapter-head { margin-bottom: 22px; }
+  .reader.kindle .foot-btn { min-width: 80px; padding-left: 6px; padding-right: 6px; }
+}
+@media (max-width: 360px) {
+  .reader.kindle .reader-head .title { display: none; }
+  .reader.kindle .reader-actions { flex: 1; justify-content: flex-end; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader.kindle .article { scroll-behavior: auto; }
+  .reader.kindle .foot-progress i { transition: none; }
 }
 
 /* 目录抽屉 */

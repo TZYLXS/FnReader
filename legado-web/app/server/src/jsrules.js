@@ -75,6 +75,14 @@ function runJs(code, ctx = {}) {
     put: (k, v) => store.set(String(k), v),
     get: (k) => (store.has(String(k)) ? store.get(String(k)) : undefined),
     getString: (rule) => (ctx.getString ? ctx.getString(String(rule)) : ''),
+    getStringList: (rule) => {
+      const list = ctx.getStringList ? ctx.getStringList(String(rule)) : (ctx.getString ? [ctx.getString(String(rule))] : []);
+      const arr = Array.isArray(list) ? list.slice() : [];
+      // Legado 的 java.getStringList 返回 Java List：规则里常用 .size() / .get(i)
+      arr.size = () => arr.length;
+      arr.get = (i) => arr[Number(i) || 0];
+      return arr;
+    },
     getElements: (rule) => (ctx.getElements ? ctx.getElements(String(rule)) : []),
     toast: () => {},
     longToast: () => {},

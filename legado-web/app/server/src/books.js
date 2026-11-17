@@ -3,8 +3,22 @@
 const { request, absoluteUrl, htmlToParagraphs } = require('./util');
 const { makeDoc, evalString, evalRule, jsonPath } = require('./rules');
 const { runJs } = require('./jsrules');
+const { evaluateXPath } = require('./xpath');
 const searchCache = require('./searchcache');
 const { fixChapterOrder, normalizeChapterList } = require('./chapter-order');
+
+/** 去掉 Legado 拼在 URL 末尾的 `,{'webView': true}` 配置（可能已 URL 编码） */
+function stripUrlConfig(u) {
+  let s = String(u || '').trim();
+  if (/%7B/i.test(s) || /^https?%3A/i.test(s)) {
+    try {
+      s = decodeURIComponent(s);
+    } catch {
+      /* 保持原样 */
+    }
+  }
+  return s.replace(/,\s*\{[\s\S]*?\}\s*$/, '').trim();
+}
 
 const DEFAULT_SEARCH_HEADERS = {
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -120,9 +134,12 @@ function normalizeSource(raw) {
 }
 
 async function fetchPage(url, source, extra = {}) {
-  const headers = { ...DEFAULT_SEARCH_HEADERS, ...parseHeaders(source.header), ...(extra.headers || {}) };
+  const srcHeaders = parseHeaders(source.header);
+  const headers = { ...DEFAULT_SEARCH_HEADERS, ...srcHeaders, ...(extra.headers || {}) };
+  // 书源自带 Referer（QQ阅读/番茄这类接口源）时不能被 bookUrl 覆盖，否则接口直接回 incorrect referer
+  const hasSourceReferer = Object.keys(srcHeaders).some((k) => k.toLowerCase() === 'referer');
   try {
-    return await request(url, { ...extra, headers, referer: extra.referer });
+    return await request(url, { ...extra, headers, referer: hasSourceReferer ? null : extra.referer });
   } catch (e) {
     throw new Error(`请求失败 ${String(url).slice(0, 120)}：${e.message}`);
   }
@@ -143,7 +160,10 @@ function applyReplaceRules(text, rule) {
   const parts = body.split('##');
   const pattern = parts[0];
   if (!pattern) return text;
-  const isExtract = parts.length === 1;
+  // `##正则` 单段在 Legado 里是「只取匹配」，但书源常把它写成
+  // `##广告1|广告2|广告3` 的删除式联合体；带 | 时按「删除匹配」处理，
+  // 否则会把整段正文当成不匹配而清空。
+  const isExtract = parts.length === 1 && !pattern.includes('|');
   let re;
   try {
     // 只取匹配时必须用非全局正则，否则拿不到捕获组
@@ -188,12 +208,13 @@ async function searchSource(source, key, page = 1, opts = {}) {
   const method = (config.method || 'GET').toUpperCase();
   const body = method === 'POST' ? fillTemplate(config.body || '', vars, tplCtx) : null;
 
-  // 命中缓存就直接返回（同一个搜索请求 URL 只抓一次）
-  const cached = searchCache.get(url, body);
+  // 命中缓存就直接返回（同一个搜索请求 URL 只抓一次）。
+  // worker 解析时由主线程统一读写缓存，避免多个线程同时写 JSONL。
+  const cached = opts.cache === false ? null : searchCache.get(url, body);
   if (cached) {
     const list = cached.map((b) => ({ ...b }));
     list.fromCache = true;
-    return list;
+    return opts.returnMeta ? { books: list, url, body, fromCache: true } : list;
   }
   const resp = await fetchPage(url, source, {
     method,
@@ -242,8 +263,8 @@ async function searchSource(source, key, page = 1, opts = {}) {
       order: Date.now(),
     });
   }
-  searchCache.set(url, body, books);
-  return books;
+  if (opts.cache !== false) searchCache.set(url, body, books);
+  return opts.returnMeta ? { books, url, body, fromCache: false } : books;
 }
 
 function tryJson(text) {
@@ -281,13 +302,13 @@ async function getBookInfo(source, book, opts = {}) {
   const cover = get(rule.coverUrl);
   if (cover) patch.coverUrl = absoluteUrl(resp.url, cover);
 
-  // tocUrl 里可能有 {{$.field}} 模板（QQ阅读这类接口书源），要用详情页 JSON 填值
+  // tocUrl 里可能有 {{$.field}} / {{$..field}} 模板（QQ阅读这类接口书源），要用详情页 JSON 填值
   const fillTpl = (text) =>
-    String(text || '').replace(/\{\{\s*\$([^{}]*?)\s*\}\}/g, (m, expr) => {
-      const key = expr.replace(/^\./, '');
-      if (!key) return '';
+    String(text || '').replace(/\{\{\s*(\$[^{}]*?)\s*\}\}/g, (m, expr) => {
+      const path = String(expr).trim();
+      if (!path || path === '$') return '';
       try {
-        const v = jsonPath(ctx.json, key)[0];
+        const v = jsonPath(ctx.json, path)[0];
         if (v === undefined || v === null) return m;
         return typeof v === 'object' ? JSON.stringify(v) : String(v);
       } catch {
@@ -295,9 +316,22 @@ async function getBookInfo(source, book, opts = {}) {
       }
     });
 
-  const rawTocUrl = fillTpl(get(rule.tocUrl));
-  const tocUrl = rawTocUrl && !/\{\{/.test(rawTocUrl) ? rawTocUrl : '';
-  const toc = tocUrl ? absoluteUrl(resp.url, tocUrl) : resp.url;
+  const rawTocUrl = fillTpl(get(rule.tocUrl)).replace(/@put:\s*\{[\s\S]*?\}/gi, '').trim();
+  const tocUrl = rawTocUrl && !/\{\{/.test(rawTocUrl) ? stripUrlConfig(rawTocUrl) : '';
+  let toc = tocUrl ? stripUrlConfig(absoluteUrl(resp.url, tocUrl)) : resp.url;
+  // 详情页没有独立 tocUrl 时，跟随「开始阅读 / 查看目录」入口（全本小说这类站点）
+  if (toc === resp.url) {
+    const $ = doc.$;
+    let found = '';
+    $('a').each((i, el) => {
+      if (found) return;
+      const t = $(el).text().replace(/\s+/g, '');
+      const href = $(el).attr('href') || '';
+      if (!href || href.startsWith('#')) return;
+      if (/^(开始阅读|查看目录|完整目录|全部章节)$/.test(t)) found = absoluteUrl(resp.url, href);
+    });
+    if (found) toc = found;
+  }
   Object.assign(book, patch, { tocUrl: toc });
   return book;
 }
@@ -322,7 +356,19 @@ async function parseTocFrom(startUrl, source, book) {
     if (rule.init) evalRule(rule.init, ctx);
 
     const listRule = rule.chapterList || 'body';
-    const listNodes = evalRule(listRule, ctx).nodes;
+    let listNodes = evalRule(listRule, ctx).nodes;
+    // XPath 目录规则（尤其是 following-sibling 轴）在规则层可能取不到节点，
+    // 直接交给 XPath 引擎再算一次，避免整本书误判为「目录为空」
+    const xpathRule = /^@xpath:/i.test(String(listRule).trim())
+      ? String(listRule).trim().slice(7).trim()
+      : (/^(?:\/\/|\/)/.test(String(listRule).trim()) ? String(listRule).trim() : '');
+    if (!listNodes.length && xpathRule) {
+      try {
+        listNodes = evaluateXPath(doc.root, xpathRule);
+      } catch {
+        listNodes = [];
+      }
+    }
     for (const node of listNodes) {
       const local = { ...ctx, vars: {} };
       const name = rule.chapterName ? evalString(rule.chapterName, local, { scope: node }) : '';
