@@ -78,7 +78,7 @@ function listDevices() {
   return [...devices.values()]
     .map((d) => {
       // 隐藏性能分与内部统计：对外只保留设备身份与在线状态
-      const { score, ok, fail, totalMs, samples, inflight, lockedBy, lastResultAt, ...pub } = d;
+      const { score, ok, fail, totalMs, samples, inflight, lockedBy, lastResultAt, caps, classes, ...pub } = d;
       return {
         ...pub,
         online: now - d.lastSeen < ONLINE_MS,
@@ -149,6 +149,10 @@ function create(type, payload, opts = {}) {
       debug: !!(payload && payload.debug === true),
       dispatchedTo: '',
       dispatchedAt: 0,
+      // 传输建模：等待方愿意等多久（服务端口径），派发时再按设备实测收紧/放宽，下发前不超过它
+      waitMs,
+      timeoutMs: Math.max(1000, waitMs - 500),
+      attempts: 0,
     });
   });
   return { id, promise };
@@ -185,14 +189,22 @@ function pending(limit = 5, deviceId = '') {
   if (!dev) return [];
 
   // 以实际锁定在手的任务重算在途数，避免异常路径导致 inflight 泄漏把设备卡死
-  let realInflight = 0;
-  for (const j of jobs.values()) if (j.dispatchedTo === dev.id) realInflight++;
-  dev.inflight = realInflight;
-  const slots = Math.max(0, weights.maxInflight(dev) - realInflight);
-  if (!slots) return [];
-  const cap = Math.min(limit, slots);
+  // 2.6.19 起同时按「任务类」重算：每类一条独立额度（Lane），慢任务不再挤占快任务的槽
   const now = Date.now();
+  const usedByClass = { book: 0, content: 0, media: 0 };
+  let realInflight = 0;
+  for (const j of jobs.values()) {
+    if (j.dispatchedTo !== dev.id) continue;
+    realInflight++;
+    const k = j.taskClass || classOf(j.type);
+    if (Object.prototype.hasOwnProperty.call(usedByClass, k)) usedByClass[k]++;
+  }
+  dev.inflight = realInflight;
   const classes = weights.eligibleClasses(dev, weights.hasHighOnline([...devices.values()].filter(online)));
+  const alloc = weights.slotsByClass(dev, classes);
+  const totalLeft = Math.max(0, alloc.total - realInflight);
+  if (!totalLeft) return [];
+  const cap = Math.min(limit, totalLeft);
 
   const eligible = [...jobs.values()]
     .filter((j) => (debugDevice ? j.debug : !j.debug))
@@ -203,22 +215,40 @@ function pending(limit = 5, deviceId = '') {
       if (j.dispatchedTo === dev.id) return false;
       return now - (j.dispatchedAt || 0) > LOCK_MS; // 锁过期可重新领取
     });
-  const candidates = weights.sortJobs(eligible, dev, classes).slice(0, cap);
+  const sorted = weights.sortJobs(eligible, dev, classes, now);
+  const picked = [];
+  const pickCount = {};
+  for (const j of sorted) {
+    if (picked.length >= cap) break;
+    const k = j.taskClass || classOf(j.type);
+    if (!alloc[k]) continue; // 该类没额度（低分设备拿不到 book/content）
+    const used = (usedByClass[k] || 0) + (pickCount[k] || 0);
+    if (used >= alloc[k]) continue; // 该类 Lane 已满，留给别的类
+    pickCount[k] = (pickCount[k] || 0) + 1;
+    picked.push(j);
+  }
 
-  for (const j of candidates) {
+  for (const j of picked) {
     if (j.dispatchedTo && j.dispatchedTo !== dev.id) releaseJob(j);
     j.dispatchedTo = dev.id;
     j.dispatchedAt = now;
+    j.attempts = (Number(j.attempts) || 0) + 1;
+    // 传输建模：本次派发的执行预算 = min(等待方口径剩多少, 按该设备该类实测放宽后的超时)
+    const model = weights.timeoutFor(j.type, dev);
+    const budget = Math.max(1000, (Number(j.waitMs) || WAIT_MS) - 500);
+    j.timeoutMs = Math.min(budget, Math.max(1000, model));
     if (!j.lockedBy || j.lockedBy !== dev.id) dev.inflight = (dev.inflight || 0) + 1;
     j.lockedBy = dev.id;
   }
 
-  return candidates.map((j) => ({
+  return picked.map((j) => ({
     id: j.id,
     type: j.type,
     taskClass: j.taskClass,
     payload: j.payload,
     age: now - j.createdAt,
+    timeoutMs: j.timeoutMs,
+    serverTime: now,
   }));
 }
 
@@ -245,14 +275,20 @@ function complete(id, ok, data, error, deviceId = '') {
   }
 
   const ms = Date.now() - job.createdAt;
-  if (dev) weights.updateScore(dev, !!ok, ms);
+  if (dev) {
+    weights.updateScore(dev, !!ok, ms);
+    // 按类感知：成功率 EWMA + 平均耗时，供下次派发的超时建模使用
+    weights.updateClassStat(dev, job.taskClass, !!ok, ms);
+  }
   releaseJob(job);
 
   try {
     recent.push({
       at: Date.now(),
       type: job.type,
+      cls: job.taskClass,
       ok: !!ok,
+      ms: ms,
       by: deviceId || '',
       keys: data && typeof data === 'object' ? Object.keys(data) : [],
       sample: JSON.stringify(data || error || '').slice(0, 300),
@@ -271,9 +307,19 @@ function complete(id, ok, data, error, deviceId = '') {
 
 function stats() {
   purge();
+  // 按类的积压与在途（观测用，不影响派发）
+  const queue = { book: 0, content: 0, media: 0 };
+  const inflightByClass = { book: 0, content: 0, media: 0 };
+  for (const j of jobs.values()) {
+    const k = j.taskClass || classOf(j.type);
+    if (Object.prototype.hasOwnProperty.call(queue, k)) queue[k]++;
+    if (j.dispatchedTo && Object.prototype.hasOwnProperty.call(inflightByClass, k)) inflightByClass[k]++;
+  }
   return {
     pending: jobs.size,
     recent: recent.slice(-5),
+    queue,
+    inflight: inflightByClass,
     ...weights.summarize([...devices.values()], online),
   };
 }
