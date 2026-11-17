@@ -36,7 +36,13 @@ function logPush(line) {
 })();
 const { execFileSync } = require('node:child_process');
 const { normalizeSource, sourceId } = require('./books');
-const { searchSource, getBookInfo, getToc, getContent } = require('./books');
+const {
+  searchSource: localSearchSource,
+  getBookInfo: localGetBookInfo,
+  getToc: localGetToc,
+  getContent: localGetContent,
+} = require('./books');
+const parsePool = require('./parsepool');
 const { request, requestBinary, absoluteUrl } = require('./util');
 const { fetchFeed } = require('./feeds');
 const { getArticle } = require('./article');
@@ -49,6 +55,8 @@ const { dedupeCache, findExistingDir } = require('./cacheclean');
 const tombstone = require('./tombstone');
 const { normalizeChapterList } = require('./chapter-order');
 const pyengine = require('./pyengine');
+const javaWorker = require('./java-worker');
+javaWorker.setEnabled(store.config.javaEngine !== false);
 const { mergeSources, pullSince } = require('./sourcesync');
 const events = require('./events');
 const remote = require('./remote');
@@ -63,6 +71,59 @@ function rememberChapter(key, value) {
 const { detectAcademic } = require('./academic');
 const { handleDav } = require('./dav');
 const searchCache = require('./searchcache');
+
+// 普通规则保持原解析路径；含同步 JS / java.* 的复杂规则交给 worker 池，避免卡住主事件循环。
+const dynamicSearchRequests = new Map();
+async function searchSource(source, key, page = 1, opts = {}) {
+  if (!parsePool.shouldOffload(source)) return localSearchSource(source, key, page, opts);
+  const requestKey = JSON.stringify([sourceId(source), source.searchUrl || '', key, page]);
+  const known = dynamicSearchRequests.get(requestKey);
+  if (known) {
+    const cached = searchCache.get(known.url, known.body);
+    if (cached) {
+      const list = cached.map((b) => ({ ...b }));
+      list.fromCache = true;
+      return list;
+    }
+  }
+  const meta = await parsePool.run('searchSource', [
+    source,
+    key,
+    page,
+    { ...opts, cache: false, returnMeta: true },
+  ]);
+  const books = meta && Array.isArray(meta.books) ? meta.books : [];
+  if (!meta || !meta.url) throw new Error('复杂书源未返回有效搜索地址');
+  dynamicSearchRequests.set(requestKey, { url: meta.url, body: meta.body });
+  if (dynamicSearchRequests.size > 1000) dynamicSearchRequests.delete(dynamicSearchRequests.keys().next().value);
+  searchCache.set(meta.url, meta.body, books);
+  return books;
+}
+
+async function getBookInfo(source, book, opts = {}) {
+  if (!parsePool.shouldOffload(source)) return localGetBookInfo(source, book, opts);
+  const result = await parsePool.run('getBookInfo', [source, book, opts]);
+  Object.assign(book, result || {});
+  return book;
+}
+
+async function normalizeTocOffload(chapters) {
+  const fromJava = await javaWorker.normalizeToc(chapters).catch(() => null);
+  const list = fromJava || normalizeChapterList(chapters);
+  return list.map((chapter, index) => ({ ...chapter, index }));
+}
+
+async function getToc(source, book, opts = {}) {
+  const chapters = !parsePool.shouldOffload(source)
+    ? await localGetToc(source, book, opts)
+    : await parsePool.run('getToc', [source, book, opts]);
+  return normalizeTocOffload(chapters);
+}
+
+async function getContent(source, book, chapter) {
+  if (!parsePool.shouldOffload(source)) return localGetContent(source, book, chapter);
+  return parsePool.run('getContent', [source, book, chapter]);
+}
 
 const APPNAME = process.env.TRIM_APPNAME || 'legado-web';
 const WEB_DIR = path.resolve(process.env.LEGADO_WEB || path.join(__dirname, '..', 'web'));
@@ -1350,11 +1411,13 @@ async function remoteToc(book) {
     20000
   );
   if (!r.ok || !r.data || !Array.isArray(r.data.chapters)) return null;
-  return r.data.chapters.map((c, i) => ({
+  const chapters = r.data.chapters.map((c, i) => ({
     index: i,
     title: String(c.title || `第${i + 1}章`),
     url: String(c.url || ''),
   }));
+  if (r.data.normalized === true) return chapters;
+  return normalizeTocOffload(chapters);
 }
 
 /** 让手机端解析正文（返回段落） */
@@ -1371,7 +1434,7 @@ async function remoteContent(book, chapter) {
   return null;
 }
 
-async function handleRefreshToc(book) {
+async function refreshToc(book) {
   // 目录优先走软总线：只要有手机在线就先让它解析（手机能过反爬/登录态），
   // 拿不到（无设备、源不在手机上、超时）再回落到本机解析
   if (book.viaPhone || busAvailable()) {
@@ -1409,8 +1472,9 @@ async function handleRefreshToc(book) {
           title: String(c.title || c.name || `第${i + 1}章`),
           url: String(c.url || c.chapterUrl || ''),
         }));
-        // Python 引擎不做目录去重/排序，这里复用内置规范化
-        const list = normalizeChapterList(raw).map((c, i) => ({ ...c, index: i }));
+        const list = r.normalized === 'python'
+          ? raw.map((c, i) => ({ ...c, index: i }))
+          : await normalizeTocOffload(raw);
         book.chapters = list;
         book.totalChapterNum = list.length;
         store.upsertBook(book);
@@ -1429,6 +1493,20 @@ async function handleRefreshToc(book) {
   prefetchChapter(book, book.durChapterIndex || 0);
   if (!book.durChapterIndex) prefetchChapter(book, 1);
   return chapters;
+}
+
+// 同一本书的并发目录刷新只执行一次，调用方共享结果，避免重复占用软总线 TOC 槽位。
+const tocInflight = new Map();
+async function handleRefreshToc(book) {
+  const key = String((book && book.bookUrl) || '');
+  if (!key) return refreshToc(book);
+  const existing = tocInflight.get(key);
+  if (existing) return existing;
+  const promise = refreshToc(book).finally(() => {
+    if (tocInflight.get(key) === promise) tocInflight.delete(key);
+  });
+  tocInflight.set(key, promise);
+  return promise;
 }
 
 // ---------- 「阅读」APK 接入：把飞牛书库包装成 Legado 书源 ----------
@@ -1976,7 +2054,7 @@ async function route(req, res, url) {
   }
 
   if (p === '/api/health')
-    return json(res, 200, { ok: true, app: APPNAME, version: APP_VERSION, build: BUILD_ID });
+    return json(res, 200, { ok: true, app: APPNAME, version: APP_VERSION, build: BUILD_ID, runtime: { node: process.version, v8: process.versions.v8, compileCache: require('node:module').getCompileCacheDir?.() || '' }, parse: parsePool.stats(), python: pyengine.poolStats(), java: javaWorker.status() });
 
   if (p === '/api/m/info') {
     if (!checkApiToken(req, url)) return json(res, 401, { error: 'token 无效' });
@@ -3345,20 +3423,38 @@ function saveCover(target, buf, mime) {
     return json(res, 200, { ok: true, data: result.data });
   }
 
-  // 规则引擎切换：node（内置）/ python（legado_rule）
+  // 规则引擎切换：Node（内置）/ Python（规则解析）/ Java 21（TOC 后处理）
   if (p === '/api/engine' && method === 'GET') {
     const status = await pyengine.probe();
+    const java = await javaWorker.health();
     return json(res, 200, {
       engine: effectiveEngine(),
       engineSwitch: store.config.engine === 'python' ? 'python' : 'node',
       pyMode: String(store.config.pyMode || 'aux'),
       pythonAux: pythonAuxEnabled(),
       python: status,
+      javaEngine: store.config.javaEngine !== false,
+      java,
+      node: { version: process.version, v8: process.versions.v8, compileCache: require('node:module').getCompileCacheDir?.() || '' },
     });
   }
 
   if (p === '/api/engine' && method === 'POST') {
     const body = await readJson(req);
+    if (body && typeof body.javaEngine === 'boolean') {
+      if (body.javaEngine) {
+        javaWorker.setEnabled(true);
+        const java = await javaWorker.health();
+        if (!java.ok) {
+          javaWorker.setEnabled(false);
+          return json(res, 400, { error: 'Java 21 TOC 引擎不可用：' + (java.lastError || '启动失败'), java });
+        }
+      } else {
+        javaWorker.setEnabled(false);
+      }
+      store.saveConfig({ javaEngine: body.javaEngine });
+      return json(res, 200, { ok: true, javaEngine: body.javaEngine, java: await javaWorker.health() });
+    }
     if (body && (body.pyMode === 'aux' || body.pyMode === 'core')) {
       store.saveConfig({ pyMode: body.pyMode });
     }

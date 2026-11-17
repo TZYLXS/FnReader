@@ -10,10 +10,12 @@ import json
 import os
 import sys
 import traceback
+from toc_normalize import normalize_chapters
 
-# 依赖装在 python/vendor 时也要能 import
+# 依赖装在 python/vendor 时也要能 import；开发机可显式跳过不匹配平台的 vendor。
 _HERE = os.path.dirname(os.path.abspath(__file__))
-for _p in (os.path.join(_HERE, "vendor"), _HERE):
+_PATHS = (_HERE,) if os.environ.get("LEGADO_PYTHONPATH") else (os.path.join(_HERE, "vendor"), _HERE)
+for _p in _PATHS:
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -71,14 +73,14 @@ def engine_for(source):
 
 def do_search(payload):
     engine = engine_for(payload["source"])
-    books = engine.search(payload.get("key", ""))
-    return {"books": books}
+    books = engine.search(payload.get("key", ""), int(payload.get("page") or 1))
+    return {"books": books, "engine": "python"}
 
 
 def do_toc(payload):
     engine = engine_for(payload["source"])
     chapters = engine.chapters(payload.get("tocUrl") or payload.get("bookUrl"))
-    return {"chapters": chapters}
+    return {"chapters": normalize_chapters(chapters), "normalized": "python", "engine": "python"}
 
 
 def do_content(payload):
@@ -87,14 +89,56 @@ def do_content(payload):
     return {
         "paragraphs": data.get("content", "").split("\n") if isinstance(data.get("content"), str) else data.get("content", []),
         "nextContentUrl": data.get("nextContentUrl", ""),
+        "engine": "python",
     }
 
 
-ACTIONS = {"search": do_search, "toc": do_toc, "content": do_content}
+def do_normalize_toc(payload):
+    return {"chapters": normalize_chapters(payload.get("chapters")), "normalized": "python"}
+
+
+ACTIONS = {"search": do_search, "toc": do_toc, "content": do_content, "normalize-toc": do_normalize_toc}
+
+
+def execute(action, payload):
+    if action == "probe":
+        import legado_rule
+
+        return {"ok": True, "engine": getattr(legado_rule, "__version__", "unknown"), "pid": os.getpid()}
+    if action != "normalize-toc":
+        need_engine()
+    fn = ACTIONS.get(action)
+    if not fn:
+        return {"error": "不支持的动作: %s" % action}
+    return fn(payload)
+
+
+def worker():
+    """持久 JSONL worker：一个进程服务多次调用，避免每次重建解释器和 HTTP 库。"""
+    for line in sys.stdin:
+        request_id = None
+        try:
+            request = json.loads(line)
+            request_id = request.get("id")
+            result = execute(request.get("action", "probe"), request.get("payload") or {})
+            result["id"] = request_id
+            out(result)
+        except Exception as e:
+            out({"id": request_id, "error": "%s: %s" % (type(e).__name__, str(e)[:300]),
+                 "trace": traceback.format_exc()[-800:]})
 
 
 def main():
     action = sys.argv[1] if len(sys.argv) > 1 else "probe"
+    if action == "--worker":
+        worker()
+        return
+    if action == "probe":
+        try:
+            out(execute(action, {}))
+        except Exception as e:
+            out({"error": "%s: %s" % (type(e).__name__, str(e)[:300])})
+        return
     raw = sys.stdin.read() or "{}"
     try:
         payload = json.loads(raw)
@@ -102,17 +146,7 @@ def main():
         payload = {}
 
     try:
-        if action == "probe":
-            import legado_rule
-
-            out({"ok": True, "engine": getattr(legado_rule, "__version__", "unknown")})
-            return
-        need_engine()
-        fn = ACTIONS.get(action)
-        if not fn:
-            out({"error": "不支持的动作: %s" % action})
-            return
-        out(fn(payload))
+        out(execute(action, payload))
     except Exception as e:
         out({"error": "%s: %s" % (type(e).__name__, str(e)[:300]), "trace": traceback.format_exc()[-800:]})
 

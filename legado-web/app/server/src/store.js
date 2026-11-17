@@ -23,6 +23,8 @@ const DEFAULT_CONFIG = {
   treProxy: true,
   // Python 工作模式：aux=辅助（TXT 下载/查重去重/缓存转换），core=接管 Node 规则引擎
   pyMode: 'aux',
+  // Java 21 TOC 引擎：独立接管目录去重、过滤和排序，关闭后回退 JS
+  javaEngine: true,
   ebookDir: '',
   ebookScanSec: 60,
   ebookScanDepth: 3,

@@ -188,12 +188,13 @@ async function searchSource(source, key, page = 1, opts = {}) {
   const method = (config.method || 'GET').toUpperCase();
   const body = method === 'POST' ? fillTemplate(config.body || '', vars, tplCtx) : null;
 
-  // 命中缓存就直接返回（同一个搜索请求 URL 只抓一次）
-  const cached = searchCache.get(url, body);
+  // 命中缓存就直接返回（同一个搜索请求 URL 只抓一次）。
+  // worker 解析时由主线程统一读写缓存，避免多个线程同时写 JSONL。
+  const cached = opts.cache === false ? null : searchCache.get(url, body);
   if (cached) {
     const list = cached.map((b) => ({ ...b }));
     list.fromCache = true;
-    return list;
+    return opts.returnMeta ? { books: list, url, body, fromCache: true } : list;
   }
   const resp = await fetchPage(url, source, {
     method,
@@ -242,8 +243,8 @@ async function searchSource(source, key, page = 1, opts = {}) {
       order: Date.now(),
     });
   }
-  searchCache.set(url, body, books);
-  return books;
+  if (opts.cache !== false) searchCache.set(url, body, books);
+  return opts.returnMeta ? { books, url, body, fromCache: false } : books;
 }
 
 function tryJson(text) {

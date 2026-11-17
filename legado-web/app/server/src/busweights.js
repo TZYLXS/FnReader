@@ -112,13 +112,24 @@ function maxInflight(dev) {
   return safe(() => (isHigh(dev) ? HIGH_INFLIGHT : LOW_INFLIGHT), LOW_INFLIGHT);
 }
 
-/** 高分设备先领书籍/正文，低分设备先领封面/简介 */
+/** 交互式 TOC 优先于批量搜索；低分设备仍只在可领类别内排序。 */
 function priorityOf(job, device, classes) {
   return safe(
     () => {
       if (!job) return 99;
-      if (device && device.debug) return 0;
       if (Array.isArray(classes) && classes.length === 1) return 0;
+      const typeOrder = {
+        toc: 0,
+        content: 1,
+        'ebook-chapter': 1,
+        search: 2,
+        rank: 2,
+        'ebook-parse': 2,
+        bookinfo: 3,
+        cover: 3,
+        intro: 3,
+      };
+      if (Object.prototype.hasOwnProperty.call(typeOrder, job.type)) return typeOrder[job.type];
       const order = ['book', 'content', 'media'];
       const i = order.indexOf(job.taskClass);
       return i < 0 ? 99 : i;

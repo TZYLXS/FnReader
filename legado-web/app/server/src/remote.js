@@ -36,10 +36,6 @@ function isDebugDevice(id, name) {
 
 // ---------------- 设备与隐藏性能分 ----------------
 
-function clampScore(v) {
-  return Math.max(SCORE_MIN, Math.min(SCORE_MAX, Math.round(v)));
-}
-
 /** App 报到 / 心跳 */
 function hello(info = {}) {
   const id = String(info.id || info.deviceId || '').trim() || 'unknown';
@@ -203,7 +199,8 @@ function pending(limit = 5, deviceId = '') {
     .filter((j) => (debugDevice ? true : classes.includes(j.taskClass)))
     .filter((j) => {
       if (!j.dispatchedTo) return true;
-      if (j.dispatchedTo === dev.id) return true;
+      // 当前设备已经在处理的任务不要再次派发；把剩余槽位留给等待中的任务。
+      if (j.dispatchedTo === dev.id) return false;
       return now - (j.dispatchedAt || 0) > LOCK_MS; // 锁过期可重新领取
     });
   const candidates = weights.sortJobs(eligible, dev, classes).slice(0, cap);
