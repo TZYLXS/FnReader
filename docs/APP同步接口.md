@@ -602,11 +602,17 @@ POST /api/m/sources      X-Api-Token: …
 也接受 `{ "sources": [ … ] }`。按 `bookSourceUrl` 去重：
 
 ```json
-{ "ok": true, "added": 1, "updated": 0, "total": 1253 }
+{ "ok": true, "added": 0, "updated": 1150, "duplicated": 0, "total": 1150 }
 ```
 
+- 入库前每个源都会走 `normalizeSource()`：补 `type`（来自 `bookSourceType`）、`ruleSearch/ruleBookInfo/ruleToc/ruleContent` 默认对象、
+  `enabled`，以及 `@js:` 规则用到的运行时方法（`getKey()`/`getVariable()` 等）
+- 写入 `lastUpdateTime`：客户端带了就用客户端的时间戳，没带按服务端当前时间
+- 同一批里重复的 `bookSourceUrl` 只保留第一条，计入 `duplicated`
 - 已存在的源用新字段覆盖（`enabled` 不传则保留原值）
 - 新源默认启用，导入后网页端书源列表立刻可见
+- 请求体上限 32 MB，整包 1000+ 个源（约 8 MB）实测可以一次推完
+- **全量推送无法表达删除**：要删源请用 §17.2 的 `POST /api/m/sources/sync` 的 `deleted` 数组
 
 ### 13.3 App 侧建议
 
