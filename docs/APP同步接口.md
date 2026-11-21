@@ -1116,3 +1116,75 @@ node tools/mock-client.js http://192.168.1.233:18081 <令牌>   # 阿尔法端�
 
 实测两端均 **8/8 通过**（本地端 18080、阿尔法端 18081）。这一步只验证服务端契约，
 不代表 Android 客户端已经实现——客户端接入后应复用同一套请求体。
+
+---
+
+## 18 书源管理接口（网页 / 管理端）
+
+前面 §13.2、§17 是给客户端用的（都要 `X-Api-Token`）；下面这组是网页端自己用的管理接口，
+用于导入、启停、删除书源，以及导出完整 Legado 书源。
+
+### 18.1 列表（精简）
+
+```http
+GET /api/sources
+```
+
+返回每个源的 `bookSourceName / bookSourceUrl / bookSourceGroup / enabled / checkStatus / checkAt`，
+**不含规则体**（规则体走 `/api/m/sources.json` 或 `POST` 导入）。
+
+### 18.2 导入（网页端）
+
+```http
+POST /api/sources     [ …Legado 书源数组… ]
+```
+
+也接受 `{ "sources": [ … ] }`。行为与 §13.2 一致：`normalizeSource()` → 按 `bookSourceUrl` 合并 →
+写 `lastUpdateTime`。响应：
+
+```json
+{ "ok": true, "imported": 147, "total": 147 }
+```
+
+### 18.3 启用 / 停用
+
+```http
+PATCH /api/sources/<bookSourceUrl 的 URL 编码>
+Content-Type: application/json
+
+{ "enabled": false }
+```
+
+返回 `{ "ok": true }`，同时把该源的 `lastUpdateTime` 更新为当前时间（会参与 §17 的 LWW 同步）。
+
+### 18.4 删除
+
+```http
+DELETE /api/sources/<bookSourceUrl 的 URL 编码>
+```
+
+```bash
+# 例：删掉探针源
+curl -X DELETE "http://<服务器>/api/sources/https%3A%2F%2Fprobe.test%2Fonly"
+# → {"ok":true}
+```
+
+删除不存在的源返回 `404 {"error":"书源不存在"}`。
+
+### 18.5 完整导出（Legado 格式）
+
+```http
+GET /api/m/sources.json      X-Api-Token: …
+```
+
+导出**带完整规则**的 Legado 书源数组（可再导入到 App 或另一台服务器）。
+
+### 18.6 鉴权说明（重要）
+
+| 接口 | 是否需要令牌 |
+| --- | --- |
+| `GET/POST /api/m/sources*`、`GET /api/m/sources.json` | ✅ 需要 `X-Api-Token` 或 `?token=` |
+| `GET/POST /api/sources`、`PATCH/DELETE /api/sources/<url>` | ⚠️ 不校验令牌（网页本机管理接口） |
+
+也就是说：**任何能访问该端口的人都调得动 §18.3/18.4**。部署在局域网/公网时请靠网络层防护
+（只在内网暴露、或走 Cloudflare Tunnel 的访问策略）；后续如需要可以把这几个写操作也纳入令牌校验。
