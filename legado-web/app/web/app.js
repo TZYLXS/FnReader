@@ -211,7 +211,8 @@ async function renderShelf() {
   $('#refresh-all').onclick = refreshAllTocs;
   try {
     const books = await loadBooks();
-    if (!books.length) {
+    // 空书架：亚马逊主题也要保留顶部导航（搜索/分类/设置），只在结果区提示为空
+    if (!books.length && state.config.theme !== 'amazon') {
       body.innerHTML = `<div class="empty"><div class="big">📖</div>书架还是空的<br />去「搜索」里找一本书，或先导入书源</div>`;
       return;
     }
@@ -327,7 +328,9 @@ async function renderShelf() {
         $('#amz-count').textContent = list.length
           ? `显示：1-${list.length} 条，共 ${books.length} 条`
           : `没有符合条件的结果，共 ${books.length} 条`;
-        $('#amz-list').innerHTML = list.length ? list.map(item).join('') : '<div class="amz-empty">没有符合条件的书</div>';
+        $('#amz-list').innerHTML = list.length
+          ? list.map(item).join('')
+          : `<div class="amz-empty">${books.length ? '没有符合条件的书' : '书架还是空的<br />用顶部搜索找书，或到「书源」导入书源'}</div>`;
       };
       const syncChips = () => {
         view.querySelectorAll('.amz-chip').forEach((c) => c.classList.toggle('on', c.dataset.f === filter));
