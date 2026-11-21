@@ -354,3 +354,16 @@ fnOS 上「安装完成但启动失败，提示依赖未更新」常见两类原
 - 3.0.10 起 `cmd/main` 会依次探测 `nodejs_v22 → v24 → v20 → v26 → /usr/bin/node → PATH`，
   逐个执行 `node -v` 验证，跳过损坏的运行时；日志首行会记录实际使用的 Node 路径与版本
 - 安装日志位置：`/var/apps/legado-web/var/app.log`
+
+## 运行环境依赖声明（3.0.12+）
+
+`manifest` 里用 `install_dep_apps` 声明首次安装时自动补齐的运行环境，多个依赖用 **冒号** 分隔，`>` 指定最低版本：
+
+```
+install_dep_apps = nodejs_v22>22.0:java-21-openjdk>21
+```
+
+- `nodejs_v22`：服务端 Node 运行时（必需）
+- `java-21-openjdk`：Java 21 目录引擎运行时（可选能力，但随包声明后首装会自动装好，省得用户手动处理）
+- Python 规则引擎不声明依赖：`server/python/vendor` 已随 FPK 打包（lxml/cssselect/requests 等），安装即用
+- 系统按列表顺序安装；依赖缺失/损坏时应用仍能启动，`cmd/main` 会自动探测可用 Node 并在 Java 不可用时回落 Node 目录解析

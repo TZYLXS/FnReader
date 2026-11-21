@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.0.11
+version=3.0.12
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -9,8 +9,8 @@ maintainer_url=https://github.com/TZYLXS
 distributor=TZYLXS
 desktop_uidir=ui
 desktop_applaunchname=legado-web.main
-install_dep_apps=nodejs_v22
+install_dep_apps      = nodejs_v22>22.0:java-21-openjdk>21
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=空书架时保留亚马逊顶部导航（搜索/分类/设置），仅在结果区提示「书架还是空的，用顶部搜索找书或导入书源」；修复首次安装后顶部导航栏消失
+changelog=manifest 补齐运行环境依赖：install_dep_apps=nodejs_v22>22.0:java-21-openjdk>21，首次安装自动装好 Node 22 与 Java 21（Python 引擎依赖已随包内 vendor 提供）
