@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.0.12
+version=3.0.13
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps      = nodejs_v22>22.0:java-21-openjdk>21
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=manifest 补齐运行环境依赖：install_dep_apps=nodejs_v22>22.0:java-21-openjdk>21，首次安装自动装好 Node 22 与 Java 21（Python 引擎依赖已随包内 vendor 提供）
+changelog=设置里「书城兜底」改名为「亚马逊出版物封面」；Node 运行时复测：v22 与 v26 均可用（v26 缺 libatomic.so.1 已用 apt 安装 libatomic1 修复），启动脚本仍按 v22 优先并逐个探测

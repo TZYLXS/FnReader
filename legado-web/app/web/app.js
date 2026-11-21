@@ -2495,7 +2495,7 @@ async function renderSettings() {
         <div class="row"><div class="label">行距</div>
           <input type="number" id="set-lh" min="1.3" max="2.6" step="0.05" value="${cfg.lineHeight}" style="width:72px" />
         </div>
-        <div class="row"><div class="label">书城兜底<div class="desc">缺封面/简介/评分时自动补全：出版物查亚马逊，网文查起点/晋江（仅 Kindle/亚马逊主题显示评分）</div></div>
+        <div class="row"><div class="label">亚马逊出版物封面<div class="desc">缺封面/简介/评分时自动补全：出版物查亚马逊，网文查起点/晋江（评分仅 Kindle/亚马逊主题显示）</div></div>
           <div class="switch ${cfg.metaFallback !== false ? 'on' : ''}" id="sw-meta"></div></div>
         <div class="row"><div class="label">液态玻璃底栏<div class="desc">底栏改为半透明玻璃质感，随主题自动适配</div></div>
           <div class="switch ${cfg.liquidGlass ? 'on' : ''}" id="sw-glass"></div></div>
@@ -2919,7 +2919,7 @@ async function renderSettings() {
         const on = !swMeta.classList.contains('on');
         swMeta.classList.toggle('on', on);
         saveConfig({ metaFallback: on });
-        toast(on ? '已开书城兜底：缺封面/简介/评分时会自动补全' : '已关闭书城兜底');
+        toast(on ? '已开启：缺封面/简介/评分时自动补全' : '已关闭亚马逊出版物封面');
       };
 
     // 优先手机解析

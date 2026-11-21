@@ -354,6 +354,8 @@ fnOS 上「安装完成但启动失败，提示依赖未更新」常见两类原
 - 3.0.10 起 `cmd/main` 会依次探测 `nodejs_v22 → v24 → v20 → v26 → /usr/bin/node → PATH`，
   逐个执行 `node -v` 验证，跳过损坏的运行时；日志首行会记录实际使用的 Node 路径与版本
 - 安装日志位置：`/var/apps/legado-web/var/app.log`
+- Node 运行时缺 `libatomic.so.1`（v26 常见）时可直接补系统库：`sudo apt-get update && sudo apt-get install -y libatomic1`，
+  装完 `/var/apps/nodejs_v26/target/bin/node -v` 应能正常输出版本（本机已验证 v26.13.1）
 
 ## 运行环境依赖声明（3.0.12+）
 
