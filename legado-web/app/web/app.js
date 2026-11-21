@@ -2398,6 +2398,27 @@ async function exportAllTxt(btn) {
   }
 }
 
+// 帮助入口（设置页「帮助/文档」与首次运行提示）
+function showHelp() {
+  return showDocs();
+}
+
+function maybeShowFirstRunHelp() {
+  try {
+    if (localStorage.getItem('fnr_help_seen') === '1') return;
+    localStorage.setItem('fnr_help_seen', '1');
+    setTimeout(() => {
+      try {
+        toast('首次使用：设置 → 帮助/文档 可以查看完整说明');
+      } catch {
+        /* ignore */
+      }
+    }, 2500);
+  } catch {
+    /* ignore */
+  }
+}
+
 async function showDocs() {
   const modal = $('#modal');
   const box = $('#modal-box');
