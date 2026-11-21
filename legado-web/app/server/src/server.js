@@ -1836,6 +1836,153 @@ async function refreshToc(book) {
 
 // 同一本书的并发目录刷新只执行一次，调用方共享结果，避免重复占用软总线 TOC 槽位。
 const tocInflight = new Map();
+// ---------- 书架 TXT 导出（异步任务，避免网关超时） ----------
+const exportAllJob = {
+  running: false,
+  id: 0,
+  startedAt: 0,
+  finishedAt: 0,
+  done: 0,
+  total: 0,
+  written: [],
+  skipped: [],
+  phase: 'idle',
+  error: '',
+};
+
+function exportAllProgress() {
+  return {
+    running: exportAllJob.running,
+    id: exportAllJob.id,
+    startedAt: exportAllJob.startedAt,
+    finishedAt: exportAllJob.finishedAt,
+    done: exportAllJob.done,
+    total: exportAllJob.total,
+    written: exportAllJob.written.slice(),
+    skipped: exportAllJob.skipped.slice(),
+    phase: exportAllJob.phase,
+    error: exportAllJob.error,
+  };
+}
+
+async function runExportAllJob() {
+  const dir = ebookScan.ebookDir(ebookCtx);
+  fs.mkdirSync(dir, { recursive: true });
+  const books = [...store.books];
+  const sanitize = (n) => String(n || '未命名').replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 80) || '未命名';
+
+  exportAllJob.total = books.length;
+  exportAllJob.phase = 'export';
+
+  const ebookItem = (book) => {
+    const sha = ebookRender.parseUrl(book.bookUrl) || (book.localEbook && book.localEbook.sha1);
+    if (!sha) return null;
+    const toc = ebookRender.toc(store.dataDir, sha);
+    if (!toc || !toc.chapters || !toc.chapters.length) return null;
+    const chapters = [];
+    toc.chapters.forEach((c, i) => {
+      const ch = ebookRender.content(store.dataDir, sha, i);
+      if (ch) chapters.push({ title: String(ch.title || ''), paragraphs: (ch.paragraphs || []).map((x) => String(x)) });
+    });
+    return chapters.length ? { name: book.name, chapters } : null;
+  };
+
+  const cacheItem = (book) => {
+    const raw = book.cachedDir;
+    if (!raw) return null;
+    const full = path.isAbsolute(raw) ? raw : path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache', raw);
+    try {
+      const files = fs.readdirSync(full).filter((f) => f.endsWith('.txt')).sort().map((f) => path.join(full, f));
+      return files.length ? { name: book.name, files } : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const stampMtime = (dest) => {
+    try {
+      const old = Date.now() / 1000 - 120;
+      fs.utimesSync(dest, old, old);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  for (const b of books) {
+    let item = null;
+    try {
+      item = ebookItem(b) || cacheItem(b);
+    } catch {
+      item = null;
+    }
+    if (!item) {
+      exportAllJob.skipped.push(b.name);
+      exportAllJob.done++;
+      continue;
+    }
+    const name = sanitize(b.name) + '.txt';
+    const dest = path.join(dir, name);
+    let ok = false;
+    try {
+      const py = await pyengine
+        .call('export_txt', { mode: 'write', name: b.name, outPath: dest, chapters: item.chapters, files: item.files }, 180000)
+        .catch(() => null);
+      ok = !!(py && py.ok && fs.existsSync(dest) && fs.statSync(dest).size > 20);
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      // 回落 JS 拼装
+      try {
+        const parts = [];
+        if (item.chapters) {
+          item.chapters.forEach((ch) => {
+            parts.push(String(ch.title || '').trim(), ...ch.paragraphs.map((x) => String(x).trim()).filter(Boolean), '');
+          });
+        } else {
+          for (const f of item.files) {
+            try {
+              parts.push(path.basename(f).replace(/^\d+[ ._-]*/, '').replace(/\.txt$/, ''), fs.readFileSync(f, 'utf8').trim(), '');
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        const text = parts.join('\n').replace(/\n{3,}/g, '\n\n');
+        if (text.trim().length >= 20) {
+          fs.writeFileSync(dest, text, 'utf8');
+          ok = true;
+        }
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) {
+      stampMtime(dest);
+      exportAllJob.written.push(name);
+    } else {
+      exportAllJob.skipped.push(b.name);
+    }
+    exportAllJob.done++;
+  }
+
+  exportAllJob.phase = 'scan';
+  try {
+    await ebookScan.scanOnce(ebookCtx);
+  } catch {
+    /* ignore */
+  }
+  exportAllJob.phase = 'dedupe';
+  try {
+    await dedupeShelf();
+  } catch {
+    /* ignore */
+  }
+  exportAllJob.phase = 'done';
+  exportAllJob.running = false;
+  exportAllJob.finishedAt = Date.now();
+}
+
 async function handleRefreshToc(book) {
   const key = String((book && book.bookUrl) || '');
   if (!key) return refreshToc(book);
@@ -4708,158 +4855,37 @@ function saveCover(target, buf, mime) {
   }
 
   // ---- 导出书架所有书为 TXT，直接写进 ebookDir，随后自动扫描 + 去重 ----
+  // ---- 导出书架所有书为 TXT（异步任务：立即返回，前端轮询进度） ----
   if (p === '/api/export/books-txt' && method === 'POST') {
-    const dir = ebookScan.ebookDir(ebookCtx);
-    fs.mkdirSync(dir, { recursive: true });
-    const books = [...store.books];
-    const written = [];
-    const skipped = [];
-    const sanitize = (n) => String(n || '未命名').replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 80) || '未命名';
-
-    const ebookText = (book) => {
-      const sha = ebookRender.parseUrl(book.bookUrl) || (book.localEbook && book.localEbook.sha1);
-      if (!sha) return '';
-      const toc = ebookRender.toc(store.dataDir, sha);
-      if (!toc || !toc.chapters) return '';
-      const parts = [];
-      toc.chapters.forEach((c, i) => {
-        const ch = ebookRender.content(store.dataDir, sha, i);
-        if (!ch) return;
-        parts.push(ch.title, ...ch.paragraphs, '');
+    if (exportAllJob.running) {
+      return json(res, 202, { ok: true, running: true, job: exportAllProgress() });
+    }
+    exportAllJob.running = true;
+    exportAllJob.id++;
+    exportAllJob.startedAt = Date.now();
+    exportAllJob.finishedAt = 0;
+    exportAllJob.done = 0;
+    exportAllJob.total = store.books.length;
+    exportAllJob.written = [];
+    exportAllJob.skipped = [];
+    exportAllJob.phase = 'starting';
+    exportAllJob.error = '';
+    // 用 setImmediate 延迟启动：先把 202 响应发出去，避免网关等待超时
+    setImmediate(() => {
+      runExportAllJob().catch((e) => {
+        exportAllJob.running = false;
+        exportAllJob.phase = 'error';
+        exportAllJob.error = String((e && e.message) || e);
       });
-      return parts.join('\n');
-    };
-
-    const cacheText = (book) => {
-      const raw = book.cachedDir;
-      if (!raw) return '';
-      const full = path.isAbsolute(raw) ? raw : path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache', raw);
-      if (!fs.existsSync(full)) return '';
-      let files = [];
-      try {
-        files = fs.readdirSync(full).filter((f) => f.endsWith('.txt')).sort();
-      } catch {
-        return '';
-      }
-      if (!files.length) return '';
-      const parts = [];
-      for (const f of files) {
-        try {
-          parts.push(f.replace(/^\d+\s*/, '').replace(/\.txt$/, ''), fs.readFileSync(path.join(full, f), 'utf8'), '');
-        } catch {
-          /* ignore */
-        }
-      }
-      return parts.join('\n');
-    };
-
-    // 组装导出任务：本地电子书给章节数组，缓存书给文件清单，交给 Python 批量写 TXT
-    const exportItems = [];
-    for (const b of books) {
-      const sha = ebookRender.parseUrl(b.bookUrl) || (b.localEbook && b.localEbook.sha1);
-      if (sha) {
-        const toc = ebookRender.toc(store.dataDir, sha);
-        if (toc && toc.chapters && toc.chapters.length) {
-          const chapters = [];
-          toc.chapters.forEach((c, i) => {
-            const ch = ebookRender.content(store.dataDir, sha, i);
-            if (ch) chapters.push({ title: String(ch.title || ''), paragraphs: (ch.paragraphs || []).map((x) => String(x)) });
-          });
-          exportItems.push({ name: b.name, chapters });
-          continue;
-        }
-      }
-      const raw = b.cachedDir;
-      if (raw) {
-        const full = path.isAbsolute(raw) ? raw : path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache', raw);
-        try {
-          const files = fs.readdirSync(full).filter((f) => f.endsWith('.txt')).sort().map((f) => path.join(full, f));
-          if (files.length) exportItems.push({ name: b.name, files });
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-
-    let pyDone = false;
-    try {
-      const py = await pyengine.call(
-        'export_txt',
-        { mode: 'batch', outDir: dir, threads: 4, books: exportItems.map((x) => ({ name: x.name, chapters: x.chapters, files: x.files })) },
-        300000
-      );
-      if (py && py.ok) {
-        pyDone = true;
-        for (const name of py.written || []) {
-          written.push(name + '.txt');
-          try {
-            const dest = path.join(dir, name + '.txt');
-            const old = Date.now() / 1000 - 120;
-            fs.utimesSync(dest, old, old);
-          } catch {
-            /* ignore */
-          }
-        }
-        for (const name of py.skipped || []) skipped.push(name);
-      }
-    } catch {
-      pyDone = false;
-    }
-
-    if (!pyDone) {
-      for (const b of books) {
-        let text = '';
-        try {
-          text = ebookText(b) || cacheText(b);
-        } catch {
-          text = '';
-        }
-        if (!text || text.length < 20) {
-          skipped.push(b.name);
-          continue;
-        }
-        const name = sanitize(b.name) + '.txt';
-        try {
-          const dest = path.join(dir, name);
-          fs.writeFileSync(dest, text, 'utf8');
-          try {
-            const old = Date.now() / 1000 - 120;
-            fs.utimesSync(dest, old, old);
-          } catch {
-            /* ignore */
-          }
-          written.push(name);
-        } catch {
-          skipped.push(b.name);
-        }
-      }
-    }
-
-    // 导出完自动扫描 + 去重
-    let scan = null;
-    let dedupe = null;
-    try {
-      scan = await ebookScan.scanOnce(ebookCtx);
-    } catch (e) {
-      scan = { error: String(e.message || e) };
-    }
-    try {
-      dedupe = await dedupeShelf();
-    } catch (e) {
-      dedupe = { error: String(e.message || e) };
-    }
-
-    return json(res, 200, {
-      ok: true,
-      dir,
-      written,
-      skipped,
-      scan,
-      dedupe: dedupe && { removed: dedupe.removed || 0, via: dedupe.via || '' },
     });
+    return json(res, 202, { ok: true, started: true, job: exportAllProgress() });
   }
 
-  // ---- 随包文档：列表 + Markdown 渲染 ----
+  if (p === '/api/export/books-txt/status' && method === 'GET') {
+    return json(res, 200, { ok: true, job: exportAllProgress() });
+  }
+
+  // ---- 随包文档：列表 + Markdown 渲染 ----  // ---- 随包文档：列表 + Markdown 渲染 ----
   if (p === '/api/docs' && method === 'GET') {
     const wantHtml = searchParams.get('html') === '1';
     const name = String(searchParams.get('name') || '').trim();

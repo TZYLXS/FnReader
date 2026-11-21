@@ -2311,25 +2311,44 @@ async function renderOffline() {
       <div class="row" style="margin:12px 16px"><div class="label">合计<div class="desc">在线 ${data.books} 本 · 电子书 ${data.ebooks} 本</div></div>
       <button class="btn" id="off-export-all" style="padding:5px 10px;font-size:12px">导出全部 TXT</button></div>`;
     const all = $('#off-export-all');
-    if (all)
-      all.onclick = async () => {
-        all.disabled = true;
-        all.textContent = '导出中…';
-        try {
-          const r = await api('/export/books-txt', { method: 'POST' });
-          toast(`已导出 ${r.written.length} 本到 ebook 目录，已自动扫描并去重`);
-        } catch (e) {
-          toast('导出失败：' + e.message);
-        } finally {
-          all.disabled = false;
-          all.textContent = '导出全部 TXT';
-        }
-      };
+    if (all) all.onclick = () => exportAllTxt(all).catch(() => {});
   } catch (e) {
     body.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
   }
 }
 
+
+
+/** 导出全部 TXT：服务端异步任务 + 轮询进度（避免网关超时返回 HTML 错误页） */
+async function exportAllTxt(btn) {
+  const label = (t) => { if (btn) btn.textContent = t; };
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('/export/books-txt', { method: 'POST' });
+    let st = r.job || r;
+    label(`导出中 ${st.done || 0}/${st.total || 0}`);
+    let guard = 0;
+    while (st && st.running && guard < 900) {
+      await new Promise((res) => setTimeout(res, 1000));
+      const s2 = await api('/export/books-txt/status');
+      st = s2.job || s2;
+      label(`导出中 ${st.done || 0}/${st.total || 0}`);
+      guard++;
+    }
+    if (st && st.error) throw new Error(st.error);
+    const n = (st.written || []).length;
+    toast(`已导出 ${n} 本到 ebook 目录，已自动扫描并去重`);
+    return st;
+  } catch (e) {
+    toast('导出失败：' + e.message);
+    throw e;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '导出全部 TXT';
+    }
+  }
+}
 
 async function showDocs() {
   const modal = $('#modal');
@@ -2628,21 +2647,7 @@ async function renderSettings() {
     }
 
     const exportBtn = $('#export-books');
-    if (exportBtn) {
-      exportBtn.onclick = async () => {
-        exportBtn.disabled = true;
-        exportBtn.textContent = '打包中…';
-        try {
-          const r = await api('/export/books-txt', { method: 'POST' });
-          toast(`已导出 ${r.written.length} 本到 ebook 目录，已自动扫描并去重`);
-        } catch (e) {
-          toast('导出失败：' + e.message);
-        } finally {
-          exportBtn.disabled = false;
-          exportBtn.textContent = '导出全部 TXT';
-        }
-      };
-    }
+    if (exportBtn) exportBtn.onclick = () => exportAllTxt(exportBtn).catch(() => {});
 
     // 搜索缓存统计
     try {
