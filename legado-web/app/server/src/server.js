@@ -1844,6 +1844,8 @@ const exportAllJob = {
   finishedAt: 0,
   done: 0,
   total: 0,
+  chapters: 0,
+  totalChapters: 0,
   written: [],
   skipped: [],
   current: '',
@@ -1859,6 +1861,8 @@ function exportAllProgress() {
     finishedAt: exportAllJob.finishedAt,
     done: exportAllJob.done,
     total: exportAllJob.total,
+    chapters: exportAllJob.chapters,
+    totalChapters: exportAllJob.totalChapters,
     written: exportAllJob.written.slice(),
     skipped: exportAllJob.skipped.slice(),
     current: exportAllJob.current,
@@ -1874,7 +1878,7 @@ async function runExportAllJob() {
   const sanitize = (n) => String(n || '未命名').replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 80) || '未命名';
 
   exportAllJob.total = books.length;
-  exportAllJob.phase = 'export';
+  exportAllJob.phase = 'collect';
 
   const ebookItem = (book) => {
     const sha = ebookRender.parseUrl(book.bookUrl) || (book.localEbook && book.localEbook.sha1);
@@ -1910,6 +1914,8 @@ async function runExportAllJob() {
     }
   };
 
+  // 1) 先收集所有可导出的书，算出总章节数（进度按「章」显示）
+  const items = [];
   for (const b of books) {
     exportAllJob.current = b.name || '';
     let item = null;
@@ -1923,14 +1929,24 @@ async function runExportAllJob() {
       exportAllJob.done++;
       continue;
     }
+    items.push({ book: b, item, chapters: item.chapters ? item.chapters.length : item.files.length });
+  }
+  exportAllJob.totalChapters = items.reduce((sum, x) => sum + x.chapters, 0);
+  exportAllJob.phase = 'export';
+
+  // 2) 逐本交给 Python 导出，按章节累计进度
+  for (const { book: b, item } of items) {
+    exportAllJob.current = b.name || '';
     const name = sanitize(b.name) + '.txt';
     const dest = path.join(dir, name);
     let ok = false;
+    let okChapters = 0;
     try {
       const py = await pyengine
         .call('export_txt', { mode: 'write', name: b.name, outPath: dest, chapters: item.chapters, files: item.files }, 180000)
         .catch(() => null);
       ok = !!(py && py.ok && fs.existsSync(dest) && fs.statSync(dest).size > 20);
+      if (ok) okChapters = Number(py.chapters) || 0;
     } catch {
       ok = false;
     }
@@ -1955,6 +1971,7 @@ async function runExportAllJob() {
         if (text.trim().length >= 20) {
           fs.writeFileSync(dest, text, 'utf8');
           ok = true;
+          okChapters = item.chapters ? item.chapters.length : item.files.length;
         }
       } catch {
         ok = false;
@@ -1963,6 +1980,7 @@ async function runExportAllJob() {
     if (ok) {
       stampMtime(dest);
       exportAllJob.written.push(name);
+      exportAllJob.chapters += okChapters > 0 ? okChapters : item.chapters ? item.chapters.length : item.files.length;
     } else {
       exportAllJob.skipped.push(b.name);
     }
@@ -4870,6 +4888,8 @@ function saveCover(target, buf, mime) {
     exportAllJob.finishedAt = 0;
     exportAllJob.done = 0;
     exportAllJob.total = store.books.length;
+    exportAllJob.chapters = 0;
+    exportAllJob.totalChapters = 0;
     exportAllJob.written = [];
     exportAllJob.skipped = [];
     exportAllJob.phase = 'starting';

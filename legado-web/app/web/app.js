@@ -2339,12 +2339,21 @@ async function exportAllTxt(btn) {
   const paint = (st) => {
     const total = st.total || 0;
     const done = st.done || 0;
-    const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+    const doneCh = st.chapters || 0;
+    const totalCh = st.totalChapters || 0;
+    // 进度以「章」为主；章节总数还没统计出来时先按本算
+    const pct = totalCh ? Math.min(100, Math.round((doneCh / totalCh) * 100)) : total ? Math.min(100, Math.round((done / total) * 100)) : 0;
     if (bar) bar.style.width = pct + '%';
-    if (title) title.textContent = st.phase === 'scan' || st.phase === 'dedupe'
-      ? (st.phase === 'scan' ? '导出完成，正在扫描电子书…' : '正在去重书架…')
-      : (st.current ? `正在导出：${st.current}` : '准备导出…');
-    if (desc) desc.textContent = `${done} / ${total} · 已导出 ${(st.written || []).length} 本 · 跳过 ${(st.skipped || []).length} 本`;
+    if (title) {
+      if (st.phase === 'collect') title.textContent = '正在统计章节…';
+      else if (st.phase === 'scan') title.textContent = '导出完成，正在扫描电子书…';
+      else if (st.phase === 'dedupe') title.textContent = '正在去重书架…';
+      else title.textContent = st.current ? `正在导出：${st.current}` : '准备导出…';
+    }
+    if (desc) {
+      const chPart = totalCh ? `${doneCh.toLocaleString()} / ${totalCh.toLocaleString()} 章` : `${doneCh.toLocaleString()} 章`;
+      desc.textContent = `${chPart} · 已完成 ${done}/${total} 本 · 已导出 ${(st.written || []).length} 本 · 跳过 ${(st.skipped || []).length} 本`;
+    }
   };
   if (btn) btn.disabled = true;
   try {
@@ -2369,7 +2378,7 @@ async function exportAllTxt(btn) {
     if (bar) bar.style.width = '100%';
     if (title) title.textContent = '导出完成';
     const n = (st.written || []).length;
-    if (desc) desc.textContent = `已导出 ${n} 本 · 跳过 ${(st.skipped || []).length} 本（无缓存）`;
+    if (desc) desc.textContent = `共导出 ${(st.chapters || 0).toLocaleString()} 章 · ${n} 本 · 跳过 ${(st.skipped || []).length} 本（无缓存）`;
     toast(`已导出 ${n} 本到 ebook 目录，已自动扫描并去重`);
     setTimeout(() => { if (box) box.style.display = 'none'; }, 8000);
     return st;
