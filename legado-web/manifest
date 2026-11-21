@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.0.2
+version=3.0.3
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=3.0.2：发布链路与文档对齐，标签与更新日志一致
+changelog=书城兜底：缺封面/简介/评分时自动补全（出版物→亚马逊，网文→起点/晋江），评分仅在亚马逊/Kindle主题显示；设置页可开关

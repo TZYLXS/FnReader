@@ -225,6 +225,11 @@ async function renderShelf() {
       }</div>`;
       const item = (b) => {
         const pct = b.durChapterIndex ? pctOf(b) : 0;
+        const hasRating = typeof b.rating === 'number' && b.rating > 0;
+        const starPct = hasRating ? Math.round((b.rating / 5) * 100) : pct;
+        const rateText = hasRating
+          ? `${b.rating.toFixed(1)}${b.ratingCount ? ` · ${b.ratingCount} 评分` : ' 评分'}`
+          : (b.durChapterIndex ? `已读 ${b.durChapterIndex + 1}/${b.totalChapterNum || '?'} 章` : '尚未开始');
         return `
         <article class="amz-item" data-url="${esc(b.bookUrl)}">
           <div class="amz-item-cover">${cover(b)}</div>
@@ -234,8 +239,8 @@ async function renderShelf() {
               b.totalChapterNum ? esc(b.totalChapterNum) + ' 章' : '待解析'
             }</div>
             <div class="amz-item-rate">
-              <span class="amz-stars" style="--pct:${pct}%">★★★★★</span>
-              <span class="amz-rate-num">${b.durChapterIndex ? `已读 ${b.durChapterIndex + 1}/${b.totalChapterNum || '?'} 章` : '尚未开始'}</span>
+              <span class="amz-stars" style="--pct:${starPct}%">★★★★★</span>
+              <span class="amz-rate-num">${rateText}</span>
             </div>
             <div class="amz-item-bar"><i style="width:${pct}%"></i></div>
             <div class="amz-item-actions">
@@ -387,7 +392,7 @@ async function renderShelf() {
             b.coverUrl ? `<img loading="lazy" src="${esc(coverSrc(b.coverUrl, b.bookUrl))}" onerror="this.remove()" />` : ''
           }</div>
           <div class="store-name">${esc(b.name)}</div>
-          <div class="store-meta">${esc(b.author || '')}</div>
+          <div class="store-meta">${esc(b.author || '')}${typeof b.rating === 'number' && b.rating > 0 ? ` · ★ ${b.rating.toFixed(1)}` : ''}</div>
           <button class="more" data-more="1" aria-label="更多">⋯</button>
         </div>`;
       body.innerHTML = `
@@ -401,7 +406,7 @@ async function renderShelf() {
                   <div class="hero-info">
                     <div class="hero-kicker">继续阅读</div>
                     <div class="hero-title">${esc(hero.name)}</div>
-                    <div class="hero-meta">${esc(hero.author || '')} · 读到第 ${hero.durChapterIndex + 1}/${hero.totalChapterNum || '?'} 章</div>
+                    <div class="hero-meta">${esc(hero.author || '')}${typeof hero.rating === 'number' && hero.rating > 0 ? ` · ★ ${hero.rating.toFixed(1)}` : ''} · 读到第 ${hero.durChapterIndex + 1}/${hero.totalChapterNum || '?'} 章</div>
                     <div class="hero-bar"><i style="width:${Math.min(100, Math.round(((hero.durChapterIndex + 1) / (hero.totalChapterNum || 1)) * 100))}%"></i></div>
                     <button class="hero-btn" data-url="${esc(hero.bookUrl)}">继续阅读</button>
                   </div>
@@ -2423,6 +2428,8 @@ async function renderSettings() {
         <div class="row"><div class="label">行距</div>
           <input type="number" id="set-lh" min="1.3" max="2.6" step="0.05" value="${cfg.lineHeight}" style="width:72px" />
         </div>
+        <div class="row"><div class="label">书城兜底<div class="desc">缺封面/简介/评分时自动补全：出版物查亚马逊，网文查起点/晋江（仅 Kindle/亚马逊主题显示评分）</div></div>
+          <div class="switch ${cfg.metaFallback !== false ? 'on' : ''}" id="sw-meta"></div></div>
         <div class="row"><div class="label">液态玻璃底栏<div class="desc">底栏改为半透明玻璃质感，随主题自动适配</div></div>
           <div class="switch ${cfg.liquidGlass ? 'on' : ''}" id="sw-glass"></div></div>
       </div>
@@ -2848,6 +2855,15 @@ async function renderSettings() {
         };
       }
     }
+
+    const swMeta = $('#sw-meta');
+    if (swMeta)
+      swMeta.onclick = () => {
+        const on = !swMeta.classList.contains('on');
+        swMeta.classList.toggle('on', on);
+        saveConfig({ metaFallback: on });
+        toast(on ? '已开书城兜底：缺封面/简介/评分时会自动补全' : '已关闭书城兜底');
+      };
 
     // 优先手机解析
     const swPrefer = $('#sw-prefer');

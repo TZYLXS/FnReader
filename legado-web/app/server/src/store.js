@@ -25,6 +25,8 @@ const DEFAULT_CONFIG = {
   pyMode: 'aux',
   // Java 21 TOC 引擎：独立接管目录去重、过滤和排序，关闭后回退 JS
   javaEngine: true,
+  // 书城兜底：缺封面/简介/评分时按站点补全（出版物→亚马逊，网文→起点/晋江）
+  metaFallback: true,
   ebookDir: '',
   ebookScanSec: 60,
   ebookScanDepth: 3,

@@ -56,6 +56,7 @@ const tombstone = require('./tombstone');
 const { normalizeChapterList } = require('./chapter-order');
 const pyengine = require('./pyengine');
 const javaWorker = require('./java-worker');
+const metaenrich = require('./metaenrich');
 javaWorker.setEnabled(store.config.javaEngine !== false);
 const { mergeSources, pullSince } = require('./sourcesync');
 const events = require('./events');
@@ -105,6 +106,50 @@ async function getBookInfo(source, book, opts = {}) {
   const result = await parsePool.run('getBookInfo', [source, book, opts]);
   Object.assign(book, result || {});
   return book;
+}
+
+/**
+ * 书城兜底：按书号补封面/简介/评分（出版物走亚马逊，网文走起点/晋江）
+ * 只填空字段，不覆盖已有数据；失败静默。
+ */
+async function enrichShelfBook(url, opts = {}) {
+  if (store.config.metaFallback === false) return null;
+  const book = store.findBook(url) || store.books.find((b) => b.bookUrl === url);
+  if (!book) return null;
+  if (!opts.force && !metaenrich.shouldEnrich(book)) return null;
+  const patch = await metaenrich.enrichBook(book, {
+    dataDir: store.dataDir,
+    coversDir: path.join(store.dataDir, 'covers'),
+    force: !!opts.force,
+  }).catch(() => null);
+  if (!patch) return null;
+  const current = store.findBook(book.bookUrl) || book;
+  const changed = {};
+  if (!current.coverUrl && patch.coverUrl) changed.coverUrl = patch.coverUrl;
+  if (!current.intro && patch.intro) changed.intro = patch.intro;
+  if (!current.rating && patch.rating) {
+    changed.rating = patch.rating;
+    changed.ratingCount = patch.ratingCount || null;
+  }
+  changed.metaSource = patch.metaSource || current.metaSource || '';
+  changed.metaAt = Date.now();
+  if (!changed.coverUrl && !changed.intro && !changed.rating) return null;
+  store.upsertBook({ ...current, ...changed });
+  events.broadcast({
+    type: 'shelf',
+    action: 'enriched',
+    bookUrl: current.bookUrl,
+    cover: !!changed.coverUrl,
+    intro: !!changed.intro,
+    rating: changed.rating || null,
+    source: changed.metaSource,
+  });
+  return changed;
+}
+
+function scheduleMetaEnrich(url, delay = 1200) {
+  if (!url || store.config.metaFallback === false) return;
+  setTimeout(() => enrichShelfBook(url).catch(() => {}), delay);
 }
 
 async function normalizeTocOffload(chapters) {
@@ -3358,6 +3403,13 @@ function saveCover(target, buf, mime) {
     }
     if (added) events.broadcast({ type: 'shelf', action: 'add', count: added, via: 'app' });
     if (added || updated) await dedupeShelf();
+    // 缺封面/简介的书：后台兜底补全（每本间隔 2 秒，避免打爆第三方）
+    if (added || updated) {
+      list.slice(0, 5).forEach((item, i) => {
+        const url = String(item && item.bookUrl || '');
+        if (url) scheduleMetaEnrich(url, 2000 + i * 2000);
+      });
+    }
     return json(res, 200, { ok: true, added, updated, skippedDeleted, total: store.books.length });
   }
 
@@ -4085,6 +4137,8 @@ function saveCover(target, buf, mime) {
         prefetchPhoneBook(saved).catch(() => {});
       }, 200);
     }
+    // 新加的书：缺封面/简介时后台兜底补全
+    if (saved) scheduleMetaEnrich(saved.bookUrl, 1500);
     // 新加的书：后台立刻抓一次完整目录（分页也会跟），抓完广播给网页
     if (saved && !(saved.chapters && saved.chapters.length)) {
       setTimeout(() => {
@@ -4102,6 +4156,17 @@ function saveCover(target, buf, mime) {
       replaced: saved && saved.bookUrl !== book.bookUrl ? saved.bookUrl : '',
       merged: !!(saved && saved.bookUrl !== book.bookUrl),
     });
+  }
+
+  // 书城兜底：手动补全一本书（POST /api/books/enrich {url, force}）
+  if (p === '/api/books/enrich' && method === 'POST') {
+    const body = await readJson(req);
+    const url = String((body && body.url) || '').trim();
+    if (!url) return json(res, 400, { error: '缺少 url' });
+    const book = store.findBook(url);
+    if (!book) return json(res, 404, { error: '书籍不存在' });
+    const patch = await enrichShelfBook(url, { force: !!(body && body.force) });
+    return json(res, 200, { ok: !!patch, patch: patch || null, book: sanitizeBook(store.findBook(url)) });
   }
 
   if (p === '/api/books' && method === 'DELETE') {
@@ -5149,6 +5214,19 @@ function main() {
 
 tcp.listen(PORT, '::', () => {
   console.log(`[legado-web] http://[::]:${PORT}（IPv4/IPv6 双栈）`);
+  // 书城兜底：启动后台补全缺封面/简介的书（每次最多 6 本，顺序执行）
+  if (store.config.metaFallback !== false) {
+    setTimeout(async () => {
+      try {
+        const targets = store.books.filter((b) => metaenrich.shouldEnrich(b) && !b.metaAt).slice(0, 6);
+        for (const b of targets) {
+          await enrichShelfBook(b.bookUrl).catch(() => {});
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+        if (targets.length) console.log('[legado-web] 书城兜底：处理 ' + targets.length + ' 本缺封面/简介的书');
+      } catch { /* ignore */ }
+    }, 15000);
+  }
   // Java 21 目录引擎：默认随服务启动（设置里可关闭）
   if (store.config.javaEngine !== false) {
     javaWorker.start()
