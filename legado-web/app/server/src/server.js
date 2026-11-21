@@ -1553,7 +1553,7 @@ async function dedupeShelf() {
   let r = null;
   if (pythonAuxEnabled()) {
     try {
-      const py = await pyengine.call('dedupe', { books: store.books }, 60000);
+      const py = await pyengine.call('dedupe', { books: store.books }, 4000);
       if (py && Array.isArray(py.books)) {
         r = { list: py.books, removed: Number(py.removed) || 0, via: 'python' };
       }
@@ -1570,7 +1570,6 @@ async function dedupeShelf() {
     events.broadcast({ type: 'shelf', action: 'dedupe', removed: r.removed, via: r.via });
     console.log('[legado-web] 书架去重（' + r.via + '）：合并 ' + r.removed + ' 条');
   }
-  return r;
   return r;
 }
 
@@ -3911,7 +3910,8 @@ function saveCover(target, buf, mime) {
 
   if (p === '/api/books' && method === 'GET') {
     ensureTombstone();
-    await dedupeShelf();
+    // 注意：这里曾经每次 GET 都 await dedupeShelf()，Python 进程池一旦卡住会让书架接口整体挂起
+    // 去重只在写路径（加书/导入/启动扫描）触发，读路径直接返回
     const books = [...store.books].sort((a, b) => (b.durChapterTime || 0) - (a.durChapterTime || 0));
     // 老版本入库的 ebook:// 条目没有 ebookFormat，这里按登记表补上（前端据此显示「文/图」按钮）
     let fmtMap = null;
