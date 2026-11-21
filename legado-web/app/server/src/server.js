@@ -4560,13 +4560,25 @@ function saveCover(target, buf, mime) {
     if (!meta) return json(res, 404, { error: '电子书不存在' });
     const toc = ebookRender.toc(store.dataDir, sha1);
     if (!toc || !toc.chapters || !toc.chapters.length) return json(res, 404, { error: '还没有解析出目录' });
-    const parts = [];
+    const chaptersForExport = [];
     toc.chapters.forEach((c, i) => {
       const ch = ebookRender.content(store.dataDir, sha1, i);
       if (!ch) return;
-      parts.push(String(ch.title || '').trim(), ...(ch.paragraphs || []).map((x) => String(x).trim()).filter(Boolean), '');
+      chaptersForExport.push({ title: String(ch.title || ''), paragraphs: (ch.paragraphs || []).map((x) => String(x)) });
     });
-    const text = parts.join('\n');
+    // 交给 Python 拼装/清洗（失败回落到 JS）
+    const pyText = await pyengine
+      .call('export_txt', { mode: 'single', name: meta.name, chapters: chaptersForExport }, 120000)
+      .then((r) => (r && r.ok && typeof r.text === 'string' ? r.text : ''))
+      .catch(() => '');
+    let text = pyText;
+    if (!text) {
+      const parts = [];
+      chaptersForExport.forEach((ch) => {
+        parts.push(String(ch.title || '').trim(), ...ch.paragraphs.map((x) => String(x).trim()).filter(Boolean), '');
+      });
+      text = parts.join('\n');
+    }
     const safe = String(meta.name || 'book').replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 80);
     res.writeHead(200, {
       'Content-Type': 'text/plain; charset=utf-8',
@@ -4741,31 +4753,85 @@ function saveCover(target, buf, mime) {
       return parts.join('\n');
     };
 
+    // 组装导出任务：本地电子书给章节数组，缓存书给文件清单，交给 Python 批量写 TXT
+    const exportItems = [];
     for (const b of books) {
-      let text = '';
-      try {
-        text = ebookText(b) || cacheText(b);
-      } catch {
-        text = '';
+      const sha = ebookRender.parseUrl(b.bookUrl) || (b.localEbook && b.localEbook.sha1);
+      if (sha) {
+        const toc = ebookRender.toc(store.dataDir, sha);
+        if (toc && toc.chapters && toc.chapters.length) {
+          const chapters = [];
+          toc.chapters.forEach((c, i) => {
+            const ch = ebookRender.content(store.dataDir, sha, i);
+            if (ch) chapters.push({ title: String(ch.title || ''), paragraphs: (ch.paragraphs || []).map((x) => String(x)) });
+          });
+          exportItems.push({ name: b.name, chapters });
+          continue;
+        }
       }
-      if (!text || text.length < 20) {
-        skipped.push(b.name);
-        continue;
-      }
-      const name = sanitize(b.name) + '.txt';
-      try {
-        const dest = path.join(dir, name);
-        fs.writeFileSync(dest, text, 'utf8');
-        // 回拨 mtime，让紧随其后的扫描立刻收录（scan 有 20 秒保护）
+      const raw = b.cachedDir;
+      if (raw) {
+        const full = path.isAbsolute(raw) ? raw : path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache', raw);
         try {
-          const old = Date.now() / 1000 - 120;
-          fs.utimesSync(dest, old, old);
+          const files = fs.readdirSync(full).filter((f) => f.endsWith('.txt')).sort().map((f) => path.join(full, f));
+          if (files.length) exportItems.push({ name: b.name, files });
         } catch {
           /* ignore */
         }
-        written.push(name);
-      } catch {
-        skipped.push(b.name);
+      }
+    }
+
+    let pyDone = false;
+    try {
+      const py = await pyengine.call(
+        'export_txt',
+        { mode: 'batch', outDir: dir, threads: 4, books: exportItems.map((x) => ({ name: x.name, chapters: x.chapters, files: x.files })) },
+        300000
+      );
+      if (py && py.ok) {
+        pyDone = true;
+        for (const name of py.written || []) {
+          written.push(name + '.txt');
+          try {
+            const dest = path.join(dir, name + '.txt');
+            const old = Date.now() / 1000 - 120;
+            fs.utimesSync(dest, old, old);
+          } catch {
+            /* ignore */
+          }
+        }
+        for (const name of py.skipped || []) skipped.push(name);
+      }
+    } catch {
+      pyDone = false;
+    }
+
+    if (!pyDone) {
+      for (const b of books) {
+        let text = '';
+        try {
+          text = ebookText(b) || cacheText(b);
+        } catch {
+          text = '';
+        }
+        if (!text || text.length < 20) {
+          skipped.push(b.name);
+          continue;
+        }
+        const name = sanitize(b.name) + '.txt';
+        try {
+          const dest = path.join(dir, name);
+          fs.writeFileSync(dest, text, 'utf8');
+          try {
+            const old = Date.now() / 1000 - 120;
+            fs.utimesSync(dest, old, old);
+          } catch {
+            /* ignore */
+          }
+          written.push(name);
+        } catch {
+          skipped.push(b.name);
+        }
       }
     }
 

@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.0.4
+version=3.0.5
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps=nodejs_v22
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=TOC 客户端代理解析优先级最高（缓存不完整也继续问手机）；引擎开关不再卡在启动中：探测带超时并后台启动 Java/Python
+changelog=TXT 导出改由 Python 处理：单本/书架批量导出走 export_txt（4 线程、UTF-8、空行规范化），Python 不可用自动回落 JS
