@@ -42,7 +42,8 @@ function start() {
   if (!enabled()) return Promise.reject(new Error('Java worker 未启用'));
   if (child && port) return Promise.resolve(port);
   if (starting) return starting;
-  if (!SOURCE) return Promise.reject(new Error('缺少 FnReaderJavaWorker.java'));
+  // 有 class 就能跑（FPK 里通常只带 class，不带 .java 源码）
+  if (!SOURCE && !CLASS_DIR) return Promise.reject(new Error('缺少 FnReaderJavaWorker.class / .java'));
   starting = new Promise((resolve, reject) => {
     const bin = javaBin();
     const args = CLASS_DIR ? ['-cp', CLASS_DIR, 'FnReaderJavaWorker'] : ['-Dfile.encoding=UTF-8', SOURCE];
