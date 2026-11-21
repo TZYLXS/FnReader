@@ -1748,7 +1748,8 @@ async function refreshToc(book) {
       if (!tocLooksIncomplete(book, cachedToc.chapters)) return book.chapters;
       phoneChapters = cachedToc.chapters;
     }
-    if (!phoneChapters) {
+    // 缓存不完整 / 没有缓存时，仍然优先问手机（客户端代理优先级最高，Python/Java 都不抢占）
+    {
       const chapters = await remoteToc(book).catch(() => null);
       if (chapters && chapters.length) {
         phoneChapters = chapters;
@@ -3839,8 +3840,22 @@ function saveCover(target, buf, mime) {
 
   // 规则引擎切换：Node（内置）/ Python（规则解析）/ Java 21（TOC 后处理）
   if (p === '/api/engine' && method === 'GET') {
-    const status = await pyengine.probe();
-    const java = await javaWorker.health();
+    const withTimeout = (promise, ms, fallback) => Promise.race([
+      promise.catch(() => fallback),
+      new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+    ]);
+    // 探测可能卡在引擎启动中：最多等 1.5s，超时返回「启动中」，设置页开关不会卡住
+    const status = await withTimeout(pyengine.probe(), 1500, {
+      ok: null,
+      starting: true,
+      error: 'Python 启动中…',
+    });
+    const java = await withTimeout(javaWorker.health(), 1200, {
+      ...javaWorker.status(),
+      ok: null,
+      starting: true,
+      lastError: 'Java 启动中…',
+    });
     return json(res, 200, {
       engine: effectiveEngine(),
       engineSwitch: store.config.engine === 'python' ? 'python' : 'node',
@@ -3858,16 +3873,17 @@ function saveCover(target, buf, mime) {
     if (body && typeof body.javaEngine === 'boolean') {
       if (body.javaEngine) {
         javaWorker.setEnabled(true);
-        const java = await javaWorker.health();
-        if (!java.ok) {
-          javaWorker.setEnabled(false);
-          return json(res, 400, { error: 'Java 21 TOC 引擎不可用：' + (java.lastError || '启动失败'), java });
-        }
+        javaWorker.start().catch(() => {}); // 后台启动，不阻塞请求
       } else {
         javaWorker.setEnabled(false);
       }
       store.saveConfig({ javaEngine: body.javaEngine });
-      return json(res, 200, { ok: true, javaEngine: body.javaEngine, java: await javaWorker.health() });
+      return json(res, 200, {
+        ok: true,
+        javaEngine: body.javaEngine,
+        starting: !!body.javaEngine,
+        java: javaWorker.status(),
+      });
     }
     if (body && (body.pyMode === 'aux' || body.pyMode === 'core')) {
       store.saveConfig({ pyMode: body.pyMode });
@@ -3877,8 +3893,11 @@ function saveCover(target, buf, mime) {
     }
     const want = body.engine === 'python' ? 'python' : 'node';
     if (want === 'python') {
-      const status = await pyengine.probe(true);
-      if (!status.ok) return json(res, 400, { error: 'Python 引擎不可用：' + (status.error || '未知原因'), python: status });
+      const status = await Promise.race([
+        pyengine.probe().catch(() => ({ ok: false, error: '探测失败' })),
+        new Promise((resolve) => setTimeout(() => resolve({ ok: null, starting: true }), 2500)),
+      ]);
+      if (status.ok === false) return json(res, 400, { error: 'Python 引擎不可用：' + (status.error || '未知原因'), python: status });
     }
     store.saveConfig({ engine: want });
     return json(res, 200, { ok: true, engine: want });

@@ -2787,14 +2787,16 @@ async function renderSettings() {
           swPyMode.classList.toggle('disabled', !master && !core);
         }
         if (stEngine) {
-          if (master) stEngine.textContent = '已启用 · Python ' + ((r.python && r.python.engine) || '') + (core ? '（接管规则解析）' : '（仅辅助：下载/去重）');
+          if (r.python && r.python.starting) stEngine.textContent = 'Python 启动中…（不影响开关操作）';
+          else if (master) stEngine.textContent = '已启用 · Python ' + ((r.python && r.python.engine) || '') + (core ? '（接管规则解析）' : '（仅辅助：下载/去重）');
           else if (r.python && r.python.ok) stEngine.textContent = '内置 Node 引擎（Python 可用：' + (r.python.engine || '') + '）';
           else stEngine.textContent = '内置 Node 引擎 · Python 不可用：' + ((r.python && r.python.error) || '未安装');
         }
         const stJava = $('#java-status');
         if (stJava) {
           const j = r.java || {};
-          if (r.javaEngine === false) stJava.textContent = '已关闭 · 目录由 Node 处理';
+          if (j.starting) stJava.textContent = '启动中…（引擎后台拉起，稍候自动刷新）';
+          else if (r.javaEngine === false) stJava.textContent = '已关闭 · 目录由 Node 处理';
           else if (j.ok) stJava.textContent = '运行中 · Java ' + (j.java || '21') + (j.virtualThreads ? ' · 虚拟线程' : '') + ` · 端口 ${j.port || '-'}`;
           else stJava.textContent = '启动失败：' + (j.lastError || j.error || 'Java 不可用');
         }
@@ -2818,6 +2820,7 @@ async function renderSettings() {
           await api('/engine', { method: 'POST', body: { engine: on ? 'node' : 'python' } });
           toast(on ? '已关闭 Python 引擎（工作模式自动灰显）' : '已开启 Python 引擎');
           applyEngineState(await api('/engine'));
+          setTimeout(async () => { try { applyEngineState(await api('/engine')); } catch { /* ignore */ } }, 2500);
         } catch (e) {
           stEngine.textContent = e.message;
           toast(e.message);
@@ -2834,6 +2837,7 @@ async function renderSettings() {
             swJava.classList.toggle('on', next);
             toast(next ? 'Java 目录引擎已启动' : 'Java 目录引擎已关闭，目录回落到 Node');
             applyEngineState(await api('/engine'));
+            setTimeout(async () => { try { applyEngineState(await api('/engine')); } catch { /* ignore */ } }, 2500);
           } catch (e) {
             swJava.classList.toggle('on', !next);
             toast(e.message);
