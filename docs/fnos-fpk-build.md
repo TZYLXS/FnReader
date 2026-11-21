@@ -321,3 +321,19 @@ CI 产物：GitHub Releases 中的 `legado-web.fpk`，可在 fnOS 应用中心�
 
 > 提示：官方字段可能随 fnOS 版本增加，本文档以实际可用的最小集合为准；
 > 遇到新字段以 `fnpack` 校验输出和开发者中心文档为准。
+
+## Java 21 目录引擎的打包
+
+- 源码：`app/server/src/java/FnReaderJavaWorker.java`（单文件、无第三方依赖）
+- 预编译产物：`app/server/java/FnReaderJavaWorker.class`（含内部类），随 FPK 一起打包；
+  `tools/build-fpk.sh` / `tools/build-debug.sh` 会自动复制 `java/` 与（可选的）`runtime/java/`
+- 运行时两种来源：
+  1. 系统 / fnOS 应用中心的 `java-21-openjdk`（路径 `/var/apps/java-21-openjdk/target/bin/java`）
+  2. 随包 jlink 运行时 `app/server/runtime/java`（`jlink --add-modules java.base,java.net.http,jdk.httpserver,java.logging,jdk.crypto.ec`）
+- 重新编译（需要 JDK 21）：
+
+```bash
+javac -encoding UTF-8 -d app/server/java app/server/src/java/FnReaderJavaWorker.java
+```
+
+- 自检：`curl -s /api/engine | grep java` 应出现 `"ok":true,"virtualThreads":true`；日志有 `Java 目录引擎已启动，端口 xxxx`

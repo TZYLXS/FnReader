@@ -52,6 +52,17 @@ cp "$SRC/app/server/server.bundle.js" "$OUT/app/server/"
 cp "$SRC/app/server/parse-worker.bundle.js" "$OUT/app/server/parse-worker.js"
 
 # Python 规则引擎（可选，缺 legado_rule 时自动回退 Node）
+# Java 21 目录引擎：优先用 JDK 编译，没有 JDK 就复制预编译 class
+JAVA_HOME_DETECTED="${FNREADER_JAVA_HOME:-/var/apps/java-21-openjdk/target}"
+if [ -x "$JAVA_HOME_DETECTED/bin/javac" ] && [ -f "$SRC/app/server/src/java/FnReaderJavaWorker.java" ]; then
+  mkdir -p "$OUT/app/server/java" "$OUT/app/server/src/java"
+  cp "$SRC/app/server/src/java/FnReaderJavaWorker.java" "$OUT/app/server/src/java/"
+  "$JAVA_HOME_DETECTED/bin/javac" -encoding UTF-8 -d "$OUT/app/server/java" "$OUT/app/server/src/java/FnReaderJavaWorker.java" || echo "Java 编译失败，跳过"
+elif [ -d "$SRC/app/server/java" ]; then
+  mkdir -p "$OUT/app/server/java"
+  cp "$SRC/app/server/java/"*.class "$OUT/app/server/java/" 2>/dev/null || true
+fi
+
 if [ -d "$SRC/app/server/python" ]; then
   mkdir -p "$OUT/app/server/python"
   cp -r "$SRC/app/server/python/." "$OUT/app/server/python/"

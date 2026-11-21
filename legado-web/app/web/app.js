@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /* ---------------- 基础工具 ---------------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -8,6 +8,8 @@ const toastEl = $('#toast');
 
 function coverSrc(url, bookUrl) {
   if (!url) return '';
+  // 站内相对路径（/covers/x.png）直接给浏览器，不再走图片代理
+  if (url.startsWith('/')) return url + (state.coverVer ? '?v=' + state.coverVer : '');
   return (
     './api/image?url=' + encodeURIComponent(url) +
     (bookUrl ? '&book=' + encodeURIComponent(bookUrl) : '') +
@@ -57,6 +59,8 @@ const THEME_OPTIONS = [
   ['dark', '深色'],
   ['book', '旧书'],
   ['eink', '墨水屏（高对比）'],
+  ['kindle', 'Kindle 书城'],
+  ['amazon', '亚马逊书城'],
 ];
 
 function themeSelectOptions(current) {
@@ -77,6 +81,10 @@ const state = {
 function applyConfig(cfg) {
   state.config = { ...state.config, ...cfg };
   document.documentElement.setAttribute('data-theme', state.config.theme || 'light');
+  // 主题切换会影响二级页返回按钮的显隐/配色，立即重算
+  try {
+    if (typeof injectBack === 'function') injectBack(parseHash().path);
+  } catch { /* 首屏可能还没有 DOM */ }
   const root = document.documentElement.style;
   root.setProperty('--font-size', state.config.fontSize + 'px');
   root.setProperty('--line-height', state.config.lineHeight);
@@ -145,25 +153,47 @@ async function router() {
     const bulk = document.getElementById('source-bulk');
     if (bulk) bulk.remove();
   }
-  $('#tabbar').style.display = path.startsWith('/read') ? 'none' : 'grid';
+  // 亚马逊主题：没有底部标签栏，二级页面在深色顶栏内嵌返回按钮
+  const amazon = state.config.theme === 'amazon';
+  const reading = path.startsWith('/read');
+  $('#tabbar').style.display = reading || amazon ? 'none' : 'grid';
   if (state.search.es && tab !== 'search') {
     state.search.es.close();
     state.search.es = null;
     state.search.running = false;
   }
   window.scrollTo(0, 0);
-  if (path === '/shelf') return renderShelf();
-  if (path === '/search') return renderSearch();
-  if (path === '/sources') return renderSources();
-  if (path === '/settings') return renderSettings();
-  if (path === '/daily') return renderDaily();
-  if (path === '/bus') return renderBus();
-  if (path === '/detail') return renderDetail();
-  if (path === '/feeds') return renderFeeds();
-  if (path === '/downloads' || path === '/offline') return renderOffline();
-  if (path === '/setup') return renderSetup();
-  if (path.startsWith('/read')) return openReader(params.get('url'), params.get('title'));
-  return renderShelf();
+  let rendered;
+  if (path === '/shelf') rendered = renderShelf();
+  else if (path === '/search') rendered = renderSearch();
+  else if (path === '/sources') rendered = renderSources();
+  else if (path === '/settings') rendered = renderSettings();
+  else if (path === '/daily') rendered = renderDaily();
+  else if (path === '/bus') rendered = renderBus();
+  else if (path === '/detail') rendered = renderDetail();
+  else if (path === '/feeds') rendered = renderFeeds();
+  else if (path === '/downloads' || path === '/offline') rendered = renderOffline();
+  else if (path === '/setup') rendered = renderSetup();
+  else if (path.startsWith('/read')) rendered = openReader(params.get('url'), params.get('title'));
+  else rendered = renderShelf();
+  // 顶栏可能异步渲染，立即插一次 + 下一帧补一次
+  injectBack(path);
+  setTimeout(() => injectBack(path), 60);
+  return rendered;
+}
+
+/** 亚马逊主题：把返回按钮嵌进深色顶栏，跟标题同一行对齐 */
+function injectBack(path) {
+  document.querySelectorAll('.topbar .backbtn').forEach((n) => n.remove());
+  if (state.config.theme !== 'amazon' || path === '/shelf' || path.startsWith('/read')) return;
+  const bar = document.querySelector('.topbar');
+  if (!bar) return;
+  const a = document.createElement('a');
+  a.className = 'backbtn';
+  a.href = '#/shelf';
+  a.setAttribute('aria-label', '返回书架');
+  a.textContent = '‹';
+  bar.prepend(a);
 }
 
 /* ---------------- 书架 ---------------- */
@@ -183,6 +213,211 @@ async function renderShelf() {
     const books = await loadBooks();
     if (!books.length) {
       body.innerHTML = `<div class="empty"><div class="big">📖</div>书架还是空的<br />去「搜索」里找一本书，或先导入书源</div>`;
+      return;
+    }
+    // 亚马逊书城风格：深色导航 + 搜索 + 分类条 + 筛选栏 + 结果列表
+    if (state.config.theme === 'amazon') {
+      const localOf = (b) => String(b.bookUrl || '').startsWith('ebook://');
+      const reading = books.filter((b) => b.durChapterIndex > 0);
+      const pctOf = (b) => Math.min(100, Math.round(((b.durChapterIndex + 1) / (b.totalChapterNum || 1)) * 100));
+      const cover = (b) => `<div class="amz-cover">${
+        b.coverUrl ? `<img loading="lazy" src="${esc(coverSrc(b.coverUrl, b.bookUrl))}" onerror="this.remove()" />` : ''
+      }</div>`;
+      const item = (b) => {
+        const pct = b.durChapterIndex ? pctOf(b) : 0;
+        return `
+        <article class="amz-item" data-url="${esc(b.bookUrl)}">
+          <div class="amz-item-cover">${cover(b)}</div>
+          <div class="amz-item-body">
+            <h3 class="amz-item-title">${esc(b.name)}</h3>
+            <div class="amz-item-meta">${esc(b.author || '未知作者')} | ${localOf(b) ? '本地电子书' : '网文'} | ${
+              b.totalChapterNum ? esc(b.totalChapterNum) + ' 章' : '待解析'
+            }</div>
+            <div class="amz-item-rate">
+              <span class="amz-stars" style="--pct:${pct}%">★★★★★</span>
+              <span class="amz-rate-num">${b.durChapterIndex ? `已读 ${b.durChapterIndex + 1}/${b.totalChapterNum || '?'} 章` : '尚未开始'}</span>
+            </div>
+            <div class="amz-item-bar"><i style="width:${pct}%"></i></div>
+            <div class="amz-item-actions">
+              <button class="amz-buy" data-url="${esc(b.bookUrl)}">${b.durChapterIndex ? '继续阅读' : '开始阅读'}</button>
+              <a class="amz-item-link" href="#/detail?url=${encodeURIComponent(b.bookUrl)}">详情</a>
+              <button class="amz-item-link" data-more="1">更多</button>
+            </div>
+          </div>
+        </article>`;
+      };
+
+      view.innerHTML = `
+        <header class="amz-head">
+          <div class="amz-top">
+            <a class="amz-brand" href="#/shelf">飞牛阅读</a>
+            <form class="amz-search" id="amz-search">
+              <select id="amz-scope" aria-label="搜索范围"><option value="book">图书</option><option value="author">作者</option></select>
+              <input id="amz-kw" type="search" placeholder="搜索书名、作者或书源" enterkeyhint="search" />
+              <button type="submit" aria-label="搜索">
+                <svg viewBox="0 0 20 20" width="19" height="19" aria-hidden="true">
+                  <circle cx="8.5" cy="8.5" r="5.6" fill="none" stroke="#111" stroke-width="2.1"/>
+                  <path d="M12.8 12.8 L17.2 17.2" stroke="#111" stroke-width="2.1" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </form>
+            <div class="amz-toplinks"><a href="#/settings">设置</a><a href="#/sources">书源</a></div>
+          </div>
+          <nav class="amz-catnav" id="amz-nav">
+            <button class="amz-chip on" data-f="all">全部</button>
+            <button class="amz-chip" data-f="reading">在读 ${reading.length}</button>
+            <button class="amz-chip" data-f="unread">未读 ${books.length - reading.length}</button>
+            <button class="amz-chip" data-f="local">本地电子书</button>
+            <a class="amz-chip amz-chip-link" href="#/settings">设置</a>
+            <span class="amz-cat-ind" id="amz-ind" aria-hidden="true"></span>
+          </nav>
+        </header>
+        <main class="amz-main">
+          <div class="amz-crumb">书籍 › 我的书架</div>
+          <div class="amz-layout">
+            <aside class="amz-side">
+              <div class="amz-side-group"><h4>格式</h4>
+                <button class="amz-side-link on" data-filter="all">全部</button>
+                <button class="amz-side-link" data-filter="local">本地电子书</button>
+                <button class="amz-side-link" data-filter="web">网文</button>
+              </div>
+              <div class="amz-side-group"><h4>阅读状态</h4>
+                <button class="amz-side-link" data-filter="reading">在读</button>
+                <button class="amz-side-link" data-filter="unread">未读</button>
+              </div>
+              <div class="amz-side-group"><h4>操作</h4>
+                <button class="amz-side-link" id="amz-refresh">刷新目录</button>
+                <a class="amz-side-link" href="#/sources">书源管理</a>
+                <a class="amz-side-link" href="#/settings">设置</a>
+              </div>
+            </aside>
+            <section class="amz-content">
+              <div class="amz-results-head">
+                <h1>结果</h1>
+                <span class="amz-count" id="amz-count"></span>
+                <label class="amz-sort">排序方式：
+                  <select id="amz-sort">
+                    <option value="recent">最近阅读</option>
+                    <option value="name">书名</option>
+                    <option value="progress">阅读进度</option>
+                  </select>
+                </label>
+              </div>
+              <div class="amz-list" id="amz-list"></div>
+            </section>
+          </div>
+        </main>`;
+
+      let filter = 'all';
+      let sort = 'recent';
+      const renderList = () => {
+        let list = books.slice();
+        if (filter === 'reading') list = list.filter((b) => b.durChapterIndex > 0);
+        else if (filter === 'unread') list = list.filter((b) => !b.durChapterIndex);
+        else if (filter === 'local') list = list.filter(localOf);
+        else if (filter === 'web') list = list.filter((b) => !localOf(b));
+        if (sort === 'name') list.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans'));
+        else if (sort === 'progress') list.sort((a, b) => pctOf(b) - pctOf(a));
+        else list.sort((a, b) => (b.durChapterTime || 0) - (a.durChapterTime || 0));
+        $('#amz-count').textContent = list.length
+          ? `显示：1-${list.length} 条，共 ${books.length} 条`
+          : `没有符合条件的结果，共 ${books.length} 条`;
+        $('#amz-list').innerHTML = list.length ? list.map(item).join('') : '<div class="amz-empty">没有符合条件的书</div>';
+      };
+      const syncChips = () => {
+        view.querySelectorAll('.amz-chip').forEach((c) => c.classList.toggle('on', c.dataset.f === filter));
+        moveInd();
+      };
+      const moveInd = () => {
+        const ind = document.getElementById('amz-ind');
+        const on = view.querySelector('.amz-chip.on');
+        if (!ind || !on) return;
+        ind.style.left = on.offsetLeft + 'px';
+        ind.style.width = on.offsetWidth + 'px';
+      };
+      if (window.__amzMoveInd) window.removeEventListener('resize', window.__amzMoveInd);
+      window.__amzMoveInd = moveInd;
+      window.addEventListener('resize', moveInd);
+      const syncSide = () => view.querySelectorAll('.amz-side-link[data-filter]').forEach((c) => c.classList.toggle('on', c.dataset.filter === filter));
+
+      $('#amz-search').onsubmit = (e) => {
+        e.preventDefault();
+        const kw = $('#amz-kw').value.trim();
+        if (!kw) return;
+        state.search.key = kw;
+        location.hash = '#/search';
+      };
+      $('#amz-nav').onclick = (e) => {
+        const b = e.target.closest('.amz-chip');
+        if (!b) return;
+        filter = b.dataset.f;
+        syncChips();
+        syncSide();
+        renderList();
+        requestAnimationFrame(moveInd);
+      };
+      view.querySelectorAll('.amz-side-link[data-filter]').forEach((b) => {
+        b.onclick = () => {
+          filter = b.dataset.filter;
+          syncChips();
+          syncSide();
+          renderList();
+        };
+      });
+      const sortSel = $('#amz-sort');
+      if (sortSel) sortSel.onchange = () => { sort = sortSel.value; renderList(); };
+      const rf = $('#amz-refresh');
+      if (rf) rf.onclick = refreshAllTocs;
+
+      bindShelfEvents(view);
+      renderList();
+      requestAnimationFrame(moveInd);
+      return;
+    }
+    // Kindle 书城风格：继续阅读 + 最近在读横排 + 全部书籍网格
+    if (state.config.theme === 'kindle') {
+      const reading = books
+        .filter((b) => b.durChapterIndex > 0)
+        .sort((a, b) => (b.durChapterTime || 0) - (a.durChapterTime || 0));
+      const recent = reading.slice(0, 10);
+      const hero = reading[0];
+      const card = (b, cls) => `
+        <div class="store-card ${cls || ''}" data-url="${esc(b.bookUrl)}">
+          <div class="store-cover">${
+            b.coverUrl ? `<img loading="lazy" src="${esc(coverSrc(b.coverUrl, b.bookUrl))}" onerror="this.remove()" />` : ''
+          }</div>
+          <div class="store-name">${esc(b.name)}</div>
+          <div class="store-meta">${esc(b.author || '')}</div>
+          <button class="more" data-more="1" aria-label="更多">⋯</button>
+        </div>`;
+      body.innerHTML = `
+        <section class="store-hero">
+          ${
+            hero
+              ? `<div class="hero-card" data-url="${esc(hero.bookUrl)}">
+                  <div class="hero-cover">${
+                    hero.coverUrl ? `<img loading="lazy" src="${esc(coverSrc(hero.coverUrl, hero.bookUrl))}" onerror="this.remove()" />` : ''
+                  }</div>
+                  <div class="hero-info">
+                    <div class="hero-kicker">继续阅读</div>
+                    <div class="hero-title">${esc(hero.name)}</div>
+                    <div class="hero-meta">${esc(hero.author || '')} · 读到第 ${hero.durChapterIndex + 1}/${hero.totalChapterNum || '?'} 章</div>
+                    <div class="hero-bar"><i style="width:${Math.min(100, Math.round(((hero.durChapterIndex + 1) / (hero.totalChapterNum || 1)) * 100))}%"></i></div>
+                    <button class="hero-btn" data-url="${esc(hero.bookUrl)}">继续阅读</button>
+                  </div>
+                </div>`
+              : `<div class="hero-empty">从下方书架挑一本书开始阅读</div>`
+          }
+        </section>
+        ${
+          recent.length
+            ? `<section class="store-row"><div class="row-head"><h2>最近在读</h2><span>${recent.length} 本</span></div>
+                <div class="row-scroll">${recent.map((b) => card(b, 'small')).join('')}</div></section>`
+            : ''
+        }
+        <section class="store-row"><div class="row-head"><h2>我的书架</h2><span>${books.length} 本</span></div>
+          <div class="store-grid">${books.map((b) => card(b)).join('')}</div></section>`;
+      bindShelfEvents(body);
       return;
     }
     body.innerHTML = `<div class="shelf">${books
@@ -213,6 +448,8 @@ async function renderShelf() {
  * - 点右上角「⋯」：打开管理菜单（比长按可靠）
  * - 长按封面：也打开菜单，并吞掉随后产生的 click，避免“菜单弹出来又跳进阅读页”
  */
+const SHELF_CARD_SEL = '.book-card, .amz-item, .store-card';
+
 function bindShelfEvents(body) {
   let pressTimer = null;
   let suppressClick = false;
@@ -229,7 +466,7 @@ function bindShelfEvents(body) {
 
   body.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    const card = e.target.closest('.book-card');
+    const card = e.target.closest(SHELF_CARD_SEL);
     if (!card || e.target.closest('[data-more]')) return;
     suppressClick = false;
     pressedCard = card;
@@ -252,15 +489,17 @@ function bindShelfEvents(body) {
   });
 
   body.addEventListener('click', (e) => {
+    // 详情等普通链接交给浏览器
+    if (e.target.closest('a:not([data-more])')) return;
     const more = e.target.closest('[data-more]');
     if (more) {
       e.preventDefault();
       e.stopPropagation();
-      const card = more.closest('.book-card');
+      const card = more.closest(SHELF_CARD_SEL);
       if (card) bookMenu(card.dataset.url);
       return;
     }
-    const card = e.target.closest('.book-card');
+    const card = e.target.closest(SHELF_CARD_SEL);
     if (!card) return;
     if (suppressClick) {
       suppressClick = false;
@@ -1039,9 +1278,8 @@ function renderReaderShell() {
   view.innerHTML = `
     <div class="reader kindle">
       <header class="reader-head" id="reader-head">
-        <button class="icon-btn" id="back" aria-label="返回书架">‹</button>
+        <button class="icon-btn" id="back">‹</button>
         <div class="title" id="book-title">${esc(book.name)}</div>
-        <div class="reader-actions">
         ${
           book.localEbook
             ? `<button class="icon-btn" id="toggle-local" title="切换本地副本 / 网文源">${book.contentSource === 'source' ? '本' : '网'}</button>`
@@ -1052,10 +1290,9 @@ function renderReaderShell() {
             ? `<button class="icon-btn" id="toggle-page-mode" title="文字 / 原图">${state.reader.pageMode ? '文' : '图'}</button>`
             : ''
         }
-          <button class="icon-btn" id="switch-src" title="换源" aria-label="换源">⇄</button>
-          <button class="icon-btn" id="catalog" title="目录" aria-label="目录">☰</button>
-          <button class="icon-btn" id="reader-settings" title="阅读设置" aria-label="阅读设置">Aa</button>
-        </div>
+        <button class="icon-btn" id="switch-src" title="换源">⇄</button>
+        <button class="icon-btn" id="catalog">☰</button>
+        <button class="icon-btn" id="reader-settings">Aa</button>
       </header>
       <main class="article-wrap" id="article-wrap" aria-label="正文，左右滑动或点击两侧翻页">
         <article class="article" id="article"></article>
@@ -1134,13 +1371,13 @@ function renderReaderShell() {
   $('#prev').onclick = () => gotoChapter(state.reader.index - 1);
   $('#next').onclick = () => gotoChapter(state.reader.index + 1);
   $('#reader-settings').onclick = openReaderSettings;
-  if (window.ReaderGestures) {
+  if (window.ReaderGestures && $('#article-wrap')) {
     window.ReaderGestures.bind($('#article-wrap'), {
       navigate: (delta) => {
-        const r = state.reader;
-        if (!r) return;
-        r.turnDirection = delta;
-        gotoChapter(r.index + delta);
+        const rr = state.reader;
+        if (!rr) return;
+        rr.turnDirection = delta;
+        gotoChapter(rr.index + delta);
       },
       hasSelection: () => {
         const selection = window.getSelection && window.getSelection();
@@ -1271,15 +1508,15 @@ async function loadChapter(index) {
     article.appendChild(el);
   }
   updateReaderMeta();
-  if (r.turnDirection && article.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  // 内容整体替换后浏览器会把位置「锚」在底部，翻章后要重置到顶部
+  article.style.overflowAnchor = 'none';
+  if (r && r.turnDirection && article.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     article.animate(
       [{ opacity: 0.72, transform: `translateX(${r.turnDirection * 14}px)` }, { opacity: 1, transform: 'translateX(0)' }],
       { duration: 180, easing: 'ease-out' }
     );
+    r.turnDirection = 0;
   }
-  r.turnDirection = 0;
-  // 内容整体替换后浏览器会把位置「锚」在底部，翻章后要重置到顶部
-  article.style.overflowAnchor = 'none';
   const toTop = () => {
     window.scrollTo(0, 0);
     document.documentElement.scrollTop = 0;
@@ -2193,10 +2430,11 @@ async function renderSettings() {
         <h3>TRE 引擎</h3>
         <div class="row"><div class="label">Python 引擎<div class="desc" id="engine-status">检测中…</div></div>
           <div class="switch" id="sw-engine"></div></div>
+        <div class="row"><div class="label">Java 目录引擎<div class="desc" id="java-status">检测中…</div></div>
+          <div class="switch ${cfg.javaEngine !== false ? 'on' : ''}" id="sw-java"></div></div>
+        <div class="row"><div class="label">运行环境<div class="desc" id="engine-runtime">检测中…</div></div></div>
         <div class="row"><div class="label">Python 工作模式<div class="desc" id="pymode-desc">检测中…</div></div>
           <div class="switch" id="sw-pymode"></div></div>
-        <div class="row"><div class="label">Java 21 TOC 引擎<div class="desc" id="java-engine-status">接管目录去重、过滤与排序</div></div>
-          <div class="switch" id="sw-java-engine"></div></div>
         <div class="row"><div class="label">TRE 代理解析<div class="desc">EPUB / MOBI 交给在线设备解析（关闭则只用本机）</div></div>
           <div class="switch ${cfg.treProxy !== false ? 'on' : ''}" id="sw-tre-proxy"></div></div>
         <div class="row"><div class="label">电子书解析<div class="desc" id="stat-ebook-mode">-</div></div>
@@ -2515,9 +2753,19 @@ async function renderSettings() {
     // 解析引擎切换（Node 内置 / Python legado_rule）
     const swEngine = $('#sw-engine');
     const stEngine = $('#engine-status');
-    const swJavaEngine = $('#sw-java-engine');
-    const stJavaEngine = $('#java-engine-status');
     if (swEngine) {
+      const rt = $('#engine-runtime');
+      api('/engine')
+        .then((r) => {
+          if (rt && r.node) {
+            rt.textContent = `Node ${r.node.version || '-'} · V8 ${(r.node.v8 || '').split('-')[0] || '-'}` + (r.node.compileCache ? ' · 编译缓存已启用' : '');
+          } else if (rt) {
+            rt.textContent = '未知';
+          }
+        })
+        .catch(() => {
+          if (rt) rt.textContent = '未知';
+        });
       const swPyMode = $('#sw-pymode');
       const pyDesc = $('#pymode-desc');
       const applyEngineState = (r) => {
@@ -2536,16 +2784,17 @@ async function renderSettings() {
           else if (r.python && r.python.ok) stEngine.textContent = '内置 Node 引擎（Python 可用：' + (r.python.engine || '') + '）';
           else stEngine.textContent = '内置 Node 引擎 · Python 不可用：' + ((r.python && r.python.error) || '未安装');
         }
+        const stJava = $('#java-status');
+        if (stJava) {
+          const j = r.java || {};
+          if (r.javaEngine === false) stJava.textContent = '已关闭 · 目录由 Node 处理';
+          else if (j.ok) stJava.textContent = '运行中 · Java ' + (j.java || '21') + (j.virtualThreads ? ' · 虚拟线程' : '') + ` · 端口 ${j.port || '-'}`;
+          else stJava.textContent = '启动失败：' + (j.lastError || j.error || 'Java 不可用');
+        }
         if (pyDesc) {
           if (core) pyDesc.textContent = '开：接管 Node 规则解析（搜索 / 目录 / 正文）';
           else if (master) pyDesc.textContent = '关：接管 TXT 下载 / 去重，不接管 Node 解析';
           else pyDesc.textContent = 'Python 引擎已关闭，工作模式不可用';
-        }
-        if (swJavaEngine) swJavaEngine.classList.toggle('on', r.javaEngine === true);
-        if (stJavaEngine) {
-          if (r.java && r.java.ok) stJavaEngine.textContent = '运行中 · ' + (r.java.java || 'Java') + (r.java.virtualThreads ? ' · 虚拟线程' : ' · 线程池');
-          else if (r.javaEngine) stJavaEngine.textContent = '已开启，但不可用：' + ((r.java && r.java.lastError) || '未知原因');
-          else stJavaEngine.textContent = '已关闭 · TOC 后处理回退 JS';
         }
       };
       api('/engine')
@@ -2567,6 +2816,24 @@ async function renderSettings() {
           toast(e.message);
         }
       };
+      const swJava = $('#sw-java');
+      if (swJava) {
+        swJava.onclick = async () => {
+          const next = !swJava.classList.contains('on');
+          const st = $('#java-status');
+          if (st) st.textContent = next ? '启动中…' : '关闭中…';
+          try {
+            await api('/engine', { method: 'POST', body: { javaEngine: next } });
+            swJava.classList.toggle('on', next);
+            toast(next ? 'Java 目录引擎已启动' : 'Java 目录引擎已关闭，目录回落到 Node');
+            applyEngineState(await api('/engine'));
+          } catch (e) {
+            swJava.classList.toggle('on', !next);
+            toast(e.message);
+            applyEngineState(await api('/engine').catch(() => ({})));
+          }
+        };
+      }
       if (swPyMode) {
         swPyMode.onclick = async () => {
           if (swPyMode.classList.contains('disabled')) return toast('Python 引擎已关闭，工作模式不可用');
@@ -2580,22 +2847,6 @@ async function renderSettings() {
           }
         };
       }
-    }
-
-    if (swJavaEngine) {
-      swJavaEngine.onclick = async () => {
-        const next = !swJavaEngine.classList.contains('on');
-        stJavaEngine.textContent = next ? '正在启动 Java 21…' : '正在关闭…';
-        try {
-          await api('/engine', { method: 'POST', body: { javaEngine: next } });
-          toast(next ? 'Java 21 TOC 引擎已开启' : 'Java TOC 引擎已关闭');
-          applyEngineState(await api('/engine'));
-        } catch (e) {
-          stJavaEngine.textContent = e.message;
-          toast(e.message);
-          applyEngineState(await api('/engine'));
-        }
-      };
     }
 
     // 优先手机解析

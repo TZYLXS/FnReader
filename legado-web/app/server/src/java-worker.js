@@ -22,9 +22,20 @@ function setEnabled(value) {
   if (!runtimeEnabled) close();
 }
 function javaBin() {
+  // 1) 随包 jlink 运行时（可选）2) 环境变量 3) fnOS 的 JDK 应用 4) 系统 java
   const bundled = path.join(__dirname, 'runtime', 'java', 'bin', 'java');
   if (fs.existsSync(bundled)) return bundled;
-  return process.env.LEGADO_JAVA || (process.platform === 'win32' ? 'java' : '/usr/bin/java');
+  if (process.env.LEGADO_JAVA) return process.env.LEGADO_JAVA;
+  const candidates = [
+    '/var/apps/java-21-openjdk/target/bin/java',
+    '/opt/java/bin/java',
+    '/usr/local/bin/java',
+    '/usr/bin/java',
+  ];
+  for (const bin of candidates) {
+    try { if (fs.existsSync(bin)) return bin; } catch { /* ignore */ }
+  }
+  return process.platform === 'win32' ? 'java' : 'java';
 }
 
 function start() {
@@ -139,4 +150,4 @@ function status() {
   return { enabled: enabled(), running: !!(child && port), port, ...stats, lastError };
 }
 
-module.exports = { normalizeToc, health, status, setEnabled, close, stats };
+module.exports = { start, normalizeToc, health, status, setEnabled, close, stats };

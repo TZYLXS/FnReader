@@ -10,7 +10,7 @@ const FILES = {
 };
 
 const DEFAULT_CONFIG = {
-  theme: 'light',
+  theme: 'amazon',
   fontSize: 19,
   lineHeight: 1.85,
   fontFamily: '',

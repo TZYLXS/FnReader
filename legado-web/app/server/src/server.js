@@ -1373,6 +1373,12 @@ function buildLibraryManifest() {
 const UPDATE_MIRRORS = ['https://ghfast.top/', 'https://gh-proxy.com/', 'https://ghproxy.net/'];
 
 async function downloadUpdateAsset(url) {
+  try {
+    if (url && (url.startsWith('/') || /^[A-Za-z]:[\\/]/.test(url)) && fs.existsSync(url)) {
+      const buf = fs.readFileSync(url);
+      if (buf.length > 10000) return { buf, from: url };
+    }
+  } catch { /* 继续按 URL 处理 */ }
   const candidates = [url, ...UPDATE_MIRRORS.map((m) => m + url)];
   let lastError = null;
   for (const target of candidates) {
@@ -1393,8 +1399,43 @@ async function downloadUpdateAsset(url) {
   throw lastError || new Error('所有下载通道都失败');
 }
 
+// debug 版更新源：本地文件 <下载目录>/update/latest.json（Alpha 仓库已归档，不再读它的 Release）
+function localUpdateFile() {
+  if (process.env.FNREADER_UPDATE_FILE) return process.env.FNREADER_UPDATE_FILE;
+  return path.join(store.config.downloadDir || store.dataDir, 'update', 'latest.json');
+}
+async function fetchLocalRelease() {
+  const file = localUpdateFile();
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    throw new Error('本地更新源不存在：' + file);
+  }
+  const j = JSON.parse(raw);
+  const version = String(j.version || '').replace(/^v/i, '');
+  if (!version) throw new Error('latest.json 缺少 version 字段');
+  const fpk = String(j.fpk || j.fpkUrl || '');
+  return {
+    tag: 'v' + version,
+    version,
+    name: j.name || 'V' + version,
+    body: j.notes || j.body || '',
+    publishedAt: j.releasedAt || j.publishedAt || '',
+    htmlUrl: j.url || '',
+    asset: fpk ? { name: path.basename(fpk), size: Number(j.size) || 0, url: fpk } : null,
+    source: 'local',
+    localFile: file,
+  };
+}
+
 async function fetchLatestRelease(force) {
   if (!force && updateCache.data && Date.now() - updateCache.at < UPDATE_CACHE_MS) return updateCache.data;
+  if (IS_DEBUG_APP) {
+    const data = await fetchLocalRelease();
+    updateCache = { at: Date.now(), data };
+    return data;
+  }
   const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
     headers: { 'User-Agent': 'FnReader', Accept: 'application/vnd.github+json' },
     signal: AbortSignal.timeout(12000),
@@ -2391,6 +2432,8 @@ async function route(req, res, url) {
         publishedAt: rel.publishedAt,
         htmlUrl: rel.htmlUrl,
         asset: rel.asset,
+        source: rel.source || 'github',
+        updateFile: rel.localFile || '',
       });
     } catch (e) {
       return json(res, 502, { error: '检查更新失败：' + (e.message || e) });
@@ -5094,7 +5137,15 @@ function main() {
   }
 })();
 
-tcp.listen(PORT, '::', () => console.log(`[legado-web] http://[::]:${PORT}（IPv4/IPv6 双栈）`));
+tcp.listen(PORT, '::', () => {
+  console.log(`[legado-web] http://[::]:${PORT}（IPv4/IPv6 双栈）`);
+  // Java 21 目录引擎：默认随服务启动（设置里可关闭）
+  if (store.config.javaEngine !== false) {
+    javaWorker.start()
+      .then((port) => console.log('[legado-web] Java 目录引擎已启动，端口 ' + port))
+      .catch((e) => console.log('[legado-web] Java 目录引擎未启动：' + e.message));
+  }
+});
   tcp.on('error', (e) => console.error('[legado-web] tcp listen error:', e.message));
 
   // 本地电子书：定时扫描 + 长任务看门狗

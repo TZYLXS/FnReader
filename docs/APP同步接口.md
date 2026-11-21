@@ -1086,3 +1086,27 @@ curl -s -X POST -H "X-Api-Token: $T" -H "Content-Type: application/json" \
 
 客户端待补：这五类回传都需要在对应落库点触发（加书、翻页、封面生成、书源变更、缓存完成），
 协议体参照本文件 §7（书架）、§9（进度）、§13（封面/书源）、§16（缓存）。
+
+### 17.7 本地模拟客户端（补齐回传验收）
+
+客户端还没实现上面这些回传，所以仓库里放了一个**模拟客户端**，在本地环境把五类回传全跑一遍：
+
+```bash
+node tools/mock-client.js http://192.168.1.233:18080 <令牌>
+node tools/mock-client.js http://192.168.1.233:18081 <令牌>   # 阿尔法端对照
+```
+
+它依次执行并断言服务端状态：
+
+| 步骤 | 接口 | 断言 |
+| --- | --- | --- |
+| 1 | `GET /api/m/sync` | 书架非空，取一本书作为回传对象 |
+| 2 | `POST /api/m/books` | `ok:true`（加书/更新） |
+| 3 | `POST /api/m/progress` | `GET /api/books` 里 `durChapterIndex` 等于发送值 |
+| 4 | `POST /api/m/progress/batch` | 进度已还原为原值 |
+| 5 | `POST /api/m/cover` | 返回 `coverUrl`、`book:true`（已挂到书架） |
+| 6 | `POST /api/m/sources/sync` | `applied ≥ 1`，随后自动删除模拟源 |
+| 7 | `POST /api/m/cache` | `dir` 落盘、`chapters:1`、`bytes>0` |
+
+实测两端均 **8/8 通过**（本地端 18080、阿尔法端 18081）。这一步只验证服务端契约，
+不代表 Android 客户端已经实现——客户端接入后应复用同一套请求体。

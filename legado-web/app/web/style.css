@@ -82,21 +82,14 @@ input, textarea, select { font: inherit; color: inherit; }
 .topbar {
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: 8px;
-  min-height: 52px;
-  box-sizing: border-box;
-  padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
+  padding: 10px 14px;
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   backdrop-filter: blur(18px);
   border-bottom: 1px solid transparent;
 }
 .topbar.scrolled { border-bottom-color: var(--line); }
-.topbar h1 {
-  font-size: 22px; margin: 0; letter-spacing: -0.3px; flex: 1 1 auto;
-  min-width: 0; line-height: 1.2;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.topbar .sub, .topbar .desc { font-size: 12px; color: var(--text-2); flex: 0 0 auto; white-space: nowrap; }
-.topbar > .icon-btn, .topbar > .btn { flex: 0 0 auto; align-self: center; line-height: 1; }
+.topbar h1 { font-size: 22px; margin: 0; letter-spacing: -0.3px; flex: 1; }
+.topbar .sub { font-size: 12px; color: var(--text-2); }
 
 .btn {
   padding: 8px 14px; border-radius: 10px; background: var(--panel);
@@ -439,65 +432,6 @@ details.section[open] > summary { border-bottom: 1px solid var(--line); }
   width: 0;
   background: var(--accent);
   transition: width 0.2s ease;
-}
-
-/* 阅读页布局与手势：正文保持单栏，宽屏有纸张边界，窄屏优先正文空间。 */
-.reader.kindle { min-height: 100dvh; padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
-.reader.kindle .reader-head {
-  gap: 6px;
-  padding: calc(8px + env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) 8px max(10px, env(safe-area-inset-left, 0px));
-}
-.reader.kindle .reader-head .title { min-width: 0; }
-.reader.kindle .reader-actions { display: flex; align-items: center; gap: 2px; flex: none; }
-.reader.kindle .icon-btn { width: 44px; height: 44px; flex: none; }
-.reader.kindle .article-wrap {
-  width: min(100%, calc(var(--page-width, 720px) + 48px));
-  box-sizing: border-box;
-  padding: clamp(20px, 4vw, 34px) clamp(16px, 4vw, 32px) 44px;
-  touch-action: pan-y pinch-zoom;
-  -webkit-tap-highlight-color: transparent;
-}
-.reader.kindle .article { min-height: 38vh; }
-.reader.kindle .gesture-tip {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 32px;
-  padding-top: 16px;
-  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
-  color: var(--text-2);
-  font-size: 11px;
-  line-height: 1.5;
-  opacity: 0.68;
-  user-select: none;
-  pointer-events: none;
-}
-.reader.kindle .foot-btn { min-width: 88px; min-height: 44px; }
-.reader.kindle .reader-foot { padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
-
-@media (min-width: 900px) {
-  .reader.kindle .article-wrap {
-    margin: 24px auto 32px;
-    border: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
-    border-radius: 18px;
-    background: color-mix(in srgb, var(--panel) 42%, var(--bg));
-    box-shadow: 0 12px 36px color-mix(in srgb, var(--text) 5%, transparent);
-  }
-}
-@media (max-width: 600px) {
-  .reader.kindle .reader-head { gap: 2px; }
-  .reader.kindle .reader-actions { gap: 0; }
-  .reader.kindle .article-wrap { padding: 18px 16px 32px; }
-  .reader.kindle .article .chapter-head { margin-bottom: 22px; }
-  .reader.kindle .foot-btn { min-width: 80px; padding-left: 6px; padding-right: 6px; }
-}
-@media (max-width: 360px) {
-  .reader.kindle .reader-head .title { display: none; }
-  .reader.kindle .reader-actions { flex: 1; justify-content: flex-end; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .reader.kindle .article { scroll-behavior: auto; }
-  .reader.kindle .foot-progress i { transition: none; }
 }
 
 /* 目录抽屉 */
@@ -912,3 +846,920 @@ html[data-theme='eink'] .switch::after { background: #000 !important; box-shadow
 html[data-theme='eink'] .switch.on { background: #000 !important; }
 html[data-theme='eink'] .switch.on::after { background: #fff !important; }
 html[data-theme='eink'] .result .thumb { background: #fff !important; border: 1px solid #000; }
+
+
+/* ============ UI 2.0：阅读页手势与版式 ============ */
+.reader.kindle .article-wrap {
+  width: min(100%, calc(var(--page-width, 720px) + 48px));
+  box-sizing: border-box;
+  padding: clamp(20px, 4vw, 34px) clamp(16px, 4vw, 32px) 44px;
+  touch-action: pan-y pinch-zoom;
+  -webkit-tap-highlight-color: transparent;
+}
+.reader.kindle .gesture-tip {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.68;
+  user-select: none;
+  pointer-events: none;
+}
+.reader.kindle .foot-btn { min-width: 88px; min-height: 44px; }
+@media (min-width: 900px) {
+  .reader.kindle .article-wrap {
+    margin: 24px auto 32px;
+    border: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--panel) 42%, var(--bg));
+    box-shadow: 0 12px 36px color-mix(in srgb, var(--text) 5%, transparent);
+  }
+}
+@media (max-width: 560px) {
+  .reader.kindle .article-wrap { padding: 18px 16px 32px; }
+  .reader.kindle .article .chapter-head { margin-bottom: 22px; }
+}
+
+
+/* ============================================================
+   Kindle 书城主题（kindle）
+   纸感米白 / 墨色文字 / 衬线标题 / 细分割线 / 平铺封面
+   ============================================================ */
+html[data-theme='kindle'] {
+  --bg: #f7f4ee;
+  --panel: #fffdf8;
+  --panel-2: #f2ede4;
+  --text: #16130e;
+  --text-2: #6d6459;
+  --line: #e4ddd1;
+  --accent: #b8560f;
+  --accent-soft: #f3e4d4;
+  --danger: #a83232;
+  --radius: 10px;
+  --tabbar-h: 56px;
+}
+html[data-theme='kindle'] body { background: var(--bg); }
+html[data-theme='kindle'] .topbar {
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+  padding: 14px 18px 12px;
+}
+html[data-theme='kindle'] .topbar h1 {
+  font-family: Georgia, 'Songti SC', 'Noto Serif CJK SC', serif;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+html[data-theme='kindle'] .topbar .btn,
+html[data-theme='kindle'] .topbar .btn.ghost {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text-2);
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+html[data-theme='kindle'] .section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 14px 14px 0;
+  padding: 0;
+  overflow: hidden;
+}
+html[data-theme='kindle'] .section h3 {
+  font-family: Georgia, 'Songti SC', serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--text-2);
+  text-transform: uppercase;
+  padding: 14px 16px 6px;
+}
+html[data-theme='kindle'] .row { border-top: 1px solid var(--line); padding: 14px 16px; }
+html[data-theme='kindle'] .row .label { font-size: 14px; }
+html[data-theme='kindle'] .row .desc { color: var(--text-2); }
+html[data-theme='kindle'] .btn {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 6px;
+}
+html[data-theme='kindle'] .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 底栏：白纸 + 细线 + 衬线标签 */
+html[data-theme='kindle'] .tabbar {
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+html[data-theme='kindle'] .tabbar a { color: var(--text-2); font-size: 10px; letter-spacing: 0.06em; }
+html[data-theme='kindle'] .tabbar a .ico {
+  width: 22px; height: 22px; border-radius: 4px;
+  background: transparent; color: inherit; font-size: 15px;
+}
+html[data-theme='kindle'] .tabbar a.active { color: var(--accent); }
+html[data-theme='kindle'] .tabbar a.active .ico { background: transparent; color: var(--accent); }
+
+/* 书城首页 */
+html[data-theme='kindle'] .store-hero { padding: 16px 14px 4px; }
+html[data-theme='kindle'] .hero-card {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 14px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+}
+html[data-theme='kindle'] .hero-cover {
+  width: 84px; height: 118px; border-radius: 4px; overflow: hidden;
+  background: var(--panel-2); display: grid; place-items: center;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+html[data-theme='kindle'] .hero-cover img { width: 100%; height: 100%; object-fit: cover; }
+html[data-theme='kindle'] .hero-info { display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+html[data-theme='kindle'] .hero-kicker {
+  font-size: 10px; letter-spacing: 0.18em; color: var(--accent); text-transform: uppercase;
+}
+html[data-theme='kindle'] .hero-title {
+  font-family: Georgia, 'Songti SC', serif; font-size: 18px; font-weight: 600; line-height: 1.35;
+}
+html[data-theme='kindle'] .hero-meta { font-size: 12px; color: var(--text-2); }
+html[data-theme='kindle'] .hero-bar { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+html[data-theme='kindle'] .hero-bar i { display: block; height: 100%; background: var(--accent); }
+html[data-theme='kindle'] .hero-btn {
+  align-self: flex-start; margin-top: 4px; padding: 7px 14px; border-radius: 4px;
+  background: var(--accent); color: #fff; font-size: 12px; letter-spacing: 0.06em;
+}
+html[data-theme='kindle'] .hero-empty {
+  padding: 26px 16px; border: 1px dashed var(--line); border-radius: 12px;
+  color: var(--text-2); font-size: 13px; text-align: center;
+}
+
+/* 横排书列 */
+html[data-theme='kindle'] .store-row { margin-top: 22px; }
+html[data-theme='kindle'] .row-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 0 16px 10px;
+}
+html[data-theme='kindle'] .row-head h2 {
+  font-family: Georgia, 'Songti SC', serif; font-size: 17px; font-weight: 600; letter-spacing: 0.03em;
+}
+html[data-theme='kindle'] .row-head span { font-size: 11px; color: var(--text-2); }
+html[data-theme='kindle'] .row-scroll {
+  display: flex; gap: 14px; overflow-x: auto; padding: 2px 16px 10px;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+html[data-theme='kindle'] .row-scroll::-webkit-scrollbar { display: none; }
+html[data-theme='kindle'] .store-card {
+  position: relative; flex: none; width: 96px; text-align: left;
+}
+html[data-theme='kindle'] .store-card.small { width: 88px; }
+html[data-theme='kindle'] .store-cover {
+  width: 100%; aspect-ratio: 2 / 3; border-radius: 3px; overflow: hidden;
+  background: var(--panel-2); display: grid; place-items: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.14);
+}
+html[data-theme='kindle'] .store-cover img { width: 100%; height: 100%; object-fit: cover; }
+html[data-theme='kindle'] .store-cover .ph { font-size: 30px; color: #b9ae9d; font-family: Georgia, serif; }
+html[data-theme='kindle'] .store-name {
+  margin-top: 7px; font-size: 12.5px; line-height: 1.35; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+html[data-theme='kindle'] .store-meta {
+  margin-top: 2px; font-size: 11px; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+html[data-theme='kindle'] .store-card .more {
+  position: absolute; top: 6px; right: 6px; z-index: 4;
+  width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(20, 17, 12, 0.55); color: #fff; font-size: 12px; line-height: 1;
+  opacity: 0.9;
+}
+html[data-theme='kindle'] .store-card .more:active { background: rgba(20, 17, 12, 0.8); }
+
+/* 全部书籍网格 */
+html[data-theme='kindle'] .store-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 18px 16px; padding: 2px 16px 24px;
+}
+html[data-theme='kindle'] .store-grid .store-card { width: auto; }
+
+/* 搜索页 / 书源 / 设置沿用纸感 */
+html[data-theme='kindle'] .search-box,
+html[data-theme='kindle'] input[type='search'],
+html[data-theme='kindle'] input[type='text'] {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+html[data-theme='kindle'] .chip { border-radius: 999px; }
+html[data-theme='kindle'] .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 阅读页：Kindle 纸书质感 */
+html[data-theme='kindle'] .reader.kindle { background: var(--bg); }
+html[data-theme='kindle'] .reader.kindle .reader-head {
+  background: var(--panel); border-bottom: 1px solid var(--line); backdrop-filter: none;
+}
+html[data-theme='kindle'] .reader.kindle .reader-head .title {
+  font-family: Georgia, 'Songti SC', serif; letter-spacing: 0.02em;
+}
+html[data-theme='kindle'] .reader.kindle .article-wrap {
+  background: var(--panel);
+  border-color: var(--line);
+  border-radius: 6px;
+}
+html[data-theme='kindle'] .reader.kindle .article {
+  font-family: Georgia, 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', serif;
+  line-height: 1.9;
+}
+html[data-theme='kindle'] .reader.kindle .article .chapter-head {
+  font-variant: small-caps; letter-spacing: 0.14em; color: var(--text-2);
+}
+html[data-theme='kindle'] .reader.kindle .foot-btn {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 4px;
+}
+html[data-theme='kindle'] .gesture-tip { border-top-color: var(--line); }
+
+
+/* ============================================================
+   自适应布局（手机 / 平板 / 桌面）
+   ============================================================ */
+/* 内容容器：大屏居中，限制阅读宽度 */
+.view { width: 100%; }
+.view > .topbar,
+.view > .section,
+.view > .store-hero,
+.view > .store-row,
+.view > .shelf,
+.view > #shelf-body,
+.view > #dl-body,
+.view > #off-body {
+  max-width: 1120px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.view > .topbar {
+  width: 100%;
+  box-sizing: border-box;
+}
+.view > .section { box-sizing: border-box; }
+
+/* 大屏底栏：内容居中，不铺满整屏 */
+@media (min-width: 900px) {
+  .tabbar {
+    padding-left: max(0px, calc((100vw - 1120px) / 2));
+    padding-right: max(0px, calc((100vw - 1120px) / 2));
+    background: var(--panel);
+  }
+  .tabbar a { font-size: 11px; }
+  .tabbar a .ico { width: 24px; height: 24px; font-size: 14px; }
+}
+
+/* 平板 */
+@media (min-width: 640px) and (max-width: 899px) {
+  html[data-theme='kindle'] .store-grid { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 20px 18px; }
+  html[data-theme='kindle'] .store-card { width: 108px; }
+  html[data-theme='kindle'] .store-card.small { width: 100px; }
+  html[data-theme='kindle'] .hero-card { grid-template-columns: 108px 1fr; }
+  html[data-theme='kindle'] .hero-cover { width: 108px; height: 152px; }
+  html[data-theme='kindle'] .hero-title { font-size: 21px; }
+  .reader.kindle .article-wrap { max-width: min(100%, calc(var(--page-width, 720px) + 32px)); }
+}
+
+/* 桌面 */
+@media (min-width: 900px) {
+  html[data-theme='kindle'] .store-hero { padding: 22px 24px 6px; }
+  html[data-theme='kindle'] .hero-card { grid-template-columns: 132px 1fr; gap: 20px; padding: 20px 22px; max-width: 760px; }
+  html[data-theme='kindle'] .hero-cover { width: 132px; height: 186px; }
+  html[data-theme='kindle'] .hero-title { font-size: 24px; }
+  html[data-theme='kindle'] .hero-meta { font-size: 13px; }
+  html[data-theme='kindle'] .row-head { padding: 0 24px 12px; }
+  html[data-theme='kindle'] .row-scroll { padding: 2px 24px 12px; gap: 18px; }
+  html[data-theme='kindle'] .store-card { width: 136px; }
+  html[data-theme='kindle'] .store-card.small { width: 120px; }
+  html[data-theme='kindle'] .store-grid { grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 26px 22px; padding: 4px 24px 32px; }
+  html[data-theme='kindle'] .store-name { font-size: 13.5px; }
+  .shelf { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 26px 22px; }
+  .book-card .cover { border-radius: 6px; }
+  .section { margin-left: 24px; margin-right: 24px; }
+}
+
+/* 超宽屏：书城网格更密、正文更宽但不松散 */
+@media (min-width: 1280px) {
+  html[data-theme='kindle'] .store-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  html[data-theme='kindle'] .hero-card { max-width: 820px; }
+  .reader.kindle .article-wrap { max-width: min(100%, calc(var(--page-width, 720px) + 64px)); }
+}
+
+/* 阅读正文自适应字号（大屏略大，小屏略小） */
+.reader.kindle .article {
+  font-size: clamp(16px, calc(var(--font-size, 19px) * 0.92), 22px);
+}
+@media (min-width: 900px) {
+  .reader.kindle .article { font-size: clamp(var(--font-size, 19px), 1.5vw, 22px); }
+}
+
+/* 横屏手机：减少底部留白、压缩 hero */
+@media (max-height: 520px) and (orientation: landscape) {
+  html[data-theme='kindle'] .store-hero { padding-top: 10px; }
+  html[data-theme='kindle'] .hero-cover { width: 72px; height: 100px; }
+  html[data-theme='kindle'] .hero-card { grid-template-columns: 72px 1fr; padding: 10px; }
+  .reader.kindle .article-wrap { padding-top: 12px; }
+}
+
+/* ============================================================
+   桌面端版式重整：满宽主视觉 + 悬浮底栏
+   ============================================================ */
+@media (min-width: 900px) {
+  /* 底栏：居中悬浮胶囊，不再把 4 个入口摊到整屏 */
+  .tabbar {
+    left: 50%;
+    right: auto;
+    bottom: 18px;
+    transform: translateX(-50%);
+    width: min(560px, calc(100vw - 72px));
+    height: 58px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--panel);
+    box-shadow: 0 14px 36px rgba(20, 17, 12, 0.16);
+  }
+  .tabbar a { font-size: 11px; gap: 4px; }
+  .tabbar a .ico { width: 26px; height: 26px; font-size: 15px; }
+  .view { padding-bottom: 112px; }
+
+  /* 顶栏：整条铺满，内容仍对齐 1120 中心线 */
+  .view > .topbar {
+    max-width: none;
+    padding-left: max(24px, calc((100vw - 1120px) / 2 + 24px));
+    padding-right: max(24px, calc((100vw - 1120px) / 2 + 24px));
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+  }
+  .view > .topbar .title,
+  .view > .topbar h1 { font-size: 19px; letter-spacing: 0.04em; }
+
+  /* 主视觉：撑满内容宽度，封面放大 */
+  html[data-theme='kindle'] .store-hero { padding: 24px 24px 8px; }
+  html[data-theme='kindle'] .hero-card {
+    grid-template-columns: 156px 1fr;
+    gap: 26px;
+    padding: 24px 26px;
+    max-width: none;
+    align-items: center;
+  }
+  html[data-theme='kindle'] .hero-cover { width: 156px; height: 220px; }
+  html[data-theme='kindle'] .hero-info { gap: 9px; }
+  html[data-theme='kindle'] .hero-title { font-size: 28px; }
+  html[data-theme='kindle'] .hero-meta { font-size: 13px; }
+  html[data-theme='kindle'] .hero-bar { max-width: 420px; }
+  html[data-theme='kindle'] .hero-btn { padding: 9px 20px; font-size: 13px; }
+
+  /* 横排书列：标题与卡片对齐留出呼吸感 */
+  html[data-theme='kindle'] .row-head { padding: 0 24px 10px; }
+  html[data-theme='kindle'] .row-head h2 { font-size: 19px; }
+  html[data-theme='kindle'] .row-scroll { gap: 20px; padding: 2px 24px 14px; }
+}
+
+/* 兜底：安全区（刘海屏 / 手势条） */
+@supports (padding: max(0px)) {
+  .view { padding-bottom: calc(var(--tabbar-h) + max(env(safe-area-inset-bottom, 0px), 8px)); }
+  .tabbar { padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px); }
+  .reader.kindle .reader-head { padding-top: max(8px, env(safe-area-inset-top, 0px)); }
+}
+
+/* ============================================================
+   亚马逊书城风格（amazon）
+   深色导航 + 橙色 CTA + 白色商品卡 + 灰底
+   ============================================================ */
+html[data-theme='amazon'] {
+  --bg: #eaeded;
+  --panel: #ffffff;
+  --text: #0f1111;
+  --text-2: #565959;
+  --line: #d5d9d9;
+  --accent: #ff9900;
+  --accent-soft: rgba(255, 153, 0, 0.16);
+  --radius: 6px;
+  --amz-navy: #131921;
+  --amz-navy-2: #232f3e;
+  --amz-link: #007185;
+  --amz-orange: #ff9900;
+  --amz-orange-2: #febd69;
+  --amz-muted: #565959;
+  --shadow: 0 1px 2px rgba(15, 17, 17, 0.06);
+}
+html[data-theme='amazon'] body { background: var(--bg); }
+
+html[data-theme='amazon'] .view { padding-bottom: calc(var(--tabbar-h) + 10px); }
+
+/* ---- 顶部：深色导航 + 搜索 ---- */
+.amz-head {
+  --amz-pad: 10px;
+  position: sticky; top: 0; z-index: 15;
+  background: var(--amz-navy);
+  color: #fff;
+  padding: 8px var(--amz-pad) 0;
+}
+html[data-theme='amazon'] #view { max-width: none; }
+.amz-head-row { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 8px; }
+.amz-brand { display: flex; align-items: baseline; gap: 8px; color: #fff; text-decoration: none; }
+.amz-kindlebrand {
+  font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 19px; font-weight: 700; letter-spacing: 0.04em; line-height: 1;
+  border-bottom: 2px solid var(--amz-orange, #ff9900); padding-bottom: 2px;
+}
+.amz-brand-sub { font-size: 12px; color: #ccc; letter-spacing: 0.18em; }
+.amz-head-acts { display: flex; gap: 6px; }
+.amz-ico {
+  width: 30px; height: 30px; border-radius: 6px;
+  display: grid; place-items: center;
+  background: transparent; color: #fff; font-size: 16px; text-decoration: none;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+.amz-ico:active { background: rgba(255, 255, 255, 0.12); }
+
+.amz-search { display: flex; gap: 0; padding: 0 0 8px; }
+.amz-search input {
+  flex: 1; min-width: 0; height: 38px;
+  border: 0; border-radius: 6px 0 0 6px;
+  padding: 0 12px; font-size: 14px;
+  background: #fff; color: #0f1111;
+}
+.amz-search input:focus { outline: 2px solid var(--amz-orange); outline-offset: -2px; }
+.amz-search button {
+  height: 38px; padding: 0 16px;
+  background: var(--amz-orange-2); color: #111;
+  border-radius: 0 6px 6px 0; font-size: 14px; font-weight: 600;
+}
+
+/* 分类条 */
+.amz-nav {
+  display: flex; gap: 16px; overflow-x: auto;
+  background: var(--amz-navy-2);
+  margin: 0 calc(-1 * var(--amz-pad));
+  padding: 0 calc(var(--amz-pad) + 4px);
+  scrollbar-width: none;
+}
+.amz-nav::-webkit-scrollbar { display: none; }
+.amz-chip {
+  flex: none; padding: 11px 0 9px;
+  font-size: 13.5px; color: #e5e5e5;
+  border-bottom: 3px solid transparent;
+  white-space: nowrap;
+}
+.amz-chip.on { color: #fff; font-weight: 600; border-bottom-color: var(--amz-orange); }
+
+/* ---- 内容区 ---- */
+.amz-main { padding: 8px 8px 4px; max-width: 1240px; margin: 0 auto; }
+
+/* 主推位 */
+.amz-hero {
+  display: grid; grid-template-columns: 104px 1fr; gap: 14px;
+  background: linear-gradient(135deg, #232f3e 0%, #131921 70%);
+  color: #fff; border-radius: 6px; padding: 14px;
+  box-shadow: 0 2px 8px rgba(15, 17, 17, 0.18);
+}
+.amz-hero-cover .amz-cover { width: 104px; height: 150px; }
+.amz-hero-info { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-width: 0; }
+.amz-kicker { font-size: 11px; letter-spacing: 0.16em; color: var(--amz-orange-2); text-transform: uppercase; }
+.amz-hero-title {
+  font-size: 20px; line-height: 1.3; font-weight: 700; color: #fff;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.amz-hero-meta { font-size: 12px; color: #c9ccd1; line-height: 1.4; }
+.amz-hero-bar { height: 4px; background: rgba(255, 255, 255, 0.18); border-radius: 2px; overflow: hidden; margin: 4px 0 2px; }
+.amz-hero-bar i { display: block; height: 100%; background: var(--amz-orange); }
+.amz-hero-acts { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.amz-cta {
+  background: var(--amz-orange); color: #111;
+  border-radius: 18px; padding: 8px 20px;
+  font-size: 13.5px; font-weight: 700;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.amz-cta:active { background: #e88b00; }
+.amz-ghost { font-size: 12.5px; color: #dbe1e8; text-decoration: underline; }
+
+/* 白色卡片区 */
+.amz-card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; margin-top: 8px; padding: 12px;
+}
+.amz-card-head { display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 8px; }
+.amz-card-head h3 { font-size: 17px; font-weight: 700; color: #0f1111; letter-spacing: 0.01em; }
+.amz-more { font-size: 12.5px; color: var(--amz-link); }
+.amz-empty { padding: 18px 6px; font-size: 13px; color: var(--amz-muted); text-align: center; }
+
+/* 横排 */
+.amz-row { display: flex; gap: 12px; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; }
+.amz-row::-webkit-scrollbar { display: none; }
+.amz-row-item { flex: none; width: 96px; }
+.amz-row-name {
+  margin-top: 6px; font-size: 12.5px; line-height: 1.35; color: #0f1111;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.amz-row-stat { margin-top: 2px; font-size: 11px; color: var(--amz-muted); }
+
+/* 封面 */
+.amz-cover {
+  position: relative; width: 100%; aspect-ratio: 2 / 3;
+  background: #f0f2f2; border: 1px solid var(--line);
+  border-radius: 3px; overflow: hidden;
+  display: grid; place-items: center;
+  box-shadow: 0 1px 3px rgba(15, 17, 17, 0.12);
+}
+.amz-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.amz-cover .ph { font-size: 30px; color: #b7bdbf; font-family: Georgia, serif; }
+.amz-cover.tiny { width: 40px; height: 56px; flex: none; }
+
+/* 榜单 */
+.amz-rank-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-top: 1px solid #eef1f1;
+  text-decoration: none; color: inherit;
+}
+.amz-rank-row:first-of-type { border-top: 0; }
+.amz-rank-no { width: 22px; font-size: 16px; font-weight: 700; color: var(--amz-muted); font-family: Georgia, serif; text-align: center; }
+.amz-rank-no.top { color: #c7511f; }
+.amz-rank-info { flex: 1; min-width: 0; }
+.amz-rank-name { font-size: 14px; color: #0f1111; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.amz-rank-meta { margin-top: 2px; font-size: 11.5px; color: var(--amz-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.amz-chev { color: #b7bdbf; font-size: 18px; }
+
+/* 商品网格 */
+.amz-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; padding-top: 4px; }
+.amz-book { position: relative; }
+.amz-book-name {
+  margin-top: 7px; font-size: 13px; line-height: 1.35; color: #0f1111;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.amz-book-meta { margin-top: 2px; font-size: 11.5px; color: var(--amz-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.amz-book-tags { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+.amz-tag {
+  font-size: 10px; letter-spacing: 0.06em; color: #0f1111;
+  background: #f0f2f2; border: 1px solid var(--line); border-radius: 3px;
+  padding: 1px 5px;
+}
+.amz-book-stat { font-size: 11px; color: var(--amz-muted); }
+.amz-book .more {
+  position: absolute; top: 5px; right: 5px; z-index: 3;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: rgba(19, 25, 33, 0.6); color: #fff; font-size: 13px;
+  display: grid; place-items: center;
+}
+.amz-foot { padding: 14px 0 6px; text-align: center; font-size: 11.5px; color: var(--amz-muted); letter-spacing: 0.08em; }
+
+/* 底栏：白底 + 橙色选中 */
+html[data-theme='amazon'] .tabbar {
+  background: #fff; border-top: 1px solid var(--line);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  box-shadow: 0 -2px 8px rgba(15, 17, 17, 0.06);
+}
+html[data-theme='amazon'] .tabbar a { color: #565959; font-size: 10.5px; }
+html[data-theme='amazon'] .tabbar a .ico { background: #f0f2f2; color: #565959; border-radius: 6px; }
+html[data-theme='amazon'] .tabbar a.active { color: #c7511f; font-weight: 600; }
+html[data-theme='amazon'] .tabbar a.active .ico { background: var(--accent-soft); color: #c7511f; }
+
+/* 其他页面：卡片化 + 橙色主按钮 */
+html[data-theme='amazon'] .topbar {
+  background: var(--amz-navy); color: #fff; border-bottom: 0;
+}
+html[data-theme='amazon'] .topbar h1 { font-size: 17px; color: #fff; }
+html[data-theme='amazon'] .topbar .sub { color: #c9ccd1; }
+html[data-theme='amazon'] .btn.primary,
+html[data-theme='amazon'] .btn:not(.ghost) {
+  background: var(--amz-orange); color: #111; border-radius: 18px; font-weight: 600;
+}
+html[data-theme='amazon'] .btn.ghost { color: #fff; border-color: rgba(255, 255, 255, 0.3); }
+html[data-theme='amazon'] .section,
+html[data-theme='amazon'] .card,
+html[data-theme='amazon'] .result-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+}
+html[data-theme='amazon'] input,
+html[data-theme='amazon'] select,
+html[data-theme='amazon'] textarea { border-radius: 4px; }
+
+/* 平板 / 桌面 */
+@media (min-width: 640px) and (max-width: 899px) {
+  .amz-main { padding: 10px 14px; }
+  .amz-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .amz-hero { grid-template-columns: 132px 1fr; padding: 18px; }
+  .amz-hero-cover .amz-cover { width: 132px; height: 190px; }
+  .amz-hero-title { font-size: 23px; }
+}
+@media (min-width: 900px) {
+  .amz-head { --amz-pad: max(24px, calc((100vw - 1240px) / 2)); padding: 10px var(--amz-pad) 0; }
+  .amz-main { padding: 14px 24px 8px; }
+  .amz-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 20px 16px; }
+  .amz-hero { grid-template-columns: 168px 1fr; padding: 24px 28px; gap: 26px; }
+  .amz-hero-cover .amz-cover { width: 168px; height: 242px; }
+  .amz-hero-title { font-size: 30px; }
+  .amz-hero-meta { font-size: 13.5px; }
+  .amz-row-item { width: 120px; }
+  .amz-card { padding: 16px 18px; margin-top: 14px; }
+  .amz-card-head h3 { font-size: 19px; }
+  .amz-rank-name { font-size: 15px; }
+  .amz-cover.tiny { width: 46px; height: 64px; }
+}
+@media (min-width: 1280px) {
+  .amz-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .amz-hero { grid-template-columns: 190px 1fr; }
+  .amz-hero-cover .amz-cover { width: 190px; height: 274px; }
+}
+
+/* 亚马逊主题：无底部标签栏 + 返回按钮 + 链接行 */
+html[data-theme='amazon'] .tabbar { display: none !important; }
+html[data-theme='amazon'] .view { padding-bottom: 28px; }
+html[data-theme='amazon'] .topbar { padding-left: 12px; gap: 2px; }
+html[data-theme='amazon'] .topbar h1 { padding-left: 2px; }
+
+.topbar .backbtn {
+  flex: none;
+  display: inline-grid; place-items: center;
+  width: 28px; height: 28px; margin-right: 2px;
+  border-radius: 6px;
+  color: #fff; font-size: 21px; line-height: 1; text-decoration: none;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+.topbar .backbtn:active { background: rgba(255, 255, 255, 0.14); }
+
+.link-row { text-decoration: none; color: inherit; align-items: center; }
+.link-row .chev { color: #b7bdbf; font-size: 18px; }
+html[data-theme='amazon'] .section .row.link-row:active { background: #f5f7f7; }
+
+/* ============================================================
+   亚马逊书城 · 搜索结果页版式（覆盖上面的旧 amazon 版式）
+   ============================================================ */
+html[data-theme='amazon'] .amz-head { padding: 0; background: #131921; }
+
+.amz-top {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  max-width: 1440px; margin: 0 auto;
+}
+.amz-brand {
+  flex: none; color: #fff; text-decoration: none;
+  font-size: 19px; font-weight: 700; letter-spacing: 0.02em;
+  padding-right: 10px;
+}
+.amz-brand::after { content: ''; display: block; height: 3px; margin-top: 2px; background: #ff9900; border-radius: 2px; }
+.amz-search {
+  flex: 1; min-width: 0; display: flex; align-items: stretch;
+  height: 38px; border-radius: 8px; overflow: hidden; background: #fff;
+}
+.amz-search select {
+  flex: none; width: 76px; border: 0; background: #f3f3f3; color: #0f1111;
+  font-size: 12.5px; padding: 0 8px; border-right: 1px solid #cdcdcd;
+}
+.amz-search input {
+  flex: 1; min-width: 0; border: 0; padding: 0 12px; font-size: 15px; color: #0f1111; background: #fff;
+}
+.amz-search input:focus { outline: 2px solid #ff9900; outline-offset: -2px; }
+.amz-search button {
+  flex: none; width: 48px; border: 0;
+  background: #febd69; color: #111; font-size: 16px;
+}
+.amz-toplinks { display: flex; gap: 12px; flex: none; }
+.amz-toplinks a { color: #fff; font-size: 12.5px; text-decoration: none; opacity: 0.9; }
+
+.amz-catnav {
+  display: flex; gap: 18px; overflow-x: auto;
+  background: #232f3e; padding: 0 16px; scrollbar-width: none;
+}
+.amz-catnav::-webkit-scrollbar { display: none; }
+.amz-catnav .amz-chip {
+  padding: 10px 0 8px; background: none; border: 0;
+  color: #e6e6e6; font-size: 13.5px; white-space: nowrap;
+  border-bottom: 3px solid transparent;
+}
+.amz-catnav .amz-chip.on { color: #fff; font-weight: 600; border-bottom-color: #ff9900; }
+
+.amz-booksnav {
+  display: flex; gap: 20px; overflow-x: auto;
+  background: #fff; border-bottom: 1px solid #ddd;
+  padding: 0 16px; scrollbar-width: none;
+}
+.amz-booksnav::-webkit-scrollbar { display: none; }
+.amz-booksnav a {
+  padding: 11px 0 9px; color: #0f1111; font-size: 13.5px; text-decoration: none;
+  white-space: nowrap; border-bottom: 2px solid transparent;
+}
+.amz-booksnav a.on { color: #c45500; font-weight: 600; border-bottom-color: #c45500; }
+
+html[data-theme='amazon'] .amz-main { max-width: 1440px; margin: 0 auto; padding: 0 16px 24px; }
+.amz-crumb { padding: 10px 0 6px; font-size: 12px; color: #565959; }
+
+.amz-layout { display: grid; grid-template-columns: 1fr; gap: 0; }
+.amz-side { display: none; }
+.amz-content { min-width: 0; }
+
+.amz-results-head {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 6px 0 10px;
+}
+.amz-results-head h1 { font-size: 24px; font-weight: 700; color: #0f1111; }
+.amz-count { font-size: 12.5px; color: #565959; flex: 1; }
+.amz-sort { font-size: 12.5px; color: #565959; display: flex; align-items: center; gap: 6px; }
+.amz-sort select {
+  border: 1px solid #d5d9d9; border-radius: 8px; background: #f0f2f2;
+  font-size: 12.5px; padding: 4px 6px; color: #0f1111;
+}
+
+.amz-list { border-top: 1px solid #e7e7e7; }
+.amz-item {
+  display: grid; grid-template-columns: 96px 1fr; gap: 12px;
+  padding: 14px 0; border-bottom: 1px solid #e7e7e7;
+}
+.amz-item-cover .amz-cover { width: 96px; height: 144px; }
+.amz-item-body { min-width: 0; }
+.amz-item-title {
+  font-size: 16px; font-weight: 600; color: #0f1111; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.amz-item-meta { margin-top: 3px; font-size: 12px; color: #565959; }
+.amz-item-rate { margin-top: 5px; display: flex; align-items: center; gap: 6px; }
+.amz-stars {
+  font-size: 14px; letter-spacing: 1px; line-height: 1;
+  background: linear-gradient(90deg, #e77600 0 var(--pct), #d5d9d9 var(--pct) 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.amz-rate-num { font-size: 12px; color: #565959; }
+.amz-item-bar { height: 4px; background: #e7e7e7; border-radius: 2px; overflow: hidden; margin: 6px 0 8px; max-width: 240px; }
+.amz-item-bar i { display: block; height: 100%; background: #ff9900; }
+.amz-item-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.amz-buy {
+  background: #ffd814; border: 1px solid #fcd200; color: #111;
+  border-radius: 20px; padding: 8px 26px; font-size: 13.5px; font-weight: 600;
+}
+.amz-buy:active { background: #f7ca00; }
+.amz-item-link { font-size: 12.5px; color: #007185; text-decoration: none; background: none; border: 0; }
+
+/* 桌面：左侧筛选栏 */
+@media (min-width: 900px) {
+  .amz-top { padding: 10px 24px; }
+  .amz-catnav, .amz-booksnav { padding: 0 24px; }
+  html[data-theme='amazon'] .amz-main { padding: 0 24px 32px; }
+  .amz-layout { grid-template-columns: 190px minmax(0, 1fr); gap: 26px; align-items: start; }
+  .amz-side { display: block; padding-top: 6px; }
+  .amz-side-group { padding-bottom: 16px; }
+  .amz-side-group h4 { font-size: 14px; font-weight: 700; color: #0f1111; padding-bottom: 6px; }
+  .amz-side-link {
+    display: block; width: 100%; text-align: left; background: none; border: 0;
+    padding: 3px 0; font-size: 12.5px; color: #0f1111; text-decoration: none;
+  }
+  .amz-side-link.on { font-weight: 700; }
+  .amz-side-link:active { color: #c45500; }
+  .amz-results-head h1 { font-size: 28px; }
+  .amz-item { grid-template-columns: 140px 1fr; gap: 18px; padding: 18px 0; }
+  .amz-item-cover .amz-cover { width: 140px; height: 210px; }
+  .amz-item-title { font-size: 19px; }
+  .amz-item-meta { font-size: 12.5px; }
+  .amz-stars { font-size: 16px; }
+  .amz-buy { padding: 9px 34px; font-size: 14px; }
+}
+
+/* 亚马逊搜索区：范围下拉 + 放大镜按钮 */
+.amz-search select {
+  appearance: none; -webkit-appearance: none;
+  height: 100%; width: 82px;
+  background: #f3f3f3 url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23555'/></svg>") no-repeat right 9px center;
+  background-size: 9px 6px;
+  color: #0f1111; font-size: 12.5px;
+  padding: 0 22px 0 10px;
+  border: 0; border-right: 1px solid #cdcdcd;
+  border-radius: 8px 0 0 8px;
+}
+.amz-search select:focus { outline: 2px solid #ff9900; outline-offset: -2px; }
+.amz-search button {
+  display: grid; place-items: center;
+  border-radius: 0 8px 8px 0;
+}
+.amz-search button svg { display: block; }
+
+/* 手机端搜索区：品牌一行 + 搜索框整行，避免下拉被挤压错位 */
+@media (max-width: 639px) {
+  .amz-top { flex-wrap: wrap; row-gap: 8px; padding: 8px 12px 10px; }
+  .amz-brand { flex: 1 1 auto; font-size: 18px; }
+  .amz-toplinks { display: none; }
+  .amz-search { flex: 1 1 100%; order: 3; height: 40px; }
+  .amz-search select {
+    width: 74px; height: 40px; font-size: 12px;
+    padding: 0 20px 0 9px;
+    background-position: right 7px center;
+  }
+  .amz-search input { height: 40px; font-size: 14px; padding: 0 10px; }
+  .amz-search button { width: 44px; height: 40px; }
+
+  .amz-results-head { align-items: center; row-gap: 6px; }
+  .amz-results-head h1 { font-size: 22px; }
+  .amz-count { flex: 1 1 100%; order: 3; font-size: 12px; }
+  .amz-sort { margin-left: auto; font-size: 12px; }
+}
+
+/* ============================================================
+   小屏手机适配：iPhone SE/5（320）、华为 P30（360）
+   ============================================================ */
+html[data-theme='amazon'] .view { padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
+
+@media (max-width: 374px) {
+  .amz-top { padding: 6px 10px 8px; }
+  .amz-brand { font-size: 17px; }
+  .amz-search { height: 38px; }
+  .amz-search select { width: 70px; height: 38px; font-size: 11.5px; padding: 0 18px 0 8px; background-position: right 6px center; }
+  .amz-search input { height: 38px; font-size: 13px; padding: 0 8px; }
+  .amz-search button { width: 40px; height: 38px; }
+  .amz-search button svg { width: 17px; height: 17px; }
+
+  .amz-catnav, .amz-booksnav { padding: 0 10px; gap: 14px; }
+  .amz-catnav .amz-chip, .amz-booksnav a { font-size: 12.5px; }
+  .amz-booksnav a { padding: 10px 0 8px; }
+
+  html[data-theme='amazon'] .amz-main { padding: 0 10px 20px; }
+  .amz-crumb { font-size: 11.5px; padding: 8px 0 4px; }
+  .amz-results-head h1 { font-size: 20px; }
+  .amz-count { font-size: 11.5px; }
+  .amz-sort select { padding: 3px 4px; font-size: 12px; }
+
+  .amz-item { grid-template-columns: 84px 1fr; gap: 10px; padding: 12px 0; }
+  .amz-item-cover .amz-cover { width: 84px; height: 126px; }
+  .amz-item-title { font-size: 15px; }
+  .amz-item-meta { font-size: 11.5px; }
+  .amz-stars { font-size: 13px; }
+  .amz-rate-num { font-size: 11px; }
+  .amz-item-bar { max-width: 100%; }
+  .amz-item-actions { gap: 10px; }
+  .amz-buy { padding: 8px 18px; font-size: 13px; }
+  .amz-item-link { font-size: 12px; }
+
+  /* 设置/搜索等页面在小屏下更紧凑 */
+  .section { padding: 12px 12px; }
+  .section .row { gap: 8px; }
+  .section .row .label { min-width: 0; }
+  .topbar { padding: 8px 10px; }
+  .topbar h1 { font-size: 16px; }
+}
+
+@media (max-width: 339px) {
+  .amz-catnav { gap: 12px; }
+  .amz-booksnav { gap: 12px; }
+  .amz-item-actions { gap: 8px; }
+  .amz-buy { padding: 7px 14px; font-size: 12.5px; }
+  .amz-item-link { font-size: 11.5px; }
+  .amz-item-title { font-size: 14.5px; }
+  .amz-item-cover .amz-cover { width: 78px; height: 117px; }
+  .amz-item { grid-template-columns: 78px 1fr; gap: 8px; }
+}
+
+/* 小屏：下拉与筛选控件不截断 */
+@media (max-width: 374px) {
+  .theme-select, .section .row select { max-width: 58%; font-size: 12px; }
+  .searchbar select, .scope-select { font-size: 12px; max-width: 46%; }
+  .chips { gap: 6px; }
+  .chips .chip { font-size: 12px; padding: 5px 10px; }
+  .searchbar { gap: 8px; }
+}
+
+/* 分类条：滑动指示器 + 去掉「书籍/搜索/…」那一行后更紧凑 */
+.amz-catnav { position: relative; }
+.amz-cat-ind {
+  position: absolute; bottom: 0; left: 0; width: 0; height: 3px;
+  background: #ff9900; border-radius: 2px;
+  transition: left 0.24s cubic-bezier(0.4, 0, 0.2, 1), width 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+.amz-catnav .amz-chip { border-bottom: 0; }
+.amz-catnav .amz-chip.on { border-bottom: 0; }
+
+/* 避免过滤后滚动条消失导致整页宽度跳动 */
+html[data-theme='amazon'] { scrollbar-gutter: stable; }
+
+/* 适配窄屏：分类条左右留白 */
+@media (max-width: 374px) {
+  .amz-catnav { padding-bottom: 2px; }
+}
+
+/* 修复：搜索条旧的 padding-bottom:8px 让下拉比输入框矮 8px（PC 端看起来错位） */
+.amz-top .amz-search { padding: 0; }
+.amz-search select, .amz-search input, .amz-search button { align-self: stretch; }
+.amz-search select { height: auto; }
+
+/* 分类条右侧的导航项（设置） */
+.amz-catnav .amz-chip-link {
+  display: inline-block; text-decoration: none;
+  color: #e6e6e6; border-bottom: 3px solid transparent;
+}
+.amz-catnav .amz-chip-link:active { color: #fff; }
