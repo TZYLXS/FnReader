@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.0.15
+version=3.0.16
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps      = nodejs_v22>22.0:java-21-openjdk>21
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=修复书架接口被去重拖挂：GET /api/books 不再每次都执行 dedupeShelf；Python 去重调用改为 4 秒超时后回落 JS（之前 60 秒，进程池卡住时整页白等）
+changelog=修复 Python 持久进程池：bridge 补上 --worker 模式（逐行收发 JSON），之前 worker 一启动就退出/超时，导致去重与 TXT 分章全部回落到 JS、健康页 python 一直 responses=0
