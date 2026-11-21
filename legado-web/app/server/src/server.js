@@ -1941,14 +1941,33 @@ async function runExportAllJob() {
     const dest = path.join(dir, name);
     let ok = false;
     let okChapters = 0;
-    try {
-      const py = await pyengine
-        .call('export_txt', { mode: 'write', name: b.name, outPath: dest, chapters: item.chapters, files: item.files }, 180000)
-        .catch(() => null);
-      ok = !!(py && py.ok && fs.existsSync(dest) && fs.statSync(dest).size > 20);
-      if (ok) okChapters = Number(py.chapters) || 0;
-    } catch {
-      ok = false;
+    const chapterCount = item.chapters ? item.chapters.length : item.files.length;
+    // 超长书不走 Python（payload 太大容易把进程拖垮），直接 JS 拼
+    if (chapterCount <= 4000) {
+      try {
+        // 用独立的一次性 Python 进程，避免占用规则解析进程池（曾导致 TXT 分章全部超时）
+        const { child, promise } = pyengine.start('export_txt', {
+          mode: 'write',
+          name: b.name,
+          outPath: dest,
+          chapters: item.chapters,
+          files: item.files,
+        });
+        const killer = setTimeout(() => {
+          try {
+            pyengine.killTree(child);
+          } catch {
+            /* ignore */
+          }
+        }, 60000);
+        const res = await promise.finally(() => clearTimeout(killer));
+        if (res && res.ok && res.data && res.data.ok && fs.existsSync(dest) && fs.statSync(dest).size > 20) {
+          ok = true;
+          okChapters = Number(res.data.chapters) || 0;
+        }
+      } catch {
+        ok = false;
+      }
     }
     if (!ok) {
       // 回落 JS 拼装
@@ -4735,11 +4754,28 @@ function saveCover(target, buf, mime) {
       if (!ch) return;
       chaptersForExport.push({ title: String(ch.title || ''), paragraphs: (ch.paragraphs || []).map((x) => String(x)) });
     });
-    // 交给 Python 拼装/清洗（失败回落到 JS）
-    const pyText = await pyengine
-      .call('export_txt', { mode: 'single', name: meta.name, chapters: chaptersForExport }, 120000)
-      .then((r) => (r && r.ok && typeof r.text === 'string' ? r.text : ''))
-      .catch(() => '');
+    // 交给独立 Python 进程拼装/清洗（失败回落到 JS；不用进程池，避免拖垮规则解析）
+    let pyText = '';
+    if (chaptersForExport.length <= 4000) {
+      try {
+        const { child, promise } = pyengine.start('export_txt', {
+          mode: 'single',
+          name: meta.name,
+          chapters: chaptersForExport,
+        });
+        const killer = setTimeout(() => {
+          try {
+            pyengine.killTree(child);
+          } catch {
+            /* ignore */
+          }
+        }, 60000);
+        const res = await promise.finally(() => clearTimeout(killer));
+        if (res && res.ok && res.data && res.data.ok && typeof res.data.text === 'string') pyText = res.data.text;
+      } catch {
+        pyText = '';
+      }
+    }
     let text = pyText;
     if (!text) {
       const parts = [];

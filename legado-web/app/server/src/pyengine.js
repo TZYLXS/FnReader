@@ -140,6 +140,8 @@ function createWorker() {
   });
   child.stderr.on('data', (d) => { worker.stderr = (worker.stderr + d.toString()).slice(-4000); });
   child.on('error', (e) => failWorker(worker, e, false));
+  // worker 已退出时再写 stdin 会 EPIPE，这里吞掉并标记 worker 失效，避免 uncaughtException
+  child.stdin.on('error', () => failWorker(worker, new Error('Python worker stdin 断开'), false));
   child.on('close', (code) => {
     lines.close();
     failWorker(worker, new Error(`Python worker 退出(${code})${worker.stderr ? ': ' + worker.stderr.slice(-200) : ''}`), false);
