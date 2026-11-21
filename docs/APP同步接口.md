@@ -1011,3 +1011,37 @@ POST /api/m/remote/result {
 ```
 
 只回你拿得到的字段即可，缺的留空。
+
+### 17.5 客户端实现现状：书源推送尚未接入（2026-11-22 记录）
+
+这一条是**客户端功能缺口**，不是服务端 bug。服务端两个接口实测均可用（测试端 18081）：
+
+```http
+POST /api/m/sources          → {"ok":true,"added":1,"updated":1,"total":1150}
+POST /api/m/sources/sync     → {"ok":true,"applied":1,"skipped":0,"total":1150}
+```
+
+但当前 Android 客户端（`patches/yuedu-pro`、`patches/yuedu-android4`，实测 APK 版本 2.6.12.1）
+**没有任何调用这两个接口的代码**。补丁里出现的 `/api/m/` 只有：
+
+```
+remote/pending   remote/result   info
+ebook/upload     ebook/chapter   ebook/part   ebook/file
+```
+
+现象：
+
+- 手机上新增/导入的书源不会进服务器（服务器 `sources.json` 的 `lastUpdateTime` 不会变化）
+- 网页端导入了 1150 个源，手机端也不会自动拉到
+- 两端书源只能各自维护
+
+绕过方式（已实测）：App「书源 → 导出」得到 `bookSource.json`，再手动灌进服务端
+
+```bash
+curl -X POST -H "X-Api-Token: <令牌>" -H "Content-Type: application/json" \
+     --data-binary @bookSource.json http://<服务器地址>/api/m/sources
+# → {"ok":true,"added":1003,"updated":147,"total":1150}
+```
+
+客户端待补（照 §17.4 实现）：书源新增/编辑/删除时写 `lastUpdateTime` 并入本地变更队列；
+App 启动 / 每 10 分钟 / 手动同步时 `POST /api/m/sources/sync`，成功后清队列并从 `pull` 覆盖本地。
