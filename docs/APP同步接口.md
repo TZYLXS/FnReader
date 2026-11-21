@@ -1045,3 +1045,44 @@ curl -X POST -H "X-Api-Token: <令牌>" -H "Content-Type: application/json" \
 
 客户端待补（照 §17.4 实现）：书源新增/编辑/删除时写 `lastUpdateTime` 并入本地变更队列；
 App 启动 / 每 10 分钟 / 手动同步时 `POST /api/m/sources/sync`，成功后清队列并从 `pull` 覆盖本地。
+
+### 17.6 客户端回传接口覆盖情况（2026-11-22 实测）
+
+「回传」= 客户端主动往服务端写。服务端这边全部可用，客户端（yuedu-pro 补丁，APK 2.6.12.1）
+只接了**软总线 + 电子书**两条链路，**书架 / 进度 / 封面 / 书源 / 缓存五类回传都没接**。
+
+| 接口 | 用途 | 服务端 | 客户端 | 实测响应 |
+| --- | --- | --- | --- | --- |
+| `GET /api/m/remote/pending` | 领软总线任务 | ✅ | ✅ | 正常 |
+| `POST /api/m/remote/result` | 回传任务结果 | ✅ | ✅ | 正常 |
+| `GET /api/m/info` | 服务端信息 | ✅ | ✅ | 正常 |
+| `GET /api/m/ebook/chapter` | 缺章正文回传 | ✅ | ✅ | 正常 |
+| `POST /api/m/ebook/upload` | 传书 | ✅ | ✅ | 正常 |
+| `POST /api/m/books` | 手机加书同步书架 | ✅ | ❌ | `{"ok":true,"added":0,"updated":1,"total":42}` |
+| `POST /api/m/progress` | 单条阅读进度 | ✅ | ❌ | `{"ok":true}` |
+| `POST /api/m/progress/batch` | 批量进度 | ✅ | ❌ | `{"ok":true,"updated":1,"total":1,"missing":[]}` |
+| `POST /api/m/cover` | 手机封面入库 | ✅ | ❌ | 路由存在（未实测上传） |
+| `POST /api/m/sources` | 书源全量/增量导入 | ✅ | ❌ | `{"ok":true,"added":1003,"updated":147,"total":1150}` |
+| `POST /api/m/sources/sync` | 书源 LWW 双向同步 | ✅ | ❌ | `{"ok":true,"applied":1,"skipped":0}` |
+| `POST /api/m/cache` | 手机缓存正文落服务器 | ✅ | ❌ | 需 `{"book":{"bookUrl","name"},"chapters":[…]}` |
+
+影响：
+
+- 手机上「加入书架」的书不会出现在网页端；网页端的书架也不会自动下发到手机（当前只有软总线解析）
+- 手机阅读进度不同步（服务端 `durChapterIndex` 保持不变）
+- 手机端做过的封面不会进服务器 `covers/`
+- 书源两边各自维护（见 §17.5）
+- 手机缓存的正文不会落到服务器 `downloads/cache/`
+
+验证方式（任一端都可复现）：
+
+```bash
+T=<令牌>; B=http://<服务器地址>
+curl -s -X POST -H "X-Api-Token: $T" -H "Content-Type: application/json" \
+  -d '{"bookUrl":"<bookUrl>","index":1,"pos":0}' $B/api/m/progress      # {"ok":true}
+curl -s -X POST -H "X-Api-Token: $T" -H "Content-Type: application/json" \
+  -d '{"bookUrl":"<bookUrl>","name":"书名"}' $B/api/m/books             # added/updated
+```
+
+客户端待补：这五类回传都需要在对应落库点触发（加书、翻页、封面生成、书源变更、缓存完成），
+协议体参照本文件 §7（书架）、§9（进度）、§13（封面/书源）、§16（缓存）。
