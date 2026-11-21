@@ -36,7 +36,13 @@ function logPush(line) {
 })();
 const { execFileSync } = require('node:child_process');
 const { normalizeSource, sourceId } = require('./books');
-const { searchSource, getBookInfo, getToc, getContent } = require('./books');
+const {
+  searchSource: localSearchSource,
+  getBookInfo: localGetBookInfo,
+  getToc: localGetToc,
+  getContent: localGetContent,
+} = require('./books');
+const parsePool = require('./parsepool');
 const { request, requestBinary, absoluteUrl } = require('./util');
 const { fetchFeed } = require('./feeds');
 const { getArticle } = require('./article');
@@ -49,6 +55,8 @@ const { dedupeCache, findExistingDir } = require('./cacheclean');
 const tombstone = require('./tombstone');
 const { normalizeChapterList } = require('./chapter-order');
 const pyengine = require('./pyengine');
+const javaWorker = require('./java-worker');
+javaWorker.setEnabled(store.config.javaEngine !== false);
 const { mergeSources, pullSince } = require('./sourcesync');
 const events = require('./events');
 const remote = require('./remote');
@@ -63,6 +71,59 @@ function rememberChapter(key, value) {
 const { detectAcademic } = require('./academic');
 const { handleDav } = require('./dav');
 const searchCache = require('./searchcache');
+
+// 普通规则保持原解析路径；含同步 JS / java.* 的复杂规则交给 worker 池，避免卡住主事件循环。
+const dynamicSearchRequests = new Map();
+async function searchSource(source, key, page = 1, opts = {}) {
+  if (!parsePool.shouldOffload(source)) return localSearchSource(source, key, page, opts);
+  const requestKey = JSON.stringify([sourceId(source), source.searchUrl || '', key, page]);
+  const known = dynamicSearchRequests.get(requestKey);
+  if (known) {
+    const cached = searchCache.get(known.url, known.body);
+    if (cached) {
+      const list = cached.map((b) => ({ ...b }));
+      list.fromCache = true;
+      return list;
+    }
+  }
+  const meta = await parsePool.run('searchSource', [
+    source,
+    key,
+    page,
+    { ...opts, cache: false, returnMeta: true },
+  ]);
+  const books = meta && Array.isArray(meta.books) ? meta.books : [];
+  if (!meta || !meta.url) throw new Error('复杂书源未返回有效搜索地址');
+  dynamicSearchRequests.set(requestKey, { url: meta.url, body: meta.body });
+  if (dynamicSearchRequests.size > 1000) dynamicSearchRequests.delete(dynamicSearchRequests.keys().next().value);
+  searchCache.set(meta.url, meta.body, books);
+  return books;
+}
+
+async function getBookInfo(source, book, opts = {}) {
+  if (!parsePool.shouldOffload(source)) return localGetBookInfo(source, book, opts);
+  const result = await parsePool.run('getBookInfo', [source, book, opts]);
+  Object.assign(book, result || {});
+  return book;
+}
+
+async function normalizeTocOffload(chapters) {
+  const fromJava = await javaWorker.normalizeToc(chapters).catch(() => null);
+  const list = fromJava || normalizeChapterList(chapters);
+  return list.map((chapter, index) => ({ ...chapter, index }));
+}
+
+async function getToc(source, book, opts = {}) {
+  const chapters = !parsePool.shouldOffload(source)
+    ? await localGetToc(source, book, opts)
+    : await parsePool.run('getToc', [source, book, opts]);
+  return normalizeTocOffload(chapters);
+}
+
+async function getContent(source, book, chapter) {
+  if (!parsePool.shouldOffload(source)) return localGetContent(source, book, chapter);
+  return parsePool.run('getContent', [source, book, chapter]);
+}
 
 const APPNAME = process.env.TRIM_APPNAME || 'legado-web';
 const WEB_DIR = path.resolve(process.env.LEGADO_WEB || path.join(__dirname, '..', 'web'));
@@ -99,6 +160,12 @@ function cacheGet(key) {
   return contentCache.get(key);
 }
 function cacheSet(key, val) {
+  // 空正文与反爬占位页都不写缓存，避免一次失败把整章永久钉死
+  if (!Array.isArray(val) || !val.length) return;
+  if (contentLooksJunk(val)) {
+    contentCache.delete(key);
+    return;
+  }
   if (contentCache.size > 300) contentCache.delete(contentCache.keys().next().value);
   contentCache.set(key, val);
 }
@@ -135,6 +202,17 @@ function cleanParagraphs(list) {
   return out;
 }
 
+/** 反爬占位页/目录页残留：这类“正文”不能当成功结果，应回落到手机代理解析 */
+function contentLooksJunk(paragraphs) {
+  const text = (paragraphs || []).join('\n').trim();
+  if (!text) return true;
+  // 反爬占位页通常很短；超过 800 字基本是真正文
+  if (text.length > 800) return false;
+  return /退出阅读模式|退出#?阅读|#退#出#阅#读|章节缺失|章节#?缺失|请使用其它.{0,4}浏览器|网页版.{0,6}最新内容|请退出转码|最快.{0,4}免费阅读|最新网址|本章未完|#中间#有#缺失|quyoulai|q#u#y#o#u#l#a#i/.test(
+    text,
+  );
+}
+
 async function loadChapterContent(book, index) {
   const chapter = book.chapters[index];
   if (!chapter) throw new Error('章节不存在');
@@ -149,7 +227,7 @@ async function loadChapterContent(book, index) {
           .split(/\n{2,}/)
           .map((x) => x.trim())
           .filter(Boolean);
-        if (paragraphs.length) {
+        if (paragraphs.length && !contentLooksJunk(paragraphs)) {
           cacheSet(key, paragraphs);
           return { paragraphs, cached: false, fromCache: true };
         }
@@ -161,7 +239,7 @@ async function loadChapterContent(book, index) {
   if (book.viaPhone) {
     // 手机解析过的章节落过盘，就不必再问手机
     const hit = readPhoneCache(book.bookUrl, index, 'content');
-    if (hit && Array.isArray(hit.paragraphs) && hit.paragraphs.length) {
+    if (hit && Array.isArray(hit.paragraphs) && hit.paragraphs.length && !contentLooksJunk(hit.paragraphs)) {
       cacheSet(key, hit.paragraphs);
       return { paragraphs: cleanParagraphs(hit.paragraphs), cached: true, via: 'phone-cache' };
     }
@@ -173,18 +251,26 @@ async function loadChapterContent(book, index) {
     }
   }
   const mem = cacheGet(key);
-  if (mem) return { paragraphs: cleanParagraphs(mem), cached: true };
+  if (mem && mem.length) {
+    if (!contentLooksJunk(mem)) return { paragraphs: cleanParagraphs(mem), cached: true };
+    contentCache.delete(key); // 反爬占位不当作缓存命中，清掉后重新解析
+  }
   const disk = diskCache.get(key);
-  if (disk && disk.paragraphs) {
-    cacheSet(key, disk.paragraphs);
-    return { paragraphs: cleanParagraphs(disk.paragraphs), cached: true };
+  if (disk && Array.isArray(disk.paragraphs) && disk.paragraphs.length) {
+    if (!contentLooksJunk(disk.paragraphs)) {
+      cacheSet(key, disk.paragraphs);
+      return { paragraphs: cleanParagraphs(disk.paragraphs), cached: true };
+    }
+    diskCache.del(key);
   }
   if (inflight.has(key)) {
     const paragraphs = await inflight.get(key);
     return { paragraphs: cleanParagraphs(paragraphs), cached: true };
   }
-  // 优先手机代理正文：即使本机没有对应书源，只要手机在线就让它先试
-  if ((store.config.preferRemote === true || book.viaPhone) && busAvailable()) {
+  // 只有“手机专属书”或本机确实没有书源时才手机优先；
+  // 其余书本地优先，避免所有章节都去挤软总线队列（软件总线应只做兜底）
+  const source = resolveSource(book);
+  if ((book.viaPhone || !source) && busAvailable()) {
     const paras = await remoteContent(book, chapter).catch(() => null);
     if (paras && paras.length) {
       const cleaned = cleanParagraphs(paras);
@@ -194,7 +280,6 @@ async function loadChapterContent(book, index) {
       return { paragraphs: cleaned, cached: false, via: 'phone' };
     }
   }
-  const source = resolveSource(book);
   if (!source) throw new Error('该书没有关联书源，且没有本地缓存');
   bumpUsage('localContent');
   if (effectiveEngine() === 'python') {
@@ -209,15 +294,49 @@ async function loadChapterContent(book, index) {
       /* 回退内置 */
     }
   }
-  const promise = getContent(source, book, chapter).then((raw) => {
-    const paragraphs = cleanParagraphs(raw);
-    cacheSet(key, paragraphs);
-    diskCache.set(key, { paragraphs, title: chapter.title });
-    return paragraphs;
-  });
+  const promise = getContent(source, book, chapter).then((raw) => cleanParagraphs(raw));
   inflight.set(key, promise);
   try {
-    const paragraphs = await promise;
+    let paragraphs;
+    try {
+      paragraphs = await promise;
+    } catch (localErr) {
+      // 本地解析报错（反爬/403/站点改版）时，若手机在线就交给手机重试一次
+      if (busAvailable()) {
+        const remote = await remoteContent(book, chapter).catch(() => null);
+        if (remote && remote.length) {
+          const cleanedRemote = cleanParagraphs(remote);
+          if (!contentLooksJunk(cleanedRemote)) {
+            cacheSet(key, cleanedRemote);
+            diskCache.set(key, { paragraphs: cleanedRemote, title: chapter.title });
+            writePhoneCache(book.bookUrl, index, 'content', { paragraphs: cleanedRemote, title: chapter.title, at: Date.now() });
+            bumpUsage('phoneContent');
+            return { paragraphs: cleanedRemote, cached: false, via: 'phone' };
+          }
+        }
+      }
+      throw localErr;
+    }
+    // 反爬占位页（“退出阅读模式 / 章节缺失”等）不能当正文缓存，优先交给手机重解析。
+    if (contentLooksJunk(paragraphs) && busAvailable()) {
+      const remote = await remoteContent(book, chapter).catch(() => null);
+      if (remote && remote.length) {
+        const cleanedRemote = cleanParagraphs(remote);
+        if (!contentLooksJunk(cleanedRemote)) {
+          cacheSet(key, cleanedRemote);
+          diskCache.set(key, { paragraphs: cleanedRemote, title: chapter.title });
+          writePhoneCache(book.bookUrl, index, 'content', { paragraphs: cleanedRemote, title: chapter.title, at: Date.now() });
+          bumpUsage('phoneContent');
+          return { paragraphs: cleanedRemote, cached: false, via: 'phone' };
+        }
+      }
+    }
+    if (!contentLooksJunk(paragraphs)) {
+      cacheSet(key, paragraphs);
+      diskCache.set(key, { paragraphs, title: chapter.title });
+    } else {
+      diskCache.del(key); // 反爬占位不落盘，交给下次手机重解析
+    }
     return { paragraphs, cached: false };
   } finally {
     inflight.delete(key);
@@ -358,8 +477,21 @@ function serveStatic(req, res, pathname, retried = false) {
 }
 
 function sanitizeBook(book) {
+  if (!book) return null;
   const { chapters, ...rest } = book;
   return { ...rest, chapterCount: chapters ? chapters.length : book.chapterCount || 0 };
+}
+
+/** 按 URL 找书架书；换源合并后旧 URL 会落在 altOrigins 里，这里一并认 */
+function resolveShelfBook(url) {
+  const direct = store.findBook(url);
+  if (direct) return direct;
+  if (!url) return null;
+  for (const b of store.books) {
+    const alts = Array.isArray(b.altOrigins) ? b.altOrigins : [];
+    if (alts.some((a) => a && (a.bookUrl === url || a.origin === url))) return b;
+  }
+  return null;
 }
 
 /**
@@ -392,6 +524,72 @@ function applyReplaceRules(book, chapter, paragraphs) {
   } catch {
     return { title: chapter.title, paragraphs };
   }
+}
+
+/* ---------------- 搜索 ---------------- */
+// 默认检索的推荐源：覆盖网文/晋江/聚合站，避免默认把 1000+ 源全扫导致长时间无结果
+const DEFAULT_SEARCH_SOURCES = [
+  'https://www.jjwxc.net',
+  'https://m.quyoulai.net',
+  'http://www.feisuwx.org',
+  'http://www.3yt.com',
+  'https://m.feixs.com',
+  'https://www.555x.org',
+  'http://www.vbiquge.org',
+  'https://69shu.net',
+  'https://www.dubuxiaoshuo.com',
+  'http://www.biquw.com',
+  'https://www.147xs.org',
+  'https://www.ixuanshu.org',
+  'https://m.fansg.cc',
+  'https://m.shucangxs.com',
+  'https://www.soumal.com',
+  'https://m.aitbooks.com',
+  'https://m.xuribook.com',
+  'https://www.56fz.net',
+  'https://m.meiguixsw.com',
+  'https://m.yushugu.com',
+  'http://www.55shuba.com',
+  'https://m.x33xs.com',
+  'https://www.yb3.cc',
+  'https://www.00shu.com',
+  'https://www.shuquzw.com',
+  'https://www.hongxiuxs.com',
+  'http://www.22ff.vip',
+  'https://www.aixiaxsw.com',
+  'https://m.zhongtianwen.cn',
+  'https://m.xhwx5.com',
+  'http://www.22mt.net',
+];
+
+const normSearchText = (s) =>
+  String(s || '')
+    .replace(/[\s《》「」"'·、,，.。:：!！?？\-—_\[\]ⅠⅡⅢ]/g, '')
+    .toLowerCase();
+
+/** 命中级别：exact=同名，fuzzy=前缀包含，related=其余；并按级别排序 */
+function rankSearchBooks(books, key) {
+  const k = normSearchText(key);
+  const level = (b) => {
+    const n = normSearchText(b.name);
+    if (n === k) return 0;
+    if (n.startsWith(k) || n.includes(k)) return 1;
+    return 2;
+  };
+  return books
+    .map((b) => ({ ...b, match: ['exact', 'fuzzy', 'related'][level(b)] }))
+    .sort((a, b) => level(a) - level(b));
+}
+
+function withTimeout(promise, ms, label) {
+  let timer = null;
+  const wrapped = Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error((label || '解析') + '超时')), ms);
+    }),
+  ]);
+  return wrapped.finally(() => clearTimeout(timer));
 }
 
 async function handleSearchSSE(req, res, params) {
@@ -448,6 +646,17 @@ async function handleSearchSSE(req, res, params) {
     if (group) sources = sources.filter((s) => (s.bookSourceGroup || '') === group);
   }
   if (ids.length) sources = sources.filter((s) => ids.includes(s.bookSourceUrl));
+  // 默认检索只用推荐源，既快又覆盖主流站点；显式指定源/分组/学术模式时不受限制
+  if (!ids.length && !group && !academicInfo && params.get('all') !== '1') {
+    const curated = sources.filter((s) => DEFAULT_SEARCH_SOURCES.includes(s.bookSourceUrl));
+    if (curated.length >= 4) {
+      // 推荐源优先（它们多数响应快、规则稳），其余源排在后面，在硬截止时限内顺带补扫，
+      // 这样既不牺牲首屏延迟，也不会因为推荐源失效而搜不到书
+      const rest = params.get('curated') === '1' ? [] : sources.filter((s) => !DEFAULT_SEARCH_SOURCES.includes(s.bookSourceUrl));
+      sources = curated.concat(rest);
+      send({ type: 'note', message: `默认检索 ${curated.length} 个推荐源优先${rest.length ? `，另 ${rest.length} 个源在时限内补扫` : ''}` });
+    }
+  }
   // 检测可用的源优先，先出结果
   sources = sources.slice().sort((a, b) => Number(b.checkStatus === 'ok') - Number(a.checkStatus === 'ok'));
 
@@ -464,48 +673,47 @@ async function handleSearchSSE(req, res, params) {
   if (academicInfo) send({ type: 'academic', hits: academicInfo.hits, total: academicInfo.total });
 
   send({ type: 'start', total: sources.length });
+  const deadlineMs = Math.max(10000, Math.min(120000, (Number(params.get('deadline')) || 45) * 1000));
+  const deadline = Date.now() + deadlineMs;
+  let timedOut = false;
   let cursor = 0;
   let found = 0;
   let doneCount = 0;
   let cachedSources = 0;
+  let phoneFallbacks = 0;
+  const finish = (extra) => {
+    if (closed) return;
+    closed = true;
+    send({ type: 'done', found, officialSkipped: typeof officialSkipped === 'number' ? officialSkipped : 0, timedOut, deadlineMs, ...(extra || {}) });
+    res.end();
+  };
+  // 硬截止：到点直接收尾，不等在途的慢源（否则 45s 的 deadline 会拖到 90s+）
+  const deadlineTimer = setTimeout(() => {
+    timedOut = true;
+    finish();
+  }, deadlineMs);
+  if (deadlineTimer.unref) deadlineTimer.unref();
   const worker = async () => {
     while (!closed) {
+      if (Date.now() > deadline) {
+        timedOut = true;
+        return;
+      }
       const i = cursor++;
       if (i >= sources.length) return;
       const source = sources[i];
       const startedAt = Date.now();
       send({ type: 'source-start', source: source.bookSourceName, id: source.bookSourceUrl });
 
-      // 优先手机端解析：开了 preferRemote 且总线有在线设备时，先问手机，拿不到再本地跑
-      const preferRemote = store.config.preferRemote === true || params.get('remote') === '1';
-      if (preferRemote && !closed && busAvailable()) {
-        const rr = await phoneSearch(source.bookSourceUrl, key, 20000);
-        if (!closed && rr.ok && rr.data && Array.isArray(rr.data.books) && rr.data.books.length) {
-          bumpUsage('phoneSearch');
-          const books = rr.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
-          found += books.length;
-          send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books, via: 'phone' });
-          doneCount++;
-          send({
-            type: 'source-done',
-            source: source.bookSourceName,
-            count: books.length,
-            ms: Date.now() - startedAt,
-            done: doneCount,
-            total: sources.length,
-            via: 'phone',
-          });
-          continue;
-        }
-        if (closed) return;
-      }
+      // 搜索本地优先（毫秒级），失败/无结果再交给手机；手机优先会让每个源多等 20s
+      if (closed) return;
 
       // Python 引擎其次（本地解析），失败再走内置实现
       if (effectiveEngine() === 'python' && !closed) {
         try {
           const r = await pyengine.call('search', { source, key });
           if (r && Array.isArray(r.books) && r.books.length) {
-            const books = r.books.map((b) => ({ ...b, origin: b.origin || source.bookSourceUrl, originName: b.originName || source.bookSourceName }));
+            const books = rankSearchBooks(r.books.map((b) => ({ ...b, origin: b.origin || source.bookSourceUrl, originName: b.originName || source.bookSourceName })), key);
             found += books.length;
             send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books, via: 'python' });
             doneCount++;
@@ -526,9 +734,10 @@ async function handleSearchSSE(req, res, params) {
       }
 
       try {
-        const books = await searchSource(source, key, 1);
+        const booksRaw = await withTimeout(searchSource(source, key, 1), 15000, '搜索');
+        const fromCache = booksRaw.fromCache === true;
+        const books = rankSearchBooks(booksRaw, key);
         if (closed) return;
-        const fromCache = books.fromCache === true;
         if (fromCache) cachedSources++;
         if (books.length) {
           found += books.length;
@@ -546,11 +755,13 @@ async function handleSearchSSE(req, res, params) {
           cachedTotal: cachedSources,
         });
       } catch (e) {
-        // 本机解析失败：只要软总线有在线设备就交给手机再试一次
-        if (!closed && (params.get('remote') === '1' || busAvailable())) {
-          const r = await phoneSearch(source.bookSourceUrl, key, 20000);
+        // 本机解析失败：还没有结果时才交给手机，且最多 3 个源，避免每个源都等手机 15s
+        if (!closed && found === 0 && (params.get('remote') === '1' || (busAvailable() && phoneFallbacks < 3))) {
+          phoneFallbacks++;
+          const phoneMs = Math.max(5000, Math.min(15000, deadline - Date.now()));
+          const r = await phoneSearch(source.bookSourceUrl, key, phoneMs);
           if (!closed && r.ok && r.data && Array.isArray(r.data.books) && r.data.books.length) {
-            const fromPhone = r.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl }));
+            const fromPhone = rankSearchBooks(r.data.books.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl })), key);
             found += fromPhone.length;
             send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books: fromPhone, via: 'phone' });
             doneCount++;
@@ -582,10 +793,8 @@ async function handleSearchSSE(req, res, params) {
 
   const workers = Array.from({ length: Math.min(concurrency, sources.length) }, worker);
   Promise.all(workers).then(() => {
-    if (!closed) {
-      send({ type: 'done', found, officialSkipped: typeof officialSkipped === 'number' ? officialSkipped : 0 });
-      res.end();
-    }
+    clearTimeout(deadlineTimer);
+    finish();
   });
 }
 
@@ -1071,7 +1280,10 @@ function checkApiToken(req, url) {
 }
 
 /* ---------------- 应用内更新 ---------------- */
-const UPDATE_REPO = 'TZYLXS/FnReader';
+// 只有 debug 包指向测试仓库；正式包继续指向生产仓库。
+const IS_DEBUG_APP = /(?:^|-)debug(?:$|-)/i.test(APPNAME) || /debug/i.test(APP_VERSION);
+const UPDATE_REPO = process.env.TRIM_UPDATE_REPO || (IS_DEBUG_APP ? 'TZYLXS/FnReader-Alpha' : 'TZYLXS/FnReader');
+const UPDATE_ASSET_RE = IS_DEBUG_APP ? /legado-web(?:-debug)?[-.].*\.fpk$/i : /legado-web\.fpk$/i;
 const UPDATE_CACHE_MS = 10 * 60 * 1000;
 let updateCache = { at: 0, data: null };
 
@@ -1091,6 +1303,42 @@ function semverGt(a, b) {
     if (xa !== yb) return xa > yb;
   }
   return false;
+}
+
+/**
+ * 旧版 App 上传缓存/加书时可能不带 origin，服务端以前只补 originName「手机缓存」，
+ * 客户端同步过去就变成打不开的无源书。这里按 bookUrl 主机找回启用书源：
+ * 先精确匹配 host，再按站点主域匹配（3yt.info → 3yt.com / 3yt.la）。
+ */
+function resolveSourceForBookUrl(bookUrl) {
+  let host = '';
+  try {
+    host = new URL(String(bookUrl || '')).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+  if (!host) return null;
+  const sources = (store.sources || []).filter((s) => s && s.bookSourceUrl && s.enabled !== false);
+  const hostOf = (u) => {
+    try {
+      return new URL(String(u || '')).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  };
+  const siteKey = (h) => {
+    const parts = String(h || '').split('.');
+    if (parts.length < 2) return '';
+    const key = parts.length >= 3 ? parts[parts.length - 2] : parts[0];
+    return key.length >= 3 ? key : '';
+  };
+  const exact = sources.find((s) => hostOf(s.bookSourceUrl) === host);
+  if (exact) return exact;
+  const key = siteKey(host);
+  if (!key) return null;
+  return sources
+    .filter((s) => siteKey(hostOf(s.bookSourceUrl)) === key)
+    .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0) || Number(a.customOrder || 0) - Number(b.customOrder || 0))[0] || null;
 }
 
 /** 已缓存书籍清单：书名 + 来源 + 章节数（供 App 同步书架） */
@@ -1156,7 +1404,7 @@ async function fetchLatestRelease(force) {
   const asset = (rel.assets || []).find((a) => /\.fpk$/i.test(a.name)) || null;
   const data = {
     tag: rel.tag_name,
-    version: String(rel.tag_name || '').replace(/^v/i, ''),
+    version: String(rel.tag_name || '').replace(/^v/i, '').replace(/^(?:debug|alpha|beta|test)[-_]/i, ''),
     name: rel.name || rel.tag_name,
     body: rel.body || '',
     publishedAt: rel.published_at,
@@ -1350,11 +1598,13 @@ async function remoteToc(book) {
     20000
   );
   if (!r.ok || !r.data || !Array.isArray(r.data.chapters)) return null;
-  return r.data.chapters.map((c, i) => ({
+  const chapters = r.data.chapters.map((c, i) => ({
     index: i,
     title: String(c.title || `第${i + 1}章`),
     url: String(c.url || ''),
   }));
+  if (r.data.normalized === true) return chapters;
+  return normalizeTocOffload(chapters);
 }
 
 /** 让手机端解析正文（返回段落） */
@@ -1371,9 +1621,37 @@ async function remoteContent(book, chapter) {
   return null;
 }
 
-async function handleRefreshToc(book) {
+/** 目录看起来是不是只抓到了第一页（章数远少于 lastChapter 里的编号） */
+function tocLooksIncomplete(book, list) {
+  const n = Array.isArray(list) ? list.length : 0;
+  if (!n) return true;
+  if (n < 10) return true;
+  const hint = String((book && (book.lastChapter || book.lastChapterTitle)) || '');
+  const m = hint.match(/(\d{2,5})/);
+  if (!m) return false;
+  const expect = Number(m[1]);
+  if (!expect || expect < 20) return false;
+  return n < Math.floor(expect * 0.6);
+}
+
+async function refreshToc(book) {
+  // 客户端可能把 `,{'webView': true}` 这类配置拼进 tocUrl（还可能被 URL 编码），先剥掉再解析
+  const cleanBookUrl = (u) => {
+    let s = String(u || '').trim();
+    if (/^https?%3A/i.test(s) || /%7B/i.test(s)) {
+      try {
+        s = decodeURIComponent(s);
+      } catch {
+        /* 保持原样 */
+      }
+    }
+    return s.replace(/,\s*\{[\s\S]*?\}\s*$/, '').trim();
+  };
+  if (book.tocUrl) book.tocUrl = cleanBookUrl(book.tocUrl);
+  if (book.bookUrl) book.bookUrl = cleanBookUrl(book.bookUrl);
   // 目录优先走软总线：只要有手机在线就先让它解析（手机能过反爬/登录态），
   // 拿不到（无设备、源不在手机上、超时）再回落到本机解析
+  let phoneChapters = null;
   if (book.viaPhone || busAvailable()) {
     const cachedToc = readPhoneCache(book.bookUrl, 0, 'toc');
     if (cachedToc && Array.isArray(cachedToc.chapters) && cachedToc.chapters.length) {
@@ -1381,17 +1659,21 @@ async function handleRefreshToc(book) {
       book.totalChapterNum = cachedToc.chapters.length;
       book.tocVia = 'phone-cache';
       store.upsertBook(book);
-      return book.chapters;
+      if (!tocLooksIncomplete(book, cachedToc.chapters)) return book.chapters;
+      phoneChapters = cachedToc.chapters;
     }
-    const chapters = await remoteToc(book).catch(() => null);
-    if (chapters && chapters.length) {
-      book.chapters = chapters;
-      book.totalChapterNum = chapters.length;
-      book.tocVia = 'phone';
-      bumpUsage('phoneToc');
-      store.upsertBook(book);
-      writePhoneCache(book.bookUrl, 0, 'toc', { chapters, at: Date.now() });
-      return chapters;
+    if (!phoneChapters) {
+      const chapters = await remoteToc(book).catch(() => null);
+      if (chapters && chapters.length) {
+        phoneChapters = chapters;
+        book.chapters = chapters;
+        book.totalChapterNum = chapters.length;
+        book.tocVia = 'phone';
+        bumpUsage('phoneToc');
+        store.upsertBook(book);
+        writePhoneCache(book.bookUrl, 0, 'toc', { chapters, at: Date.now() });
+        if (!tocLooksIncomplete(book, chapters)) return chapters;
+      }
     }
   }
   const source = resolveSource(book);
@@ -1400,6 +1682,12 @@ async function handleRefreshToc(book) {
     throw new Error('未找到书源，可能已被删除');
   }
   book.tocVia = 'local';
+
+  // 同一站点可能挂着多个书源（例如“通用书源”和站点专用源）。
+  // 专用源规则坏了就按候选顺序换下一个，不要一本书失败就整本 502。
+  const candidates = resolveSourceCandidates(book, source);
+  let lastErr = null;
+
   if (effectiveEngine() === 'python') {
     try {
       const r = await pyengine.call('toc', { source, tocUrl: book.tocUrl || book.bookUrl, bookUrl: book.bookUrl });
@@ -1409,8 +1697,9 @@ async function handleRefreshToc(book) {
           title: String(c.title || c.name || `第${i + 1}章`),
           url: String(c.url || c.chapterUrl || ''),
         }));
-        // Python 引擎不做目录去重/排序，这里复用内置规范化
-        const list = normalizeChapterList(raw).map((c, i) => ({ ...c, index: i }));
+        const list = r.normalized === 'python'
+          ? raw.map((c, i) => ({ ...c, index: i }))
+          : await normalizeTocOffload(raw);
         book.chapters = list;
         book.totalChapterNum = list.length;
         store.upsertBook(book);
@@ -1420,15 +1709,56 @@ async function handleRefreshToc(book) {
       /* 回退到内置解析 */
     }
   }
-  if (!book.tocUrl) await getBookInfo(source, book);
-  const chapters = await getToc(source, book);
-  book.chapters = chapters;
-  book.totalChapterNum = chapters.length;
-  store.upsertBook(book);
-  // 拿到目录后先把「当前阅读位置」和第一章缓存起来
-  prefetchChapter(book, book.durChapterIndex || 0);
-  if (!book.durChapterIndex) prefetchChapter(book, 1);
-  return chapters;
+
+  for (const cand of candidates) {
+    try {
+      // tocUrl 与 bookUrl 相同，说明客户端只存了详情页地址；重新跑一次详情规则拿真正的目录页
+      if (!book.tocUrl || book.tocUrl === book.bookUrl) await getBookInfo(cand, book);
+      book.tocUrl = cleanBookUrl(book.tocUrl);
+      let chapters = await getToc(cand, book);
+      if (!chapters || !chapters.length) {
+        lastErr = new Error('目录为空，可能书源规则不匹配或站点改版');
+        continue;
+      }
+      // 本机目录页可能只抓到第一页；手机端目录更全时用手机的
+      if (tocLooksIncomplete(book, chapters) && phoneChapters && phoneChapters.length > chapters.length) {
+        chapters = phoneChapters;
+        book.tocVia = 'phone';
+      } else if (tocLooksIncomplete(book, chapters) && busAvailable()) {
+        const remote = await remoteToc(book).catch(() => null);
+        if (remote && remote.length > chapters.length) {
+          chapters = remote;
+          book.tocVia = 'phone';
+          writePhoneCache(book.bookUrl, 0, 'toc', { chapters, at: Date.now() });
+        }
+      }
+      book.chapters = chapters;
+      book.totalChapterNum = chapters.length;
+      book.origin = cand.bookSourceUrl || book.origin;
+      book.originName = cand.bookSourceName || book.originName;
+      store.upsertBook(book);
+      prefetchChapter(book, book.durChapterIndex || 0);
+      if (!book.durChapterIndex) prefetchChapter(book, 1);
+      return chapters;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('目录为空，可能书源规则不匹配或站点改版');
+}
+
+// 同一本书的并发目录刷新只执行一次，调用方共享结果，避免重复占用软总线 TOC 槽位。
+const tocInflight = new Map();
+async function handleRefreshToc(book) {
+  const key = String((book && book.bookUrl) || '');
+  if (!key) return refreshToc(book);
+  const existing = tocInflight.get(key);
+  if (existing) return existing;
+  const promise = refreshToc(book).finally(() => {
+    if (tocInflight.get(key) === promise) tocInflight.delete(key);
+  });
+  tocInflight.set(key, promise);
+  return promise;
 }
 
 // ---------- 「阅读」APK 接入：把飞牛书库包装成 Legado 书源 ----------
@@ -1516,6 +1846,45 @@ function allLanIps() {
 }
 
 /** 找一本对应的书源：origin → URL 主机 → 源名 */
+/** 同一站点的可用书源候选，供目录解析失败时逐个重试 */
+function resolveSourceCandidates(book, primary) {
+  const out = [];
+  const seen = new Set();
+  const push = (s) => {
+    if (!s || !s.bookSourceUrl || s.enabled === false) return;
+    const key = String(s.bookSourceUrl);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(s);
+  };
+  push(primary);
+  let host = '';
+  try {
+    host = new URL(String(book.bookUrl || '')).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    host = '';
+  }
+  const hostOf = (u) => {
+    try {
+      return new URL(String(u || '')).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  };
+  if (host) {
+    const exact = (store.sources || [])
+      .filter((s) => s && s.enabled !== false && hostOf(s.bookSourceUrl) === host)
+      .sort((a, b) => {
+        const an = String(a.bookSourceName || '') === String(book.originName || '') ? 1 : 0;
+        const bn = String(b.bookSourceName || '') === String(book.originName || '') ? 1 : 0;
+        return bn - an || Number(b.weight || 0) - Number(a.weight || 0) || Number(a.customOrder || 0) - Number(b.customOrder || 0);
+      });
+    exact.forEach(push);
+  }
+  push(resolveSourceForBookUrl(book.bookUrl));
+  return out;
+}
+
 function resolveSource(book) {
   if (!book) return null;
   if (book.origin) {
@@ -1543,6 +1912,15 @@ function resolveSource(book) {
       store.upsertBook(book);
       return pick;
     }
+  }
+  // 精确主机没命中时按主域回退（3yt.info → 3yt.com / 3yt.la），
+  // 兼容旧客户端上传的空 origin 书籍，避免服务端一直报「未找到书源」。
+  const inferred = resolveSourceForBookUrl(book.bookUrl);
+  if (inferred && inferred.bookSourceUrl) {
+    book.origin = inferred.bookSourceUrl;
+    book.originName = inferred.bookSourceName || book.originName || '';
+    store.upsertBook(book);
+    return inferred;
   }
   if (book.originName) {
     const hit = store.sources.find((s) => s.bookSourceName === book.originName);
@@ -1976,7 +2354,7 @@ async function route(req, res, url) {
   }
 
   if (p === '/api/health')
-    return json(res, 200, { ok: true, app: APPNAME, version: APP_VERSION, build: BUILD_ID });
+    return json(res, 200, { ok: true, app: APPNAME, version: APP_VERSION, build: BUILD_ID, runtime: { node: process.version, v8: process.versions.v8, compileCache: require('node:module').getCompileCacheDir?.() || '' }, parse: parsePool.stats(), python: pyengine.poolStats(), java: javaWorker.status() });
 
   if (p === '/api/m/info') {
     if (!checkApiToken(req, url)) return json(res, 401, { error: 'token 无效' });
@@ -2005,7 +2383,9 @@ async function route(req, res, url) {
       return json(res, 200, {
         current: APP_VERSION,
         latest: rel.version,
-        hasUpdate: semverGt(rel.version, APP_VERSION),
+        hasUpdate: IS_DEBUG_APP
+          ? !!(rel.asset && (semverGt(rel.version, APP_VERSION) || rel.version === APP_VERSION))
+          : semverGt(rel.version, APP_VERSION),
         name: rel.name,
         notes: rel.body,
         publishedAt: rel.publishedAt,
@@ -2021,7 +2401,7 @@ async function route(req, res, url) {
     try {
       const rel = await fetchLatestRelease(true);
       if (!rel.asset) return json(res, 404, { error: '最新版本没有附带 fpk 文件' });
-      if (!semverGt(rel.version, APP_VERSION)) {
+      if (!IS_DEBUG_APP && !semverGt(rel.version, APP_VERSION)) {
         return json(res, 200, { ok: true, upToDate: true, current: APP_VERSION, latest: rel.version });
       }
       const dir = path.join(store.dataDir, 'updates');
@@ -2724,6 +3104,8 @@ async function route(req, res, url) {
 
     // 登记到书架：正文已在本地，读章节直接读文件
     const stored = store.findBook(book.bookUrl) || {};
+    const explicitOrigin = String(book.origin || stored.origin || '').trim();
+    const inferredSource = explicitOrigin ? null : resolveSourceForBookUrl(book.bookUrl);
     store.upsertBook({
       ...stored,
       bookUrl: book.bookUrl,
@@ -2731,8 +3113,10 @@ async function route(req, res, url) {
       author: String(book.author || stored.author || ''),
       coverUrl: coverUrl || stored.coverUrl || '',
       intro: String(book.intro || stored.intro || ''),
-      origin: String(book.origin || stored.origin || ''),
-      originName: String(book.originName || stored.originName || '手机缓存'),
+      origin: explicitOrigin || inferredSource?.bookSourceUrl || '',
+      originName: inferredSource
+        ? inferredSource.bookSourceName
+        : String(book.originName || stored.originName || '手机缓存'),
       chapters: saved.map((c) => ({ title: c.title, url: c.url, file: c.file })),
       totalChapterNum: saved.length,
       cachedDir: dir,
@@ -2896,6 +3280,7 @@ function saveCover(target, buf, mime) {
         });
         updated++;
       } else {
+        const inferredSource = String(item.origin || '').trim() ? null : resolveSourceForBookUrl(bookUrl);
         store.upsertBook({
           bookUrl,
           name: String(item.name || '未命名'),
@@ -2903,8 +3288,10 @@ function saveCover(target, buf, mime) {
           coverUrl: inlineCover || String(item.coverUrl || ''),
           intro: String(item.intro || ''),
           kind: String(item.kind || ''),
-          origin: String(item.origin || ''),
-          originName: String(item.originName || item.origin || '手机端'),
+          origin: String(item.origin || inferredSource?.bookSourceUrl || ''),
+          originName: inferredSource
+            ? inferredSource.bookSourceName
+            : String(item.originName || item.origin || '手机端'),
           tocUrl: '',
           chapters: [],
           durChapterIndex: Number(item.index != null ? item.index : item.durChapterIndex) || 0,
@@ -3345,20 +3732,38 @@ function saveCover(target, buf, mime) {
     return json(res, 200, { ok: true, data: result.data });
   }
 
-  // 规则引擎切换：node（内置）/ python（legado_rule）
+  // 规则引擎切换：Node（内置）/ Python（规则解析）/ Java 21（TOC 后处理）
   if (p === '/api/engine' && method === 'GET') {
     const status = await pyengine.probe();
+    const java = await javaWorker.health();
     return json(res, 200, {
       engine: effectiveEngine(),
       engineSwitch: store.config.engine === 'python' ? 'python' : 'node',
       pyMode: String(store.config.pyMode || 'aux'),
       pythonAux: pythonAuxEnabled(),
       python: status,
+      javaEngine: store.config.javaEngine !== false,
+      java,
+      node: { version: process.version, v8: process.versions.v8, compileCache: require('node:module').getCompileCacheDir?.() || '' },
     });
   }
 
   if (p === '/api/engine' && method === 'POST') {
     const body = await readJson(req);
+    if (body && typeof body.javaEngine === 'boolean') {
+      if (body.javaEngine) {
+        javaWorker.setEnabled(true);
+        const java = await javaWorker.health();
+        if (!java.ok) {
+          javaWorker.setEnabled(false);
+          return json(res, 400, { error: 'Java 21 TOC 引擎不可用：' + (java.lastError || '启动失败'), java });
+        }
+      } else {
+        javaWorker.setEnabled(false);
+      }
+      store.saveConfig({ javaEngine: body.javaEngine });
+      return json(res, 200, { ok: true, javaEngine: body.javaEngine, java: await javaWorker.health() });
+    }
     if (body && (body.pyMode === 'aux' || body.pyMode === 'core')) {
       store.saveConfig({ pyMode: body.pyMode });
     }
@@ -3459,12 +3864,22 @@ function saveCover(target, buf, mime) {
 
   // 手机端领任务（长轮询：没有任务就等一会儿再返回）
   if (p === '/api/m/remote/pending' && method === 'GET') {
-    // 设备报到：id/name/model 由 App 带上来
+    // 设备报到：id/name/model 由 App 带上来；2.6.19 起再带能力上报（cores / mem / inflight / supports），
+    // 服务端据此给初值分并切分各类额度，不再让新设备一律从 50 分开始
     remote.hello({
       id: searchParams.get('id') || req.headers['x-device-id'] || '',
       name: searchParams.get('name') || req.headers['x-device-name'] || '',
       model: searchParams.get('model') || req.headers['x-device-model'] || '',
       version: searchParams.get('ver') || '',
+      caps: {
+        cores: Number(searchParams.get('cores') || 0),
+        memMb: Number(searchParams.get('mem') || 0),
+        maxInflight: Number(searchParams.get('inflight') || 0),
+        supports: String(searchParams.get('supports') || '')
+          .split(',')
+          .map((x) => x.trim())
+          .filter(Boolean),
+      },
     });
     const deviceId = searchParams.get('id') || req.headers['x-device-id'] || '';
     const wait = Math.min(30000, Number(searchParams.get('wait') || 10000));
@@ -3474,7 +3889,12 @@ function saveCover(target, buf, mime) {
       await new Promise((r) => setTimeout(r, 800));
       list = remote.pending(5, deviceId);
     }
-    return json(res, 200, { jobs: list, waitMs: wait, debug: remote.isDebugDevice(deviceId, '') });
+    return json(res, 200, {
+      jobs: list,
+      waitMs: wait,
+      serverTime: Date.now(),
+      debug: remote.isDebugDevice(deviceId, ''),
+    });
   }
 
   if (p === '/api/m/remote/result' && method === 'POST') {
@@ -3602,7 +4022,11 @@ function saveCover(target, buf, mime) {
     store.upsertBook(book);
     await dedupeShelf();
     // 手机解析来的书：后台预热目录与前几章，避免手机一离线就没正文
-    const saved = store.findBook(book.bookUrl);
+    // dedupeShelf 可能按书名把新书合并到已有条目（不同源），这里按 URL/书名双查，避免取到 null
+    let saved = store.findBook(book.bookUrl);
+    if (!saved) {
+      saved = store.books.find((b) => b.name === book.name && (b.author || '') === (book.author || '')) || null;
+    }
     if (saved && saved.viaPhone) {
       setTimeout(() => {
         prefetchPhoneBook(saved).catch(() => {});
@@ -3618,7 +4042,13 @@ function saveCover(target, buf, mime) {
           .catch(() => {});
       }, 100);
     }
-    return json(res, 200, { ok: true, book: sanitizeBook(store.findBook(book.bookUrl)) });
+    return json(res, 200, {
+      ok: true,
+      book: sanitizeBook(saved || store.findBook(book.bookUrl)),
+      requestedUrl: book.bookUrl,
+      replaced: saved && saved.bookUrl !== book.bookUrl ? saved.bookUrl : '',
+      merged: !!(saved && saved.bookUrl !== book.bookUrl),
+    });
   }
 
   if (p === '/api/books' && method === 'DELETE') {
@@ -3701,7 +4131,7 @@ function saveCover(target, buf, mime) {
       if (!data) return json(res, 404, { error: '电子书未解析完成' });
       return json(res, 200, data);
     }
-    const book = store.findBook(bookUrl);
+    const book = resolveShelfBook(bookUrl);
     if (!book) return json(res, 404, { error: '书籍不存在' });
     const force = searchParams.get('refresh') === '1';
     if (!force && book.chapters && book.chapters.length) return json(res, 200, { chapters: book.chapters });
@@ -3782,7 +4212,7 @@ function saveCover(target, buf, mime) {
       }
       return json(res, 200, data);
     }
-    const book = store.findBook(bookUrl);
+    const book = resolveShelfBook(bookUrl);
     if (!book) return json(res, 404, { error: '书籍不存在' });
 
     // 订阅书：抓取条目原文并转成段落
@@ -4015,16 +4445,17 @@ function saveCover(target, buf, mime) {
     if (!updateCheckCache.at || now - updateCheckCache.at > 6 * 3600 * 1000) {
       updateCheckCache.at = now;
       try {
-        const resp = await request('https://api.github.com/repos/TZYLXS/FnReader/releases/latest', {
+        const resp = await request(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
           headers: { 'User-Agent': 'FnReader', Accept: 'application/vnd.github+json' },
           timeout: 8000,
         });
         const j = JSON.parse(resp.body || '{}');
-        updateCheckCache.latest = String(j.tag_name || '').replace(/^v/i, '');
+        updateCheckCache.latest = String(j.tag_name || '').replace(/^v/i, '').replace(/^(?:debug|alpha|beta|test)[-_]/i, '');
         updateCheckCache.url = j.html_url || '';
         updateCheckCache.notes = String(j.body || '').slice(0, 2000);
         updateCheckCache.publishedAt = j.published_at || '';
-        updateCheckCache.asset = (j.assets || []).find((a) => /legado-web\.fpk$/i.test(a.name)) ? (j.assets.find((a) => /legado-web\.fpk$/i.test(a.name)).browser_download_url || '') : '';
+        const hit = (j.assets || []).find((a) => UPDATE_ASSET_RE.test(a.name));
+        updateCheckCache.asset = hit ? (hit.browser_download_url || '') : '';
       } catch (e) {
         updateCheckCache.error = String(e.message || e);
       }
