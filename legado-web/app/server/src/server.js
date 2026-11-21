@@ -3189,22 +3189,32 @@ async function route(req, res, url) {
     const existing = new Map(store.sources.map((s) => [s.bookSourceUrl, s]));
     let added = 0;
     let updated = 0;
+    let duplicated = 0;
+    const seen = new Set();
     for (const item of list) {
       if (!item || !item.bookSourceUrl) continue;
-      const hit = existing.get(item.bookSourceUrl);
+      const normalized = normalizeSource(item);       // 补 type / rule* 默认值 / 运行时方法
+      const url = normalized.bookSourceUrl;
+      if (seen.has(url)) { duplicated++; continue; }   // 同一批里重复的只留第一次
+      seen.add(url);
+      const stamp = Number(item.lastUpdateTime) || Date.now();
+      const hit = existing.get(url);
       if (hit) {
-        Object.assign(hit, item, { enabled: item.enabled !== undefined ? item.enabled : hit.enabled });
+        Object.assign(hit, normalized, {
+          enabled: item.enabled !== undefined ? item.enabled : hit.enabled,
+          lastUpdateTime: Math.max(stamp, Number(hit.lastUpdateTime) || 0),
+        });
         updated++;
       } else {
-        const created = { ...item, enabled: item.enabled !== false };
+        const created = { ...normalized, enabled: item.enabled !== false, lastUpdateTime: stamp };
         store.sources.push(created);
-        existing.set(item.bookSourceUrl, created);
+        existing.set(url, created);
         added++;
       }
     }
     store.saveSources(store.sources);
     events.broadcast({ type: 'sources', action: 'import', added, updated, via: 'app' });
-    return json(res, 200, { ok: true, added, updated, total: store.sources.length });
+    return json(res, 200, { ok: true, added, updated, duplicated, total: store.sources.length });
   }
 
 /** Legado 缓存正文 → 我们的段落数组；顺带取出图片地址 */

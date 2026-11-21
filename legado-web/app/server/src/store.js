@@ -56,8 +56,15 @@ function load() {
       return fallback;
     }
   };
+  const normalize = (src) => {
+    try {
+      return require('./books').normalizeSource(src);
+    } catch {
+      return src;
+    }
+  };
   cache = {
-    sources: read(FILES.sources, []),
+    sources: read(FILES.sources, []).map(normalize),
     books: read(FILES.books, []),
     config: { ...DEFAULT_CONFIG, ...read(FILES.config, {}) },
   };

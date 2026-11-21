@@ -1,5 +1,6 @@
 'use strict';
 // 书源双向同步：以 lastUpdateTime（毫秒）大的为准，相等时服务端优先
+const { normalizeSource } = require('./books');
 
 function tsOf(src) {
   const t = Number(src && src.lastUpdateTime);
@@ -34,7 +35,7 @@ function mergeSources(store, body = {}) {
     const cur = map.get(inc.bookSourceUrl);
     const incTs = tsOf(inc) || now; // 客户端没带时间就当作刚改
     if (!cur) {
-      const created = { ...inc, lastUpdateTime: incTs };
+      const created = { ...normalizeSource(inc), lastUpdateTime: incTs };
       store.saveSources([...store.sources, created]);
       map.set(created.bookSourceUrl, created);
       applied++;
@@ -42,7 +43,7 @@ function mergeSources(store, body = {}) {
     }
     const curTs = tsOf(cur);
     if (incTs > curTs) {
-      Object.assign(cur, inc, { lastUpdateTime: incTs });
+      Object.assign(cur, normalizeSource(inc), { lastUpdateTime: incTs });
       applied++;
     } else {
       skipped++;
