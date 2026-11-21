@@ -94,9 +94,13 @@ updates/       下载的更新包
 | `POST /api/m/progress` | 保存进度 |
 | `GET /api/m/cover?url=` | 封面 |
 | `POST /api/m/reset-token` | 重置令牌 |
-| `GET/POST /api/m/sync` | App 一次拉/推书架与进度 |
+| `GET /api/m/sync` | App 一次拉取书架与进度（**仅 GET，没有 POST**）|
 | `GET/POST /api/m/sources/sync` | **书源双向同步**（`lastUpdateTime` 为准，LWW）|
 | `POST /api/m/books` / `/cover` / `/sources` / `/cache` | App 上行：加书、传封面、传书源、传缓存文件 |
+| `POST /api/m/sources/sync` | 书源双向同步（含删除，走 `deleted` 数组）|
+
+注意：`/api/m/sync` 只有 `GET`（拉书架/进度/书源汇总），**没有** `POST`；
+推书源用 `POST /api/m/sources`（全量）或 `POST /api/m/sources/sync`（增量 + 删除）。
 
 书源双向同步的约定：客户端每次改书源写 `lastUpdateTime = now`，推送时带上；
 服务端按「时间戳大的赢、相等服务端赢」合并，`pull` 里回传服务端更进的版本。
