@@ -337,3 +337,20 @@ javac -encoding UTF-8 -d app/server/java app/server/src/java/FnReaderJavaWorker.
 ```
 
 - 自检：`curl -s /api/engine | grep java` 应出现 `"ok":true,"virtualThreads":true`；日志有 `Java 目录引擎已启动，端口 xxxx`
+
+## 全新安装启动失败 / 依赖未更新（3.0.10+ 处理）
+
+fnOS 上「安装完成但启动失败，提示依赖未更新」常见两类原因：
+
+1. `install_dep_apps=nodejs_v22` 声明的 Node.js 应用没装好，或系统里对应的 Node 运行时损坏
+   （例如本机 `nodejs_v26` 缺 `libatomic.so.1`，执行 `/var/apps/nodejs_v26/target/bin/node -v` 直接报共享库错误）
+2. 应用中心里旧记录卡在 `uninstalling`/`starting`，新安装被状态机挡住
+
+处理办法：
+
+- 先在应用中心把「Node.js v22」安装/更新到可用状态，`node -v` 能输出版本号
+- 用 `appcenter-cli list` 看应用状态；卡在 `uninstalling` 时执行
+  `sudo appcenter-cli uninstall legado-web`（提示 not installed 也没关系），再重新安装
+- 3.0.10 起 `cmd/main` 会依次探测 `nodejs_v22 → v24 → v20 → v26 → /usr/bin/node → PATH`，
+  逐个执行 `node -v` 验证，跳过损坏的运行时；日志首行会记录实际使用的 Node 路径与版本
+- 安装日志位置：`/var/apps/legado-web/var/app.log`

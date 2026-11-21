@@ -1942,8 +1942,8 @@ async function runExportAllJob() {
     let ok = false;
     let okChapters = 0;
     const chapterCount = item.chapters ? item.chapters.length : item.files.length;
-    // 超长书不走 Python（payload 太大容易把进程拖垮），直接 JS 拼
-    if (chapterCount <= 4000) {
+    // 只让「小书」走 Python：payload 大时 JSON 序列化会卡事件循环，直接 JS 拼更稳
+    if (chapterCount <= 500) {
       try {
         // 用独立的一次性 Python 进程，避免占用规则解析进程池（曾导致 TXT 分章全部超时）
         const { child, promise } = pyengine.start('export_txt', {
@@ -1959,7 +1959,7 @@ async function runExportAllJob() {
           } catch {
             /* ignore */
           }
-        }, 60000);
+        }, 15000);
         const res = await promise.finally(() => clearTimeout(killer));
         if (res && res.ok && res.data && res.data.ok && fs.existsSync(dest) && fs.statSync(dest).size > 20) {
           ok = true;
@@ -4756,7 +4756,7 @@ function saveCover(target, buf, mime) {
     });
     // 交给独立 Python 进程拼装/清洗（失败回落到 JS；不用进程池，避免拖垮规则解析）
     let pyText = '';
-    if (chaptersForExport.length <= 4000) {
+    if (chaptersForExport.length <= 500) {
       try {
         const { child, promise } = pyengine.start('export_txt', {
           mode: 'single',
@@ -4769,7 +4769,7 @@ function saveCover(target, buf, mime) {
           } catch {
             /* ignore */
           }
-        }, 60000);
+        }, 15000);
         const res = await promise.finally(() => clearTimeout(killer));
         if (res && res.ok && res.data && res.data.ok && typeof res.data.text === 'string') pyText = res.data.text;
       } catch {
