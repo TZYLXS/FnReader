@@ -2308,6 +2308,15 @@ async function renderOffline() {
         })
         .join('') +
       `</div>
+      <div class="row" id="off-export-progress" style="display:none;margin:12px 16px 0;align-items:flex-start">
+        <div class="label" style="flex:1">
+          <div id="off-exp-title">准备导出…</div>
+          <div class="desc" id="off-exp-desc">0 / 0</div>
+          <div style="height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px">
+            <i id="off-exp-bar" style="display:block;height:100%;width:0;background:var(--accent);transition:width .25s"></i>
+          </div>
+        </div>
+      </div>
       <div class="row" style="margin:12px 16px"><div class="label">合计<div class="desc">在线 ${data.books} 本 · 电子书 ${data.ebooks} 本</div></div>
       <button class="btn" id="off-export-all" style="padding:5px 10px;font-size:12px">导出全部 TXT</button></div>`;
     const all = $('#off-export-all');
@@ -2319,27 +2328,54 @@ async function renderOffline() {
 
 
 
-/** 导出全部 TXT：服务端异步任务 + 轮询进度（避免网关超时返回 HTML 错误页） */
+/** 导出全部 TXT：服务端异步任务（Python 导出）+ 进度条轮询，避免网关超时返回 HTML 错误页 */
 async function exportAllTxt(btn) {
   const label = (t) => { if (btn) btn.textContent = t; };
+  const box = $('#off-export-progress');
+  const bar = $('#off-exp-bar');
+  const title = $('#off-exp-title');
+  const desc = $('#off-exp-desc');
+  const show = () => { if (box) box.style.display = 'flex'; };
+  const paint = (st) => {
+    const total = st.total || 0;
+    const done = st.done || 0;
+    const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+    if (bar) bar.style.width = pct + '%';
+    if (title) title.textContent = st.phase === 'scan' || st.phase === 'dedupe'
+      ? (st.phase === 'scan' ? '导出完成，正在扫描电子书…' : '正在去重书架…')
+      : (st.current ? `正在导出：${st.current}` : '准备导出…');
+    if (desc) desc.textContent = `${done} / ${total} · 已导出 ${(st.written || []).length} 本 · 跳过 ${(st.skipped || []).length} 本`;
+  };
   if (btn) btn.disabled = true;
   try {
+    show();
+    if (bar) bar.style.width = '0%';
+    if (title) title.textContent = '准备导出…';
+    if (desc) desc.textContent = '0 / 0';
     const r = await api('/export/books-txt', { method: 'POST' });
     let st = r.job || r;
+    paint(st);
     label(`导出中 ${st.done || 0}/${st.total || 0}`);
     let guard = 0;
     while (st && st.running && guard < 900) {
-      await new Promise((res) => setTimeout(res, 1000));
+      await new Promise((res) => setTimeout(res, 800));
       const s2 = await api('/export/books-txt/status');
       st = s2.job || s2;
+      paint(st);
       label(`导出中 ${st.done || 0}/${st.total || 0}`);
       guard++;
     }
     if (st && st.error) throw new Error(st.error);
+    if (bar) bar.style.width = '100%';
+    if (title) title.textContent = '导出完成';
     const n = (st.written || []).length;
+    if (desc) desc.textContent = `已导出 ${n} 本 · 跳过 ${(st.skipped || []).length} 本（无缓存）`;
     toast(`已导出 ${n} 本到 ebook 目录，已自动扫描并去重`);
+    setTimeout(() => { if (box) box.style.display = 'none'; }, 8000);
     return st;
   } catch (e) {
+    if (title) title.textContent = '导出失败';
+    if (desc) desc.textContent = String(e.message || e);
     toast('导出失败：' + e.message);
     throw e;
   } finally {

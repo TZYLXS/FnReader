@@ -1846,6 +1846,7 @@ const exportAllJob = {
   total: 0,
   written: [],
   skipped: [],
+  current: '',
   phase: 'idle',
   error: '',
 };
@@ -1860,6 +1861,7 @@ function exportAllProgress() {
     total: exportAllJob.total,
     written: exportAllJob.written.slice(),
     skipped: exportAllJob.skipped.slice(),
+    current: exportAllJob.current,
     phase: exportAllJob.phase,
     error: exportAllJob.error,
   };
@@ -1909,6 +1911,7 @@ async function runExportAllJob() {
   };
 
   for (const b of books) {
+    exportAllJob.current = b.name || '';
     let item = null;
     try {
       item = ebookItem(b) || cacheItem(b);
@@ -1978,6 +1981,7 @@ async function runExportAllJob() {
   } catch {
     /* ignore */
   }
+  exportAllJob.current = '';
   exportAllJob.phase = 'done';
   exportAllJob.running = false;
   exportAllJob.finishedAt = Date.now();
