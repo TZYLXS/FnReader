@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.3.3
+version=3.3.4
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps      = nodejs_v26>26.0
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=正文缓存修正：单段且过短视为无效缓存，缓存键加版本号让旧的标题伪正文失效
+changelog=正文兜底再修正：Python 规则只抓到一句/标题时不再直接采用，改走 JS 通用正文抽取；单段过短内容视为无效

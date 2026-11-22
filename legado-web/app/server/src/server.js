@@ -346,9 +346,14 @@ async function loadChapterContent(book, index) {
     try {
       const r = await pyengine.call('content', { source, chapterUrl: chapter.url, bookUrl: book.bookUrl });
       if (r && Array.isArray(r.paragraphs) && r.paragraphs.length) {
-        const paragraphs = cleanParagraphs(r.paragraphs);
-        cacheSet(key, paragraphs);
-        return { paragraphs, cached: false, via: 'python' };
+        const textLen = r.paragraphs.join('').replace(/\s+/g, '').length;
+        // 单段且很短：Python 规则多半只抓到标题/一句，交给下面的 JS 解析（含通用正文抽取兜底）
+        const thin = r.paragraphs.length <= 1 && textLen < 200;
+        if (!thin) {
+          const paragraphs = cleanParagraphs(r.paragraphs);
+          cacheSet(key, paragraphs);
+          return { paragraphs, cached: false, via: 'python' };
+        }
       }
     } catch {
       /* 回退内置 */
