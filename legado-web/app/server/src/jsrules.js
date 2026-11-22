@@ -122,6 +122,11 @@ function runJs(code, ctx = {}) {
     parseInt,
     parseFloat,
     console: { log: (...a) => logs.push(a.join(' ')) },
+    // Rhino 常用内置：很多老源直接 new JavaImporter(...)，没有它会整条规则报错
+    JavaImporter: (...args) => ({ __packages: args }),
+    Packages: {},
+    importClass: () => {},
+    importPackage: () => {},
   };
   sandbox.globalThis = sandbox;
   const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });

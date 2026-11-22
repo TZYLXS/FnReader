@@ -842,7 +842,8 @@ async function renderBus() {
       const r = await api('/bus');
       const devs = r.devices || [];
       const online = devs.filter((d) => d.online).length;
-      hint.textContent = `待命设备 ${online} 台 · 等待中的任务 ${r.pending || 0} 个`;
+      const u = r.usage || {};
+      hint.textContent = `待命设备 ${online} 台 · 等待任务 ${r.pending || 0} 个 · 手机 TOC ${u.phoneToc || 0} / 本机 TOC ${u.localToc || 0}`;
 
       if (!devs.length) {
         box.innerHTML = `<div class="empty"><div class="big">📱</div>还没有手机接入软总线<br />
@@ -861,7 +862,9 @@ async function renderBus() {
             </div>
             <div class="switch ${d.enabled ? 'on' : ''}" data-toggle="${esc(d.id)}"></div>
           </div>
-          <div class="row"><div class="label">已代理解析<div class="desc">${d.handled || 0} 次</div></div></div>
+          <div class="row"><div class="label">已代理解析<div class="desc">${d.handled || 0} 次${
+            d.counts ? `（TOC ${d.counts.toc || 0} · 搜索 ${d.counts.search || 0} · 正文 ${d.counts.content || 0}）` : ''
+          }</div></div></div>
         </div>`
         )
         .join('');
@@ -888,7 +891,7 @@ async function renderBus() {
   state.busTimer = setInterval(() => {
     if (location.hash.startsWith('#/bus')) loadBus();
     else clearInterval(state.busTimer);
-  }, 5000);
+  }, 2000);
 }
 
 async function renderDetail() {
@@ -1116,7 +1119,7 @@ function startSearch(key, opts = {}) {
   if (!key) return toast('请输入关键字');
   if (state.search.running) return toast('正在搜索中…');
   state.search.key = key;
-  state.search.results = [];
+  if (!opts.append) state.search.results = [];
   state.search.cachedTotal = 0;
   state.search.running = true;
   renderSearchResults();
@@ -1128,6 +1131,7 @@ function startSearch(key, opts = {}) {
   else if (state.search.onlyChecked) params.set('only', 'checked');
   else if (state.search.group) params.set('group', state.search.group);
   if (opts.auto === false) params.set('auto', '0');
+  if (opts.offset) params.set('offset', String(opts.offset));
   if (state.search.remote) params.set('remote', '1');
   if (state.search.official) params.set('official', '1');
   const hint = $('#academic-hint');
@@ -1185,9 +1189,14 @@ function startSearch(key, opts = {}) {
       const cacheNote = msg.cachedTotal ? `（其中 ${msg.cachedTotal} 个命中缓存）` : '';
       status.textContent = `已搜索 ${done}/${total || '?'} 个书源${cacheNote}，找到 ${state.search.results.length} 本`;
     } else if (msg.type === 'done') {
-      status.textContent = state.search.results.length
-        ? `搜索完成：${state.search.results.length} 本（${total} 个书源${state.search.cachedTotal ? '，' + state.search.cachedTotal + ' 个命中缓存' : ''}）`
-        : '没有找到结果：可能是书源失效，或该源需要 WebView/加密接口。可在「书源」里只选几个源重试';
+      const scanned = `${done}/${total || '?'} 个源`;
+      const timeoutNote = msg.timedOut ? `，${Math.round((msg.deadlineMs || 0) / 1000)}s 到时` : '';
+      const more = msg.timedOut && msg.nextOffset ? `<button class="btn" id="search-more" style="margin-left:8px;padding:4px 8px;font-size:12px">继续扫描（已扫 ${msg.nextOffset}）</button>` : '';
+      status.innerHTML = (state.search.results.length
+        ? `搜索完成：${state.search.results.length} 本（已扫 ${scanned}${timeoutNote}）`
+        : `没有找到结果：已扫 ${scanned}${timeoutNote}。可能是书源失效或需要 WebView/加密接口；可继续扫描后面的源，或少选几个源`) + more;
+      const moreBtn = $('#search-more');
+      if (moreBtn) moreBtn.onclick = () => startSearch(key, { append: true, offset: msg.nextOffset, auto: false });
       finishSearch();
     } else if (msg.type === 'error') {
       status.textContent = msg.message;
@@ -2806,7 +2815,15 @@ async function renderSettings() {
           await api('/covers/refresh', { method: 'POST' });
           await api('/covers/refetch', { method: 'POST' });
           const poll = async () => {
-            const st = await api('/covers/refetch');
+            let st;
+            try {
+              st = await api('/covers/refetch');
+            } catch (e) {
+              refreshCovers.disabled = false;
+              refreshCovers.textContent = '刷新';
+              toast('查询进度失败：' + e.message);
+              return;
+            }
             if (st.running) {
               refreshCovers.textContent = `获取中 ${st.done}/${st.total}`;
               setTimeout(poll, 1200);

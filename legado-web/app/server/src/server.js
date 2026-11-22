@@ -655,7 +655,7 @@ async function handleSearchSSE(req, res, params) {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  const concurrency = Math.max(1, Math.min(16, Number(params.get('limit') || 12)));
+
   const group = params.get('group');
 
   res.writeHead(200, {
@@ -729,7 +729,12 @@ async function handleSearchSSE(req, res, params) {
 
   if (academicInfo) send({ type: 'academic', hits: academicInfo.hits, total: academicInfo.total });
 
-  send({ type: 'start', total: sources.length });
+  const startOffset = Math.max(0, Number(params.get('offset')) || 0);
+  if (startOffset) sources = sources.slice(startOffset);
+  if (sources.length > 200) {
+    send({ type: 'note', message: `全量 ${sources.length} 个源，多源并发扫描；到时没扫完可点「继续扫描」` });
+  }
+  send({ type: 'start', total: sources.length, offset: startOffset });
   const deadlineMs = Math.max(10000, Math.min(120000, (Number(params.get('deadline')) || 45) * 1000));
   const deadline = Date.now() + deadlineMs;
   let timedOut = false;
@@ -741,7 +746,16 @@ async function handleSearchSSE(req, res, params) {
   const finish = (extra) => {
     if (closed) return;
     closed = true;
-    send({ type: 'done', found, officialSkipped: typeof officialSkipped === 'number' ? officialSkipped : 0, timedOut, deadlineMs, ...(extra || {}) });
+    const picked = Math.min(cursor, sources.length);
+    send({
+      type: 'done',
+      found,
+      officialSkipped: typeof officialSkipped === 'number' ? officialSkipped : 0,
+      timedOut,
+      deadlineMs,
+      nextOffset: startOffset + picked,
+      ...(extra || {}),
+    });
     res.end();
   };
   // 硬截止：到点直接收尾，不等在途的慢源（否则 45s 的 deadline 会拖到 90s+）
@@ -762,8 +776,45 @@ async function handleSearchSSE(req, res, params) {
       const startedAt = Date.now();
       send({ type: 'source-start', source: source.bookSourceName, id: source.bookSourceUrl });
 
-      // 搜索本地优先（毫秒级），失败/无结果再交给手机；手机优先会让每个源多等 20s
       if (closed) return;
+
+      // 加密/JS 书源（parsePool 判定需要离线解析）优先交给手机：手机端能过反爬、带登录态。
+      // 手机无结果或失败再回退本机，并显式记日志，不再静默跳过。
+      const needsPhone = parsePool.shouldOffload(source) || params.get('remote') === '1';
+      if (needsPhone && !busAvailable() && !closed) {
+        send({ type: 'log', message: `无在线设备，本机解析（${source.bookSourceName}）` });
+      }
+      const preferPhone = busAvailable() && needsPhone;
+      if (preferPhone) {
+        const phoneMs = Math.max(5000, Math.min(12000, deadline - Date.now()));
+        try {
+          const r = await phoneSearch(source.bookSourceUrl, key, phoneMs);
+          const list = r.ok && r.data && Array.isArray(r.data.books) ? r.data.books : [];
+          if (!closed && list.length) {
+            const books = rankSearchBooks(
+              list.map((b) => ({ ...b, viaPhone: true, origin: b.origin || source.bookSourceUrl, originName: b.originName || source.bookSourceName })),
+              key
+            );
+            found += books.length;
+            bumpUsage('phoneSearch');
+            send({ type: 'result', source: source.bookSourceName, id: source.bookSourceUrl, books, via: 'phone' });
+            doneCount++;
+            send({
+              type: 'source-done',
+              source: source.bookSourceName,
+              count: books.length,
+              ms: Date.now() - startedAt,
+              done: doneCount,
+              total: sources.length,
+              via: 'phone',
+            });
+            continue;
+          }
+          if (!closed) send({ type: 'log', message: `手机解析无结果（${source.bookSourceName}），回退本机` });
+        } catch (e) {
+          if (!closed) send({ type: 'log', message: `手机解析失败（${source.bookSourceName}）：${e.message}` });
+        }
+      }
 
       // Python 引擎其次（本地解析），失败再走内置实现
       if (effectiveEngine() === 'python' && !closed) {
@@ -812,6 +863,7 @@ async function handleSearchSSE(req, res, params) {
           cachedTotal: cachedSources,
         });
       } catch (e) {
+        if (!closed) send({ type: 'log', message: `本机解析失败（${source.bookSourceName}）：${e.message}` });
         // 本机解析失败：还没有结果时才交给手机，且最多 3 个源，避免每个源都等手机 15s
         if (!closed && found === 0 && (params.get('remote') === '1' || (busAvailable() && phoneFallbacks < 3))) {
           phoneFallbacks++;
@@ -848,6 +900,8 @@ async function handleSearchSSE(req, res, params) {
     }
   };
 
+  // 并发在 sources 确定之后再算：大源池（全量搜索）用 20 路，避免 45s 只扫几十个源
+  const concurrency = Math.max(1, Math.min(24, Number(params.get('limit') || (sources.length > 200 ? 20 : 12))));
   const workers = Array.from({ length: Math.min(concurrency, sources.length) }, worker);
   Promise.all(workers).then(() => {
     clearTimeout(deadlineTimer);
@@ -1081,6 +1135,18 @@ function sniffImageType(buf) {
 /** 封面代理：带 Referer 抓取并落盘，规避站点防盗链 */
 async function serveImage(res, url, referer) {
   const target = String(url || '').trim();
+  // 站内封面（相对路径）直接读 COVER_DIR，不再当外链抓
+  if (target.startsWith('/api/covers/')) {
+    const name = path.basename(target.split('?')[0]);
+    const file = path.join(COVER_DIR, name);
+    try {
+      const buf = fs.readFileSync(file);
+      res.writeHead(200, { 'Content-Type': sniffImageType(buf), 'Cache-Control': 'public, max-age=604800' });
+      return res.end(buf);
+    } catch {
+      return json(res, 404, { error: '封面文件不存在' });
+    }
+  }
   if (!/^https?:\/\//i.test(target)) return json(res, 400, { error: 'bad url' });
   const key = crypto.createHash('sha1').update(target).digest('hex');
   const file = path.join(IMG_DIR, key);
@@ -1909,8 +1975,25 @@ function exportAllProgress() {
   };
 }
 
+/** 历史数据修复：把带错误 host/端口或相对形式的封面统一成站内相对路径 */
+function normalizeStoredCovers() {
+  const books = store.books;
+  let changed = 0;
+  for (const b of books) {
+    const next = normalizeCoverUrl(b.coverUrl);
+    if (next !== String(b.coverUrl || '')) {
+      b.coverUrl = next;
+      changed++;
+    }
+  }
+  if (changed) store.saveBooks(books);
+  return changed;
+}
+
 /** 内置书源：微信读书 / 起点（登录 Cookie 由用户在设置里填） */
 function ensureBuiltinSources() {
+  // 用户执行过「清空全部书源」时，不再自动补内置源
+  if (store.config && store.config.builtinSourcesDisabled) return;
   const list = store.sources;
   let changed = false;
   for (const [url, site] of Object.entries(builtin.SITES)) {
@@ -1936,39 +2019,82 @@ function ensureBuiltinSources() {
   if (changed) store.saveSources(list);
 }
 ensureBuiltinSources();
+try {
+  const fixed = normalizeStoredCovers();
+  if (fixed) console.log('[legado-web] 封面地址归一化：修复 ' + fixed + ' 本');
+} catch (e) {
+  console.log('[legado-web] 封面归一化失败：' + e.message);
+}
 
 /** 全量重新获取封面：后台逐本跑，前端轮询进度 */
-const coverJob = { running: false, done: 0, total: 0, changed: 0, failed: 0, startedAt: 0, finishedAt: 0, current: '' };
+const coverJob = { running: false, done: 0, total: 0, changed: 0, failed: 0, skipped: 0, startedAt: 0, finishedAt: 0, current: '' };
 function coverJobStatus() {
-  const { running, done, total, changed, failed, startedAt, finishedAt, current } = coverJob;
-  return { running, done, total, changed, failed, startedAt, finishedAt, current };
+  const { running, done, total, changed, failed, skipped, startedAt, finishedAt, current } = coverJob;
+  return { running, done, total, changed, failed, skipped, startedAt, finishedAt, current };
 }
-function startCoverRefetch() {
-  const list = store.books.slice();
-  Object.assign(coverJob, { running: true, done: 0, total: list.length, changed: 0, failed: 0, startedAt: Date.now(), finishedAt: 0, current: '' });
-  (async () => {
-    for (const b of list) {
-      if (!coverJob.running) break;
-      coverJob.current = b.name || '';
-      try {
-        const patch = await metaenrich.enrichBook(b, {
-          dataDir: store.dataDir,
-          coversDir: path.join(store.dataDir, 'covers'),
-          force: true,
-        });
-        if (patch && patch.coverUrl) {
-          const cur = store.findBook(b.bookUrl) || b;
-          store.upsertBook({ ...cur, coverUrl: patch.coverUrl, metaSource: patch.metaSource || cur.metaSource || '', metaAt: Date.now() });
-          coverJob.changed++;
-          events.broadcast({ type: 'shelf', action: 'cover', bookUrl: b.bookUrl, via: 'meta' });
-        } else {
-          coverJob.failed++;
+function startCoverRefetch(onlyEmpty = false) {
+  const list = (onlyEmpty ? store.books.filter((b) => !liveCover(b.coverUrl)) : store.books).slice();
+  Object.assign(coverJob, { running: true, done: 0, total: list.length, changed: 0, failed: 0, skipped: 0, startedAt: Date.now(), finishedAt: 0, current: '' });
+  const withTimeout = (p, ms) => Promise.race([
+    p,
+    new Promise((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+  const one = async (b) => {
+    if (!coverJob.running) return;
+    // 客户端自己设置过封面的书，批量刷新不覆盖（单本「换封面」才允许）
+    if (b.coverSource === 'client' && b.coverUrl && coverFileExists(b.coverUrl)) {
+      coverJob.skipped = (coverJob.skipped || 0) + 1;
+      coverJob.done++;
+      return;
+    }
+    coverJob.current = b.name || '';
+    try {
+      // 单本最多等 25s：书城兜底 + 源站详情，慢源不能拖住整批
+      const patch = await withTimeout(metaenrich.enrichBook(b, {
+        dataDir: store.dataDir,
+        coversDir: path.join(store.dataDir, 'covers'),
+        force: true,
+      }), 25000);
+      let nextCover = patch && patch.coverUrl ? patch.coverUrl : '';
+      let sourceName = (patch && patch.metaSource) || 'meta';
+      if (!nextCover) {
+        // 书城/百科都失败：回源站详情页取封面（和单本「换封面」同一套兜底）
+        const source = resolveSource(b);
+        if (source) {
+          try {
+            const tmp = { ...b };
+            await getBookInfo(source, tmp);
+            if (tmp.coverUrl) {
+              nextCover = tmp.coverUrl;
+              sourceName = 'source';
+            }
+          } catch { /* ignore */ }
         }
-      } catch {
+      }
+      if (nextCover) {
+        const cur = store.findBook(b.bookUrl) || b;
+        store.upsertBook({ ...cur, coverUrl: nextCover, coverSource: /baike/i.test(sourceName) ? 'baike' : sourceName === 'source' ? 'source' : 'meta', metaSource: sourceName, metaAt: Date.now() });
+        coverJob.changed++;
+        events.broadcast({ type: 'shelf', action: 'cover', bookUrl: b.bookUrl, via: sourceName });
+      } else {
         coverJob.failed++;
       }
-      coverJob.done++;
+    } catch {
+      coverJob.failed++;
     }
+    coverJob.done++;
+  };
+  (async () => {
+    // 并发 4，避免 45 本书串行跑好几分钟
+    const queue = list.slice();
+    const workers = Array.from({ length: 4 }, async () => {
+      while (coverJob.running) {
+        const b = queue.shift();
+        if (!b) return;
+        await one(b);
+      }
+    });
+    await Promise.all(workers);
     coverJob.running = false;
     coverJob.finishedAt = Date.now();
   })().catch(() => {
@@ -2680,10 +2806,73 @@ function bumpUsage(k) {
 
 /** 是否有在线的解析设备（软总线） */
 function busAvailable() {
-  return remote.listDevices().some((d) => d.online && d.enabled);
+  // 调试设备不参与生产解析：只有在线的真实设备才算「可派发」，
+  // 否则搜索会以为手机可用，每个 JS 源都白等 12s（曾导致全量搜索 45s 只跑几十个源）。
+  return remote.listDevices().some((d) => d.online && d.enabled !== false && !d.debug);
+}
+
+/** 封面地址归一化：任何 host/端口下的 /api/covers/<file> 都收成站内相对路径；外部 URL 原样保留 */
+function normalizeCoverUrl(u) {
+  const raw = String(u || '').trim();
+  if (!raw) return '';
+  const m = raw.match(/\/api\/covers\/([^/?#]+)/);
+  if (m) return '/api/covers/' + m[1];
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return '';
+}
+
+/** 是否是本机/私网地址（客户端回传这种 URL 对别的设备不可达） */
+function isPrivateUrl(u) {
+  try {
+    const host = new URL(String(u)).hostname.toLowerCase();
+    return host === 'localhost' || host === '::1' || /^127\./.test(host)
+      || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)
+      || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  } catch {
+    return true;
+  }
+}
+
+/** 客户端带的 coverUrl 是否可用：站内 covers 文件、或公网 http(s) */
+function usableClientCover(u) {
+  const n = normalizeCoverUrl(u);
+  if (!n) return '';
+  if (n.startsWith('/api/covers/')) {
+    const file = path.join(COVER_DIR, path.basename(n));
+    return fs.existsSync(file) ? n : '';
+  }
+  return isPrivateUrl(n) ? '' : n;
+}
+
+/** 站内封面文件是否真的存在（历史数据有 DB 有记录但文件已丢的死链） */
+function coverFileExists(u) {
+  const n = normalizeCoverUrl(u);
+  if (!n) return false;
+  if (!n.startsWith('/api/covers/')) return true; // 外部 URL 交给客户端判断
+  try {
+    return fs.existsSync(path.join(COVER_DIR, path.basename(n)));
+  } catch {
+    return false;
+  }
+}
+
+/** 只把「文件确实存在」的站内封面返回出去，死链一律视为空，避免客户端白板 */
+function liveCover(u) {
+  const n = normalizeCoverUrl(u);
+  if (!n) return '';
+  return coverFileExists(n) ? n : '';
+}
+
+/** 响应给客户端时把站内相对封面拼成可访问绝对地址 */
+function coverAbs(u, base) {
+  const n = normalizeCoverUrl(u);
+  if (!n) return '';
+  return n.startsWith('/api/covers/') ? String(base || '').replace(/\/+$/, '') + n : n;
 }
 
 function directBase(req) {
+  const env = String(process.env.PUBLIC_BASE || '').trim().replace(/\/+$/, '');
+  if (env) return env;
   const port = process.env.TRIM_SERVICE_PORT || process.env.PORT || 1122;
   // 双网卡 NAS（如 192.168.5.114 + 10.5.4.70）：按客户端实际访问的 Host 回写地址，
   // 否则手机用 192.168.5.x 导入、书源规则却指向 10.5.4.70 就连不上（反之亦然）。
@@ -2951,7 +3140,8 @@ async function route(req, res, url) {
 
   if (p === '/api/m/shelf' && method === 'GET') {
     const books = [...store.books].sort((a, b) => (b.durChapterTime || 0) - (a.durChapterTime || 0));
-    return json(res, 200, { books: books.map(mobileBook) });
+    const base = directBase(req);
+    return json(res, 200, { books: books.map((b) => ({ ...mobileBook(b), coverUrl: coverAbs(liveCover(b.coverUrl), base) })) });
   }
 
   if (p === '/api/m/search' && method === 'GET') {
@@ -3499,6 +3689,7 @@ async function route(req, res, url) {
       name: String(book.name || stored.name || '未命名'),
       author: String(book.author || stored.author || ''),
       coverUrl: coverUrl || stored.coverUrl || '',
+      coverSource: coverUrl ? 'client' : (stored.coverSource || ''),
       intro: String(book.intro || stored.intro || ''),
       origin: explicitOrigin || inferredSource?.bookSourceUrl || '',
       originName: inferredSource
@@ -3591,7 +3782,8 @@ function saveCover(target, buf, mime) {
   const name = crypto.createHash('sha1').update(String(target) || buf).digest('hex').slice(0, 16) + '.' + ext;
   fs.mkdirSync(COVER_DIR, { recursive: true });
   fs.writeFileSync(path.join(COVER_DIR, name), buf);
-  return `${directBase()}/api/covers/${name}`;
+  // 只存站内相对路径：绝对地址会随网卡/端口变化失效（历史 bug 的来源）
+  return `/api/covers/${name}`;
 }
 
   // App 上传封面：JSON {bookUrl, data(base64)} 或 raw image + ?bookUrl=
@@ -3633,10 +3825,12 @@ function saveCover(target, buf, mime) {
     fs.mkdirSync(COVER_DIR, { recursive: true });
     fs.writeFileSync(path.join(COVER_DIR, name), buf);
 
-    const coverUrl = `${directBase()}/api/covers/${name}`;
+    const coverUrl = `/api/covers/${name}`;
     const book = target ? store.findBook(target) : null;
     if (book) {
       book.coverUrl = coverUrl;
+      book.coverSource = 'client';
+      book.coverAt = Date.now();
       store.upsertBook(book);
       events.broadcast({ type: 'cover', bookUrl: book.bookUrl, via: 'app' });
     }
@@ -3673,9 +3867,13 @@ function saveCover(target, buf, mime) {
       }
       const existing = store.findBook(bookUrl);
       if (existing) {
+        // 客户端封面优先：inlineCover（base64）> 可用 coverUrl > 已有封面
+        const clientCover = inlineCover || usableClientCover(item.coverUrl);
+        const nextCover = clientCover || existing.coverUrl || '';
         store.upsertBook({
           ...existing,
-          coverUrl: inlineCover || item.coverUrl || existing.coverUrl,
+          coverUrl: nextCover,
+          coverSource: clientCover ? 'client' : existing.coverSource || '',
           name: item.name || existing.name,
           author: item.author || existing.author,
           intro: item.intro || existing.intro,
@@ -3690,7 +3888,8 @@ function saveCover(target, buf, mime) {
           bookUrl,
           name: String(item.name || '未命名'),
           author: String(item.author || ''),
-          coverUrl: inlineCover || String(item.coverUrl || ''),
+          coverUrl: inlineCover || usableClientCover(item.coverUrl),
+          coverSource: (inlineCover || usableClientCover(item.coverUrl)) ? 'client' : '',
           intro: String(item.intro || ''),
           kind: String(item.kind || ''),
           origin: String(item.origin || inferredSource?.bookSourceUrl || ''),
@@ -4043,6 +4242,7 @@ function saveCover(target, buf, mime) {
         fmtMap = new Map();
       }
     }
+    const coverBase = directBase(req);
     const enriched = books.map((b) => {
       let out = b;
       if (fmtMap) {
@@ -4050,7 +4250,9 @@ function saveCover(target, buf, mime) {
         if (sha && !b.ebookFormat && fmtMap.get(sha)) out = { ...b, ebookFormat: fmtMap.get(sha) };
       }
       if (!out.ebookFormat && out.localEbook && out.localEbook.format) out = { ...out, ebookFormat: out.localEbook.format };
-      return sanitizeBook(out);
+      const clean = sanitizeBook(out);
+      // 网页端也统一成绝对地址（按当前请求 Host），避免相对路径/旧 host 混在数据里
+      return { ...clean, coverUrl: coverAbs(liveCover(clean.coverUrl), coverBase) };
     });
     return json(res, 200, { books: enriched });
   }
@@ -4220,6 +4422,17 @@ function saveCover(target, buf, mime) {
     return json(res, 200, { devices: remote.listDevices(), ...remote.stats(), usage: busUsage });
   }
 
+  // 调试快照：含 score / caps / classes / inflight，需要令牌，供联调排查负载均衡
+  if (p === '/api/bus/debug' && method === 'GET') {
+    if (!checkApiToken(req, url)) return json(res, 401, { error: '需要访问令牌' });
+    return json(res, 200, {
+      devices: remote.debugSnapshot(),
+      stats: remote.stats(),
+      usage: busUsage,
+      high: require('./busweights').HIGH_SCORE,
+    });
+  }
+
   if (p === '/api/bus/toggle' && method === 'POST') {
     const body = await readJson(req);
     const ok = remote.setEnabled(String(body.id || ''), body.enabled !== false);
@@ -4234,6 +4447,16 @@ function saveCover(target, buf, mime) {
   }
 
   // 书源双向同步（LWW：lastUpdateTime 大的赢）
+  // 清空全部书源（服务端 + 下发删除给客户端），需要令牌
+  if (p === '/api/sources/wipe' && method === 'POST') {
+    const urls = store.sources.map((s) => s.bookSourceUrl).filter(Boolean);
+    const at = Date.now();
+    store.saveConfig({ sourcesWipe: { at, urls, count: urls.length, all: true }, builtinSourcesDisabled: true });
+    store.saveSources([]);
+    events.broadcast({ type: 'sources', action: 'wipe', count: urls.length });
+    return json(res, 200, { ok: true, wiped: urls.length, at });
+  }
+
   if (p === '/api/m/sources/sync' && method === 'GET') {
     const data = pullSince(store, searchParams.get('since') || 0);
     return json(res, 200, { ok: true, ...data, total: store.sources.length });
@@ -4251,7 +4474,7 @@ function saveCover(target, buf, mime) {
   }
 
   // 封面文件
-  if (p.startsWith('/api/covers/') && method === 'GET') {
+  if (p.startsWith('/api/covers/') && p !== '/api/covers/refetch' && method === 'GET') {
     const name = path.basename(p.replace('/api/covers/', ''));
     const file = path.join(COVER_DIR, name);
     if (!fs.existsSync(file)) return json(res, 404, { error: '封面不存在' });
@@ -4317,14 +4540,6 @@ function saveCover(target, buf, mime) {
     const ok = remote.complete(body.id, body.ok !== false, body.data, body.error, devId);
     if (ok === 'ignored') {
       return json(res, 200, { ok: true, accepted: false, ignored: true, reason: '调试设备结果已忽略' });
-    }
-    if (ok) {
-      if (devId) remote.bumpHandled(devId);
-      else {
-        // 没带设备 id 时记到最近活跃的设备上
-        const d = remote.listDevices()[0];
-        if (d) remote.bumpHandled(d.id);
-      }
     }
     return json(res, 200, { ok, accepted: ok });
   }
@@ -5493,39 +5708,53 @@ function mergeFeedIntoBook(feed) {
     if (!book) return json(res, 404, { error: '书籍不在书架' });
     let coverUrl = '';
     let via = '';
-    try {
-      const patch = await metaenrich.enrichBook(book, {
-        dataDir: store.dataDir,
-        coversDir: path.join(store.dataDir, 'covers'),
-        force: true,
-      });
-      if (patch && patch.coverUrl) {
-        coverUrl = patch.coverUrl;
-        via = patch.metaSource || 'meta';
+    const overall = (promise, ms) => Promise.race([
+      promise,
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), ms)),
+    ]);
+    const job = (async () => {
+      let localCover = '';
+      let localVia = '';
+      try {
+        const patch = await metaenrich.enrichBook(book, {
+          dataDir: store.dataDir,
+          coversDir: path.join(store.dataDir, 'covers'),
+          force: true,
+        });
+        if (patch && patch.coverUrl) {
+          localCover = patch.coverUrl;
+          localVia = patch.metaSource || 'meta';
+        }
+      } catch { /* 继续回源站 */ }
+      if (!localCover) {
+        const source = resolveSource(book);
+        if (source) {
+          try {
+            const tmp = { ...book };
+            await getBookInfo(source, tmp);
+            if (tmp.coverUrl) {
+              localCover = tmp.coverUrl;
+              localVia = 'source';
+            }
+          } catch { /* ignore */ }
+        }
       }
-    } catch { /* 继续回源站 */ }
-    if (!coverUrl) {
-      const source = resolveSource(book);
-      if (source) {
-        try {
-          const tmp = { ...book };
-          await getBookInfo(source, tmp);
-          if (tmp.coverUrl) {
-            coverUrl = tmp.coverUrl;
-            via = 'source';
-          }
-        } catch { /* ignore */ }
-      }
-    }
+      return { coverUrl: localCover, via: localVia };
+    })();
+    const out = await Promise.race([job, new Promise((resolve) => setTimeout(() => resolve('timeout'), 35000))]);
+    if (out === 'timeout') return json(res, 504, { error: '取封面超时（35s），书城/百科/源站都没有拿到封面' });
+    coverUrl = out.coverUrl;
+    via = out.via;
     if (!coverUrl) return json(res, 502, { error: '没有取到新封面' });
     const current = store.findBook(book.bookUrl) || book;
-    store.upsertBook({ ...current, coverUrl, metaSource: via, metaAt: Date.now() });
+    const coverSource = /baike/i.test(via) ? 'baike' : via === 'source' ? 'source' : 'meta';
+    store.upsertBook({ ...current, coverUrl, coverSource, metaSource: via, metaAt: Date.now() });
     events.broadcast({ type: 'shelf', action: 'cover', bookUrl: book.bookUrl, via });
     return json(res, 200, { ok: true, coverUrl, via, v: Date.now() });
   }
 
   if (p === '/api/covers/refetch' && method === 'POST') {
-    if (!coverJob.running) startCoverRefetch();
+    if (!coverJob.running) startCoverRefetch(searchParams.get('only') === 'empty');
     return json(res, 200, { ok: true, ...coverJobStatus() });
   }
   if (p === '/api/covers/refetch' && method === 'GET') {
@@ -5680,6 +5909,16 @@ tcp.listen(PORT, '::', () => {
   }
 });
   tcp.on('error', (e) => console.error('[legado-web] tcp listen error:', e.message));
+
+  // fnOS 停应用时如果还有搜索 SSE / 长连接，优雅关闭会卡住，让安装/更新一直等 stop。
+  // 收到 TERM/INT 直接退出进程（数据都已落盘，无写入窗口：写入均为同步或原子替换）。
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.on(signal, () => {
+      console.log(`[legado-web] 收到 ${signal}，立即停止`);
+      try { tcp.close(); } catch { /* ignore */ }
+      process.exit(0);
+    });
+  }
 
   // 本地电子书：定时扫描 + 长任务看门狗
   try {

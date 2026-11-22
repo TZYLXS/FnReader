@@ -222,6 +222,36 @@ apksigner sign --ks bus-debug.jks --ks-key-alias busdebug \
 
 完整规则（含调参入口、观测字段）见 [`软总线路由与权重.md`](./软总线路由与权重.md)。
 
+## 6.3 在线设备清单（/api/bus 字段与实测快照）
+
+`GET /api/bus` 返回 `devices` 数组，每个设备的字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `id` | 设备 ID（真机为安装时生成的随机串，调试机为自定义 ID） |
+| `name` | 设备名 |
+| `model` | 机型（调试机自 0.1.34 起用 `busmonitor@` 前缀，如 `busmonitor@23117RK66C`） |
+| `version` | 客户端版本号 |
+| `lastSeen` | 最近心跳时间（毫秒时间戳） |
+| `handled` | 累计处理任务数 |
+| `enabled` | 是否启用（`POST /api/bus/toggle` 可暂停） |
+| `debug` | 是否调试设备（见 6.1，调试设备回传会被丢弃且不计入计数） |
+| `online` | 是否在线 |
+| `idle` | 空闲秒数（距上次活动） |
+| `counts` | 各类型领取计数 `{toc, search, content, other}`（0.1.34+） |
+
+顶层还有 `pending`（待领取任务数）、`recent`（最近任务流水）、`usage`（各任务类型计数，含 `phoneSearch/phoneToc/phoneContent/localToc/localContent`）、`highScore` / `lowScore`（路由分数快照）。
+
+### 实测快照（2026-11-23，debug 0.1.35）
+
+| 设备 ID | 名称 | 机型 | 版本 | 在线 | 调试 | 已处理 | 计数 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `bus-debug-01` | 调试机 | `busmonitor@23117RK66C` | 1.0 | 是 | 是 | 0 | 不计数（调试设备回传被丢弃） |
+| `0fcfc643e09e99ec` | 23117RK66C | Redmi 23117RK66C | 3.1.4.1 | 是 | 否 | 263 | — |
+| `leadtest23824`（模拟） | LeadTest2 | PC-Sim2 | sim | 是 | 否 | 51 | toc 1 · search 50 |
+
+说明：调试设备在线只用于观察路由与任务模板，**不会增加 counts**；真实设备（含用真实身份注册的模拟设备）完成后 counts 与 `usage.phoneToc/phoneSearch` 同步累加。模拟设备停止轮询后服务端会因连续超时暂停代理解析 2 分钟，属预期保护。
+
 ## 7. 常见问题
 
 | 现象 | 原因 | 解决 |

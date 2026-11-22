@@ -251,8 +251,9 @@ function slotsByClass(dev, classes) {
       const high = isHigh(dev);
       const softCap = (cls) => {
         if (cls === 'media') return high ? PER_CLASS_CAP.media : MEDIA_INFLIGHT_SOFT;
-        if (cls === 'book') return PER_CLASS_CAP.book;
-        return PER_CLASS_CAP.content;
+        // book 类：高分设备 2 路并行，低分设备 1 路——参与但让高分设备优先多一点
+        if (cls === 'book') return high ? PER_CLASS_CAP.book : 1;
+        return high ? PER_CLASS_CAP.content : 1;
       };
       const alloc = { book: 0, content: 0, media: 0, total };
       for (const cls of ALL_CLASSES) {
@@ -276,9 +277,9 @@ function eligibleClasses(dev, anyHighOnline) {
   return safe(
     () => {
       if (!dev) return [];
-      if (dev.debug) return ALL_CLASSES.slice();
-      if (!anyHighOnline) return ALL_CLASSES.slice();
-      return isHigh(dev) ? ALL_CLASSES.slice() : ['media'];
+      // 不再让低分设备在高分设备在线时只能领 media：那会导致「所有 search/toc 都堆到一台机器」，
+      // 而且低分设备永远拿不到 book 任务、分数永远涨不上来。改为都参与，只限制额度。
+      return ALL_CLASSES.slice();
     },
     () => ALL_CLASSES.slice()
   );

@@ -969,6 +969,14 @@ POST /api/m/cache { layout:'legado', book, coverData, chapters, images }
 }
 ```
 
+### 17.2.1 同步细节（0.1.50+）
+
+- 时间戳相等视为同一版本：服务端**不回传**该源，避免客户端整行 REPLACE 覆盖本地字段
+- `pull` / `GET /sync` 只返回 `lastUpdateTime > since` 的源，按时间升序，一次最多 500 条
+- 响应新增 `nextSince` 与 `truncated`：客户端应循环调用直到 `truncated=false`（`since=nextSince`）
+- 出口字段规范化：`bookSourceType` 统一 0/1/2/3（文本/音频/图片/漫画），`enabledCookieJar`、`enabledExplore`、`enabled` 统一布尔
+- 过滤坏源：无任何规则且 `lastUpdateTime<=0` 的源不下发
+
 ### 17.3 判定规则
 
 | 情况 | 结果 |

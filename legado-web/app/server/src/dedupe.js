@@ -58,6 +58,7 @@ function mergeTwo(winner, loser) {
     ...loser,
     ...winner,
     // 缺失字段用 loser 补
+    coverUrl: winner.coverUrl || loser.coverUrl || '',
     intro: winner.intro || loser.intro || '',
     coverUrl: winner.coverUrl || loser.coverUrl || '',
     author: winner.author || loser.author || '',

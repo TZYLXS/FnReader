@@ -48,6 +48,7 @@ function hello(info = {}) {
     version: String(info.version || prev.version || ''),
     lastSeen: Date.now(),
     handled: prev.handled || 0,
+    counts: prev.counts || { toc: 0, search: 0, content: 0, other: 0 },
     enabled: prev.enabled !== false,
     debug: isDebugDevice(id, info.name || prev.name),
     ...stat,
@@ -281,6 +282,16 @@ function complete(id, ok, data, error, deviceId = '') {
     weights.updateClassStat(dev, job.taskClass, !!ok, ms);
   }
   releaseJob(job);
+  if (ok && dev) {
+    dev.handled = (dev.handled || 0) + 1;
+    const bucket = /toc/i.test(job.type) ? 'toc'
+      : /search/i.test(job.type) ? 'search'
+        : /content|chapter/i.test(job.type) ? 'content'
+          : 'other';
+    dev.counts = dev.counts || { toc: 0, search: 0, content: 0, other: 0 };
+    dev.counts[bucket] = (dev.counts[bucket] || 0) + 1;
+    dev.lastResultAt = Date.now();
+  }
 
   try {
     recent.push({
@@ -305,6 +316,29 @@ function complete(id, ok, data, error, deviceId = '') {
   return true;
 }
 
+/** 调试快照：保留 score / caps / classes / inflight，仅供 /api/bus/debug 使用（带令牌） */
+function debugSnapshot() {
+  purge();
+  const now = Date.now();
+  return [...devices.values()].map((d) => ({
+    id: d.id,
+    name: d.name,
+    model: d.model,
+    version: d.version,
+    online: now - d.lastSeen < ONLINE_MS,
+    idle: Math.round((now - d.lastSeen) / 1000),
+    enabled: d.enabled !== false,
+    debug: !!d.debug,
+    score: Number(d.score) || 0,
+    caps: d.caps || {},
+    classes: d.classes || {},
+    inflight: Number(d.inflight) || 0,
+    handled: Number(d.handled) || 0,
+    counts: d.counts || { toc: 0, search: 0, content: 0, other: 0 },
+    lastSeen: d.lastSeen,
+  }));
+}
+
 function stats() {
   purge();
   // 按类的积压与在途（观测用，不影响派发）
@@ -325,6 +359,6 @@ function stats() {
 }
 
 module.exports = {
-  request, create, abandon, pending, complete, stats, hello, touch, bumpHandled,
+  request, create, abandon, pending, complete, stats, hello, touch, bumpHandled, debugSnapshot,
   listDevices, setEnabled, isDebugDevice, classOf,
 };

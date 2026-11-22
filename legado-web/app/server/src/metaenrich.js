@@ -183,6 +183,29 @@ async function fromAmazon(book) {
   };
 }
 
+/** 百度百科封面兜底：用百科开放接口取词条首图（HTML 页有 JS 挑战，走 API 稳定） */
+async function fromBaiduBaike(book) {
+  const raw = String(book.name || '').replace(/[（(][^)）]*[)）]\s*$/, '').trim();
+  if (!raw) return null;
+  const url = 'https://baike.baidu.com/api/openapi/BaikeLemmaCardApi?scope=103&format=json&appid=379020&bk_key=' + encodeURIComponent(raw);
+  const body = await httpGet(url, UA, 15000);
+  if (!body || body[0] !== '{') return null;
+  let data = null;
+  try { data = JSON.parse(body); } catch { return null; }
+  if (!data || !data.image) return null;
+  // 词条名对不上就丢弃（避免「三体」抓到「三体运动」之类）
+  const want = String(raw).replace(/[《》\s]/g, '');
+  const got = String(data.key || data.title || '').replace(/[《》\s]/g, '');
+  if (want && got && !got.includes(want) && !want.includes(got)) return null;
+  return {
+    cover: String(data.image),
+    intro: String(data.abstract || data.desc || '').slice(0, 800),
+    rating: null,
+    ratingCount: null,
+    source: 'baidu-baike',
+  };
+}
+
 // ---------------- 封面落盘 ----------------
 async function downloadCover(url, coversDir) {
   if (!url) return '';
@@ -247,18 +270,42 @@ async function enrichBook(book, opts = {}) {
   if (!result && fresh && hit && hit.failed) return null;
   if (!result) {
     const kind = bookKind(book.bookUrl);
+    // 每个来源单独限时，避免一本书卡住整批/整次请求
+    const quick = (promise, ms) => Promise.race([
+      promise.catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), ms)),
+    ]);
     let provider = null;
     if (kind === 'web') {
-      provider = (await fromQidian(book)) || (await fromJinjiang(book));
+      provider = (await quick(fromQidian(book), 12000)) || (await quick(fromJinjiang(book), 12000));
     } else {
-      provider = await fromAmazon(book);
+      provider = await quick(fromAmazon(book), 25000);
+    }
+    // 先按书城/晋江/起点取封面；没有来源或下载失败时，再抓百度百科词条图兜底
+    let cover = provider && provider.cover ? await downloadCover(provider.cover, coversDir) : '';
+    if (!cover) {
+      const baike = await Promise.race([
+        fromBaiduBaike(book).catch(() => null),
+        new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]);
+      if (baike && baike.cover) {
+        const baikeCover = await downloadCover(baike.cover, coversDir);
+        if (baikeCover) {
+          cover = baikeCover;
+          provider = {
+            ...(provider || {}),
+            cover: baike.cover,
+            intro: (provider && provider.intro) || baike.intro || '',
+            source: 'baidu-baike',
+          };
+        }
+      }
     }
     if (!provider) {
       cache[key] = { at: Date.now(), result: null, failed: true };
       saveCache(dataDir, cache);
       return null;
     }
-    const cover = provider.cover ? await downloadCover(provider.cover, coversDir) : '';
     result = {
       coverUrl: cover || '',
       intro: provider.intro || '',
@@ -289,4 +336,4 @@ function shouldEnrich(book) {
   return !book.coverUrl || !book.intro || !book.rating;
 }
 
-module.exports = { enrichBook, shouldEnrich, bookKind, cacheKey, CACHE_TTL, _providers: { fromAmazon, fromQidian, fromJinjiang } };
+module.exports = { enrichBook, shouldEnrich, bookKind, cacheKey, CACHE_TTL, _providers: { fromAmazon, fromQidian, fromJinjiang, fromBaiduBaike } };
