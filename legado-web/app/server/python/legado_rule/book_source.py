@@ -31,8 +31,8 @@ from .analyze_rule import AnalyzeRule, java_replacement
 from .models import BaseSource, Book, BookChapter
 
 DEFAULT_UA = (
-    "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/110.0 Mobile Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0"
 )
 
 # 分组名 → 扁平字段前缀
