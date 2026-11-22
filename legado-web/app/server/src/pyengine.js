@@ -13,6 +13,7 @@ const PY_DIR = [
 ].find((d) => fs.existsSync(path.join(d, 'legado_bridge.py'))) || path.join(__dirname, 'python');
 const BRIDGE = path.join(PY_DIR, 'legado_bridge.py');
 const CANDIDATES = [
+  'python3.9',
   process.env.LEGADO_PYTHON,
   path.join(__dirname, 'runtime', 'python', 'bin', 'python3'),
   '/usr/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3.11', '/opt/python/bin/python3',

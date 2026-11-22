@@ -153,7 +153,8 @@ function scheduleMetaEnrich(url, delay = 1200) {
 async function normalizeTocOffload(chapters) {
   // 目录规范化交给 Python 引擎（去重 / 剔杂项 / 按章节号稳定排序），最多等 3 秒，失败回落 JS
   let list = null;
-  if (Array.isArray(chapters) && chapters.length > 1) {
+  // 超大目录（>1500 章）直接走 JS：跨进程 JSON 序列化反而更慢
+  if (Array.isArray(chapters) && chapters.length > 1 && chapters.length <= 1500) {
     const fromPy = await Promise.race([
       pyengine
         .call('normalize_toc', { chapters }, 3000)
@@ -1685,18 +1686,42 @@ async function prefetchPhoneBook(book, chapterCount = 3) {
 }
 
 /** 让手机端解析目录（返回 chapters） */
+/** 软总线回传目录解析：兼容数组/字符串化 JSON、多种字段名，单遍扫描并去重（大目录更快） */
+function normalizeBusChapters(raw, limit = 20000) {
+  let list = raw;
+  if (typeof list === 'string') {
+    try {
+      list = JSON.parse(list);
+    } catch {
+      return null;
+    }
+  }
+  if (list && !Array.isArray(list) && Array.isArray(list.chapters)) list = list.chapters;
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  const seen = new Set();
+  const n = Math.min(list.length, limit);
+  for (let i = 0; i < n; i++) {
+    const c = list[i];
+    if (!c) continue;
+    const url = String(c.url || c.chapterUrl || c.fileUrl || '').trim();
+    const title = String(c.title || c.name || '').trim() || `第${i + 1}章`;
+    if (url && seen.has(url)) continue;
+    if (url) seen.add(url);
+    out.push({ index: out.length, title, url });
+  }
+  return out;
+}
+
 async function remoteToc(book) {
   const r = await remote.request(
     'toc',
     { source: book.origin || '', bookUrl: book.bookUrl, name: book.name },
     20000
   );
-  if (!r.ok || !r.data || !Array.isArray(r.data.chapters)) return null;
-  const chapters = r.data.chapters.map((c, i) => ({
-    index: i,
-    title: String(c.title || `第${i + 1}章`),
-    url: String(c.url || ''),
-  }));
+  if (!r.ok || !r.data) return null;
+  const chapters = normalizeBusChapters(r.data.chapters);
+  if (!chapters || !chapters.length) return null;
   if (r.data.normalized === true) return chapters;
   return normalizeTocOffload(chapters);
 }
