@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.3.0
+version=3.3.1
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps      = nodejs_v26>26.0
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=封面链路重构：客户端封面优先、只存相对路径、按请求 Host 返回绝对地址、死链过滤、百度百科兜底、批量刷新跳过客户端封面；书源同步加固：时间戳相同不回传、分页 nextSince、类型与布尔规范化、坏源过滤、整体擦除纪元防回填；软总线可观测与均衡：每设备 TOC/搜索/正文计数、手机搜索统计、低分设备参与分担、调试设备不占额度；搜索与解析：加密/JS 源优先手机、分批继续扫描、JS 沙箱补 JavaImporter、无设备显式日志；设置与页面：账号接入（微信读书/起点 Cookie）、替换规则折叠、书籍页与 .nb 清单、使用帮助独立并修复随包文档、停应用秒退
+changelog=修复部分书源正文只显示标题：规则只匹配到标题时过滤伪段落，并回退通用正文抽取，仍失败则明确报错提示换源/手机解析；顺带清理 dedupe 重复封面字段的构建告警

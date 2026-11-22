@@ -529,6 +529,7 @@ async function getContent(source, book, chapter) {
   if (builtin.isBuiltin(source)) return builtin.content(source, book, chapter);
   const rule = source.ruleContent || {};
   let url = chapter.url;
+  let lastUrl = '';
   let paragraphs = [];
   let guard = 0;
 
@@ -536,6 +537,7 @@ async function getContent(source, book, chapter) {
     guard++;
     const resp = await fetchPage(url, source, { referer: book.bookUrl });
     const doc = makeDoc(resp.body);
+    lastUrl = resp.url;
     const ctx = { doc, json: tryJson(resp.body), baseUrl: resp.url, source, book };
 
     // 说明：webJs 需要执行页面脚本，部分源会在其中调用阻塞式 java.ajax，
@@ -605,7 +607,30 @@ async function getContent(source, book, chapter) {
   }
 
   if (rule.replaceRegex) paragraphs = paragraphs.map((p) => applyReplaceRules(p, rule.replaceRegex));
-  return paragraphs.filter((p) => p && p.trim().length > 0);
+  let out = paragraphs.filter((p) => p && p.trim().length > 0);
+
+  // 站点正文在脚本/加密层时，规则往往只匹配到标题：过滤「只有标题」的伪正文
+  const chapterTitle = String(chapter.title || '').trim();
+  const titleLike = (t) => {
+    const v = String(t || '').trim();
+    if (!v) return true;
+    if (chapterTitle && v === chapterTitle) return true;
+    if (/^={2,}.*={2,}$/.test(v)) return true;
+    if (chapterTitle && v.replace(/^=+|=+$/g, '').trim() === chapterTitle) return true;
+    return false;
+  };
+  out = out.filter((p) => !titleLike(p));
+
+  // 仍然太短（<40 字）：再走一次通用正文抽取
+  if (out.join('').replace(/\s+/g, '').length < 40 && lastUrl) {
+    try {
+      const { getArticle } = require('./article');
+      const art = await getArticle(lastUrl);
+      if (Array.isArray(art) && art.join('').length > out.join('').length) out = art;
+    } catch { /* 保持原样 */ }
+  }
+  if (!out.length) throw new Error('正文解析为空：站点可能需要登录/JS，可尝试手机解析待命或换源');
+  return out;
 }
 
 module.exports = {
