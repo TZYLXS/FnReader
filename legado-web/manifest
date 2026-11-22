@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.1.1
+version=3.1.2
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -13,4 +13,4 @@ install_dep_apps      = nodejs_v26>26.0
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=Python 引擎兼容 3.9：桥接层按解释器版本自动选 vendor39/vendor，语法已通过 3.9 校验；软总线回传目录改用单遍解析（兼容双编码 JSON、字段容错、去重、2 万章上限）；超过 1500 章的大目录直接 JS 规范化，提升目录回传性能
+changelog=修复 3.1.1 发布包未包含 Python vendor39 与 libatomic：仓库同步补上 server/python（vendor/vendor39）与 server/lib，CI 产物与本地一致；后续发版自动同步 Python 运行时
