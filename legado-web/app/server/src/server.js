@@ -382,6 +382,17 @@ async function loadChapterContent(book, index) {
       }
       throw localErr;
     }
+    // 本地结果过短/占位：在主进程再走一次通用正文抽取（worker 内失败也能兜底）
+    if (contentLooksJunk(paragraphs)) {
+      try {
+        const { getArticle } = require('./article');
+        const link = chapter.url || book.bookUrl;
+        const art = await getArticle(link);
+        if (Array.isArray(art) && art.join('').length > paragraphs.join('').length && !contentLooksJunk(art)) {
+          paragraphs = art;
+        }
+      } catch { /* 保持原结果 */ }
+    }
     // 反爬占位页（“退出阅读模式 / 章节缺失”等）不能当正文缓存，优先交给手机重解析。
     if (contentLooksJunk(paragraphs) && busAvailable()) {
       const remote = await remoteContent(book, chapter).catch(() => null);
@@ -401,6 +412,7 @@ async function loadChapterContent(book, index) {
       diskCache.set(key, { paragraphs, title: chapter.title });
     } else {
       diskCache.del(key); // 反爬占位不落盘，交给下次手机重解析
+      throw new Error('正文解析为空：站点可能需要登录/JS，可开启手机解析待命或换源');
     }
     return { paragraphs, cached: false };
   } finally {
