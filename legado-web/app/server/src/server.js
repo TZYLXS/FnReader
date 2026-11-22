@@ -2358,8 +2358,20 @@ function linkLocalEbooksToShelf() {
   const usable = entries.filter((e) => e.status === 'complete' || e.status === 'partial' || e.status === 'toc-only');
   if (!usable.length) return 0;
 
-  const books = store.books;
+  let books = store.books;
   let changed = 0;
+  // 索引里已经不存在（或已被清理）的 ebook 条目，从书架上移除，避免出现大量假书
+  const aliveShas = new Set(usable.map((e) => e.sha1));
+  const kept = books.filter((b) => {
+    if (!String(b.bookUrl).startsWith('ebook://')) return true;
+    return aliveShas.has(String(b.bookUrl).slice('ebook://'.length));
+  });
+  if (kept.length !== books.length) {
+    console.log(`[legado-web] 清理失效电子书条目：${books.length - kept.length} 个`);
+    books = kept;
+    store.saveBooks(books);
+    changed++;
+  }
   for (const e of usable) {
     const key = normBookName(e.name);
     if (!key) continue;

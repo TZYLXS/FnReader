@@ -8,7 +8,11 @@ const store = require('./store');
 const bus = require('./bus');
 
 const EXTS = ['.epub', '.mobi', '.azw', '.azw3', '.prc', '.pdf', '.txt'];
-const SKIP_DIRS = new Set(['@eaDir', '#recycle', '.@#', '.git', 'node_modules']);
+const SKIP_DIRS = new Set([
+  '@eaDir', '#recycle', '.@#', '.git', 'node_modules',
+  // 下载缓存/封面/临时目录：里面的分章 txt 不能当电子书收录（曾一次扫出 1300+ 假书）
+  'cache', 'covers', 'downloads', 'tmp', 'temp', 'update', 'trash', 'recycle',
+]);
 
 function ebookDir(ctx) {
   const cfg = ctx.config();
@@ -78,7 +82,7 @@ async function scanOnce(ctx) {
   scanning = true;
   const cfg = ctx.config();
   const root = ebookDir(ctx);
-  const result = { root, found: 0, added: 0, skipped: 0, errors: 0 };
+  const result = { root, found: 0, added: 0, skipped: 0, errors: 0, purged: 0 };
   try {
     await fsp.mkdir(root, { recursive: true }).catch(() => {});
     // ebookDir 可能被指到应用数据目录；跳过自建的 files/ 与 books/，避免把解析产物当新书
@@ -88,7 +92,16 @@ async function scanOnce(ctx) {
       path.join(dataRoot, 'books'),
     ]);
     result.found = files.length;
-    const index = store.loadIndex(ctx.dataDir);
+    // 清理历史误收录：sourcePath 落在 cache/covers/tmp 等目录里的条目直接删掉
+    let index = store.loadIndex(ctx.dataDir);
+    const badSeg = /(?:^|[\\/])(cache|covers|downloads|tmp|temp|update|trash|recycle|node_modules)(?:[\\/]|$)/i;
+    const keptIndex = index.filter((e) => !badSeg.test(String(e.sourcePath || '')));
+    if (keptIndex.length !== index.length) {
+      result.purged = index.length - keptIndex.length;
+      store.saveIndex(ctx.dataDir, keptIndex);
+      index = keptIndex;
+      console.log(`[ebook] 清理误收录条目 ${result.purged} 个`);
+    }
     const known = new Map(index.map((e) => [e.sourcePath, e]));
     const maxBytes = (Number(cfg.ebookMaxMB) || 512) * 1024 * 1024;
 
