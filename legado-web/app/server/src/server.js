@@ -52,6 +52,7 @@ const { buildSyncPayload } = require('./sync');
 const { getDaily } = require('./daily');
 const { dedupeBooks } = require('./dedupe');
 const { dedupeCache, findExistingDir } = require('./cacheclean');
+const { mergeCache, writeAtomic } = require('./cachemerge');
 const tombstone = require('./tombstone');
 const { normalizeChapterList } = require('./chapter-order');
 const pyengine = require('./pyengine');
@@ -2003,30 +2004,46 @@ async function runExportAllJob() {
       }
     }
     if (!ok) {
-      // 回落 JS 拼装
+      // 回落 JS 流式拼装：逐章写盘，峰值内存只有一章
       try {
-        const parts = [];
+        const stream = fs.createWriteStream(dest, { encoding: 'utf8' });
+        const write = (chunk) => new Promise((resolve, reject) => {
+          if (stream.write(chunk)) resolve();
+          else stream.once('drain', resolve);
+          stream.once('error', reject);
+        });
+        let wrote = 0;
+        const emit = async (text) => {
+          const clean = String(text || '').replace(/\n{3,}/g, '\n\n');
+          if (!clean) return;
+          await write(clean.endsWith('\n') ? clean : clean + '\n\n');
+          wrote += clean.length;
+        };
         if (item.chapters) {
-          item.chapters.forEach((ch) => {
-            parts.push(String(ch.title || '').trim(), ...ch.paragraphs.map((x) => String(x).trim()).filter(Boolean), '');
-          });
+          for (const ch of item.chapters) {
+            await emit(String(ch.title || '').trim());
+            for (const para of ch.paragraphs) await emit(String(para || '').trim());
+          }
         } else {
           for (const f of item.files) {
             try {
-              parts.push(path.basename(f).replace(/^\d+[ ._-]*/, '').replace(/\.txt$/, ''), fs.readFileSync(f, 'utf8').trim(), '');
+              await emit(path.basename(f).replace(/^\d+[ ._-]*/, '').replace(/\.txt$/, ''));
+              await emit(fs.readFileSync(f, 'utf8').trim());
             } catch {
-              /* ignore */
+              /* 单章失败跳过 */
             }
           }
         }
-        const text = parts.join('\n').replace(/\n{3,}/g, '\n\n');
-        if (text.trim().length >= 20) {
-          fs.writeFileSync(dest, text, 'utf8');
+        await new Promise((resolve) => stream.end(resolve));
+        if (wrote >= 20) {
           ok = true;
           okChapters = item.chapters ? item.chapters.length : item.files.length;
+        } else {
+          try { fs.unlinkSync(dest); } catch { /* ignore */ }
         }
       } catch {
         ok = false;
+        try { fs.unlinkSync(dest); } catch { /* ignore */ }
       }
     }
     if (ok) {
@@ -2594,8 +2611,21 @@ function busAvailable() {
   return remote.listDevices().some((d) => d.online && d.enabled);
 }
 
-function directBase() {
+function directBase(req) {
   const port = process.env.TRIM_SERVICE_PORT || process.env.PORT || 1122;
+  // 双网卡 NAS（如 192.168.5.114 + 10.5.4.70）：按客户端实际访问的 Host 回写地址，
+  // 否则手机用 192.168.5.x 导入、书源规则却指向 10.5.4.70 就连不上（反之亦然）。
+  const raw = req && (req.headers['x-forwarded-host'] || req.headers.host);
+  if (raw) {
+    const host = String(raw).trim();
+    const m = /^(\[[0-9a-f:.]+\]|[A-Za-z0-9._-]+)(?::(\d+))?$/i.exec(host);
+    if (m) {
+      const hostPort = m[2] || '';
+      // :5666 是 fnOS 网关端口，手机/阅读连不了，回落到网卡 IP
+      if (hostPort && hostPort !== '5666') return `http://${host}`;
+      if (!hostPort) return `http://${m[1]}:${port}`;
+    }
+  }
   return `http://${lanIp()}:${port}`;
 }
 
@@ -3277,21 +3307,6 @@ async function route(req, res, url) {
     }
 
     const root = path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache');
-    const safe =
-      String(book.name || '未命名')
-        .replace(/[\\/:*?"<>|\r\n\t]/g, '_')
-        .replace(/^\.+/, '')
-        .slice(0, 80)
-        .trim() || '未命名';
-
-    // 同一本书重复同步时复用原目录，避免出现「书名 (2)(3)…」一堆同名目录
-    let dir = findExistingDir(root, book.bookUrl, safe) || '';
-    if (!dir) {
-      dir = path.join(root, safe);
-      for (let i = 2; fs.existsSync(dir); i++) dir = path.join(root, `${safe} (${i})`);
-    }
-    fs.mkdirSync(path.join(dir, 'raw'), { recursive: true });
-    fs.mkdirSync(path.join(dir, 'images'), { recursive: true });
 
     let chapters = Array.isArray(body.chapters) ? body.chapters : [];
     let viaTxt = false;
@@ -3329,20 +3344,12 @@ async function route(req, res, url) {
       }
     }
 
-    const saved = [];
-    let bytes = 0;
-    let imageCount = 0;
-
-    chapters.forEach((ch, i) => {
-      const idx = String(i + 1).padStart(4, '0');
-      const title = String(ch.title || `第${i + 1}章`).replace(/[\\/:*?"<>|\r\n\t]/g, '_').slice(0, 60);
-
-      // 原始内容：Legado 传 raw / content / paragraphs
+    // 组装本次上传的章节（正文统一成段落数组）
+    const incoming = chapters.map((ch, i) => {
       let rawText = '';
       if (typeof ch.raw === 'string') rawText = ch.raw;
       else if (Array.isArray(ch.paragraphs)) rawText = ch.paragraphs.join('\n');
       else if (typeof ch.content === 'string') rawText = ch.content;
-
       let paragraphs = [];
       let imgs = [];
       if (layout === 'legado') {
@@ -3352,35 +3359,27 @@ async function route(req, res, url) {
       } else {
         paragraphs = rawText.split(/\n+/).map((x) => x.trim()).filter(Boolean);
       }
-
-      // 原始文件（有文件名就按 App 的命名存）
-      let rawName = '';
-      if (rawText) {
-        rawName = String(ch.file || `${idx}-${title}.nb`).replace(/[\\/:*?"<>|]/g, '_');
-        fs.writeFileSync(path.join(dir, 'raw', rawName), rawText, 'utf8');
-        bytes += Buffer.byteLength(rawText, 'utf8');
-      }
-
-      const text = paragraphs.join('\n\n');
-      const file = `${idx} ${title}.txt`;
-      if (text) {
-        fs.writeFileSync(path.join(dir, file), text, 'utf8');
-        bytes += Buffer.byteLength(text, 'utf8');
-      }
-
-      saved.push({
-        index: i,
-        title: String(ch.title || ''),
-        url: String(ch.url || ''),
-        file: text ? file : '',
-        raw: rawName,
+      return {
+        title: String(ch.title || `第${i + 1}章`),
+        rawText,
+        paragraphs,
         images: imgs,
-        imageFile: '',
-      });
+        file: String(ch.file || '').replace(/[\\/:*?"<>|]/g, '_'),
+        url: String(ch.url || ''),
+      };
     });
+
+    // 同一作品（书名+作者）串行合并；不同作品并行。
+    // 章节按「章号 / 正文 sha1」取并集，正文多版本保留更长的一份，原始 .nb 按来源分目录保存。
+    const merged = await mergeCache({ root, book, incoming, layout });
+    const dir = merged.dir;
+    const saved = merged.chapters;
+    let bytes = merged.stats.bytes;
+    let imageCount = 0;
 
     // 章节图片：{name, data(base64)} 或 {src, data}
     if (Array.isArray(body.images)) {
+      fs.mkdirSync(path.join(dir, 'images'), { recursive: true });
       for (const img of body.images) {
         try {
           const buf = Buffer.from(String(img.data || '').replace(/^data:[^;]+;base64,/, ''), 'base64');
@@ -3411,21 +3410,12 @@ async function route(req, res, url) {
       }
     }
 
-    const meta = {
-      layout,
-      name: String(book.name || ''),
-      author: String(book.author || ''),
-      bookUrl: book.bookUrl,
-      origin: String(book.origin || ''),
-      originName: String(book.originName || ''),
-      intro: String(book.intro || '').slice(0, 1000),
-      totalChapterNum: saved.length || Number(book.totalChapterNum) || 0,
-      durChapterIndex: Number(book.durChapterIndex || 0),
-      savedAt: Date.now(),
-      cover: coverUrl,
-      chapters: saved,
-    };
-    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
+    const meta = merged.meta;
+    if (coverUrl) meta.cover = coverUrl;
+    if (imageCount) meta.images = imageCount;
+    meta.totalChapterNum = saved.length;
+    meta.savedAt = Date.now();
+    writeAtomic(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
 
     // 登记到书架：正文已在本地，读章节直接读文件
     const stored = store.findBook(book.bookUrl) || {};
@@ -3449,6 +3439,8 @@ async function route(req, res, url) {
       durChapterTime: Date.now(),
     });
     events.broadcast({ type: 'shelf', action: 'cache', bookUrl: book.bookUrl, via: 'app' });
+    // 多来源同名书在书架里合并成一条（不阻塞本次响应）
+    setTimeout(() => { dedupeShelf().catch(() => {}); }, 20);
 
     return json(res, 200, {
       ok: true,
@@ -3460,6 +3452,11 @@ async function route(req, res, url) {
       images: imageCount,
       bytes,
       cover: coverUrl,
+      sources: merged.stats.sources,
+      added: merged.stats.added,
+      merged: merged.stats.merged,
+      duplicates: merged.stats.duplicates,
+      splitMismatch: merged.stats.splitMismatch,
     });
   }
 
@@ -3715,7 +3712,7 @@ function saveCover(target, buf, mime) {
 
   // 书源 JSON：GET /api/m/booksource?token=xxx
   if (p === '/api/m/booksource' && method === 'GET') {
-    const base = directBase();
+    const base = directBase(req);
     return json(res, 200, buildLegadoBookSource(base, apiToken()));
   }
 
@@ -3723,7 +3720,7 @@ function saveCover(target, buf, mime) {
   if (p === '/api/m/legado/search' && method === 'GET') {
     const key = String(searchParams.get('key') || '').trim();
     if (!key) return json(res, 400, { error: '缺少 key' });
-    const base = directBase();
+    const base = directBase(req);
     const token = apiToken();
     try {
       const books = await mobileSearch(key, searchParams.get('group') || '', searchParams.get('limit') || 8);
@@ -3751,20 +3748,21 @@ function saveCover(target, buf, mime) {
 
   // 书籍详情：首次打开时自动加入书架，修掉「搜到书却打不开」的断链
   if (p === '/api/m/legado/book' && method === 'GET') {
-    const base = directBase();
+    const base = directBase(req);
     const token = apiToken();
     const bookUrl = unb64u(searchParams.get('u'));
     const srcUrl = unb64u(searchParams.get('s'));
     if (!bookUrl) return json(res, 400, { error: '缺少 u 参数' });
     let book = store.findBook(bookUrl);
     if (!book) {
-      const source = store.findSource(srcUrl);
+      // 搜索结果里的 s 可能缺失（手机源 URL 与本地不一致），按 URL 域名再兜底找源
+      const source = store.findSource(srcUrl) || resolveSourceForBookUrl(bookUrl);
       if (!source) return json(res, 404, { error: '书源不存在，请回到阅读重新搜索' });
       book = {
         name: String(searchParams.get('n') || ''),
         author: '',
         bookUrl,
-        origin: sourceId(source),
+        origin: source.bookSourceUrl,
         originName: source.bookSourceName,
         coverUrl: '',
         intro: '',
@@ -3805,7 +3803,7 @@ function saveCover(target, buf, mime) {
 
   // 目录：章节地址直接指向 /api/m/content，正文返回 {"paragraphs":[...]}
   if (p === '/api/m/legado/toc' && method === 'GET') {
-    const base = directBase();
+    const base = directBase(req);
     const token = apiToken();
     const book = store.findBook(unb64u(searchParams.get('u')));
     if (!book) return json(res, 404, { error: '书籍不在书架中，请从阅读里重新搜索打开' });
@@ -4169,7 +4167,11 @@ function saveCover(target, buf, mime) {
   }
 
   if (p === '/api/m/sources/sync' && method === 'POST') {
-    const body = await readJson(req);
+    const raw = await readJson(req);
+    // 兼容三种客户端写法：{updated:[…]}、裸数组、{sources:[…]}
+    let body = raw;
+    if (Array.isArray(raw)) body = { updated: raw };
+    else if (raw && !Array.isArray(raw.updated) && Array.isArray(raw.sources)) body = { ...raw, updated: raw.sources };
     const r = mergeSources(store, body || {});
     events.broadcast({ type: 'sources', action: 'sync', applied: r.applied, via: 'app' });
     return json(res, 200, { ok: true, ...r, total: store.sources.length });
@@ -4692,6 +4694,97 @@ function saveCover(target, buf, mime) {
     return json(res, 200, { ok: true, source, localEbook: book.localEbook });
   }
 
+  // ---- 书籍缓存清单：每本书的已缓存章节数 / 客户端 .nb 同步数 ----
+  if (p === '/api/books/cache' && method === 'GET') {
+    const cacheRoot = path.join(store.config.downloadDir || path.join(store.dataDir, 'downloads'), 'cache');
+    const resolveDir = (dir) => {
+      if (!dir) return '';
+      return path.isAbsolute(dir) ? dir : path.join(cacheRoot, dir);
+    };
+    const countTxt = (dir) => {
+      try {
+        return fs.readdirSync(dir).filter((f) => f.endsWith('.txt')).length;
+      } catch {
+        return 0;
+      }
+    };
+    const walkNb = (root) => {
+      const out = { count: 0, bytes: 0, newest: 0 };
+      if (!root || !fs.existsSync(root)) return out;
+      const stack = [root];
+      while (stack.length) {
+        const dir = stack.pop();
+        let entries;
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const entry of entries) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            stack.push(full);
+          } else if (entry.name.endsWith('.nb')) {
+            out.count++;
+            try {
+              const st = fs.statSync(full);
+              out.bytes += st.size;
+              out.newest = Math.max(out.newest, st.mtimeMs);
+            } catch { /* 单个文件坏了不影响统计 */ }
+          }
+        }
+      }
+      return out;
+    };
+    const items = [];
+    for (const b of store.books) {
+      const dir = resolveDir(b.cachedDir);
+      const cached = dir ? countTxt(dir) : 0;
+      let sources = 0;
+      let splitMismatch = 0;
+      let variants = 0;
+      let metaCounts = null;
+      let savedAt = 0;
+      if (dir) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
+          sources = Object.keys(meta.sources || {}).length;
+          splitMismatch = Number(meta.stats && meta.stats.splitMismatch) || 0;
+          variants = (meta.chapters || []).reduce((n, c) => n + (Array.isArray(c.variants) ? c.variants.length : 0), 0);
+          metaCounts = meta.counts || null;
+          savedAt = Number(meta.savedAt) || 0;
+        } catch { /* 没有 meta 就按 0 */ }
+      }
+      // meta v2 自带 nbFiles 统计，直接读；老目录才回落递归扫描
+      const nb = dir && !metaCounts
+        ? walkNb(path.join(dir, 'raw'))
+        : { count: metaCounts ? Number(metaCounts.nbFiles) || 0 : 0, bytes: 0, newest: savedAt * 1000 };
+      items.push({
+        bookUrl: b.bookUrl,
+        name: b.name,
+        author: b.author || '',
+        coverUrl: b.coverUrl || '',
+        cachedDir: b.cachedDir || '',
+        totalChapters: (b.chapters && b.chapters.length) || 0,
+        cached,
+        synced: nb.count,
+        bytes: nb.bytes,
+        updated: nb.newest,
+        sources,
+        splitMismatch,
+        variants,
+      });
+    }
+    items.sort((a, b) => (b.synced - a.synced) || (b.cached - a.cached) || String(a.name).localeCompare(String(b.name), 'zh'));
+    return json(res, 200, {
+      ok: true,
+      total: items.length,
+      withCached: items.filter((x) => x.cached > 0).length,
+      withNb: items.filter((x) => x.synced > 0).length,
+      items,
+    });
+  }
+
   // ---- 离线缓存：书架缓存章节 + 整本 TXT + 本地电子书 合并列表 ----
   if (p === '/api/offline' && method === 'GET') {
     const items = [];
@@ -5054,7 +5147,10 @@ function saveCover(target, buf, mime) {
   if (p === '/api/setup/confirm' && method === 'POST') {
     const body = await readJson(req);
     const wanted = String((body && body.cacheDir) || '').trim();
-    if (!wanted.startsWith('/')) return json(res, 400, { error: '请填写绝对路径' });
+    // Linux 用 / 开头；Windows 本地模拟环境允许 C:\ 或 C:/
+    if (!wanted.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(wanted)) {
+      return json(res, 400, { error: '请填写绝对路径' });
+    }
     try {
       fs.mkdirSync(path.join(wanted, 'cache'), { recursive: true });
     } catch {

@@ -108,10 +108,10 @@ function poolSize() {
   const raw = process.env.LEGADO_PYTHON_WORKERS;
   if (raw === '0') return 0;
   const explicit = Number(raw);
-  if (explicit > 0) return Math.max(1, Math.min(16, explicit));
+  if (explicit > 0) return Math.max(1, Math.min(32, explicit));
   // 多核优化：默认按 CPU 核数开池（留 1 核给 Node），2~16 之间
   const cores = (os.cpus && os.cpus().length) || 2;
-  return Math.max(2, Math.min(16, cores - 1));
+  return Math.max(2, Math.min(32, cores - 1));
 }
 
 function failWorker(worker, error, kill) {

@@ -173,6 +173,7 @@ async function router() {
   else if (path === '/detail') rendered = renderDetail();
   else if (path === '/feeds') rendered = renderFeeds();
   else if (path === '/downloads' || path === '/offline') rendered = renderOffline();
+  else if (path === '/books') rendered = renderBooks();
   else if (path === '/setup') rendered = renderSetup();
   else if (path.startsWith('/read')) rendered = openReader(params.get('url'), params.get('title'));
   else rendered = renderShelf();
@@ -2331,6 +2332,51 @@ async function renderOffline() {
 
 
 
+async function renderBooks() {
+  const params = parseHash().params;
+  const onlyNb = params.get('nb') === '1';
+  view.innerHTML = `
+    <header class="topbar"><h1>${onlyNb ? '本地 .nb 缓存' : '书籍'}</h1><span class="desc" style="color:var(--text-2);font-size:12px">${onlyNb ? '客户端同步' : '全部'}</span></header>
+    <div id="books-body"><div class="empty">加载中…</div></div>`;
+  const body = $('#books-body');
+  try {
+    const data = await api('/books/cache');
+    let items = data.items || [];
+    if (onlyNb) items = items.filter((it) => it.synced > 0);
+    if (!items.length) {
+      body.innerHTML = onlyNb
+        ? `<div class="empty"><div class="big">🗂</div>还没有客户端同步的 .nb 缓存<br />在手机「阅读」里缓存章节并同步到飞牛后，这里会按书列出</div>`
+        : `<div class="empty"><div class="big">📚</div>书架还是空的</div>`;
+      return;
+    }
+    const rows = items.map((it) => {
+      const pct = it.totalChapters ? Math.min(100, Math.round((Math.max(it.cached, it.synced) / it.totalChapters) * 100)) : 0;
+      const meta = [
+        it.author || '未知作者',
+        it.sources ? `来源 ${it.sources}` : '',
+        `缓存 ${it.cached} 章`,
+        `同步 ${it.synced} 章`,
+        it.variants ? `变体 ${it.variants}` : '',
+        it.splitMismatch ? `切分冲突 ${it.splitMismatch}` : '',
+        it.totalChapters ? `共 ${it.totalChapters} 章` : '目录待解析',
+        it.bytes ? formatSize(it.bytes) : '',
+      ].filter(Boolean).join(' · ');
+      return `<a class="source-item" href="#/detail?url=${encodeURIComponent(it.bookUrl)}" style="text-decoration:none;color:inherit">
+        <div class="name">
+          <b>${esc(it.name)}</b>
+          <span>${esc(meta)}</span>
+          <span style="color:var(--text-2);font-size:11px">${pct}% · ${it.synced ? '含客户端 .nb' : '仅网页缓存'}</span>
+        </div>
+        <span style="color:var(--text-2)">›</span>
+      </a>`;
+    }).join('');
+    body.innerHTML = `<div class="section" style="margin-top:12px">${rows}</div>
+      <div class="row" style="margin:12px 16px"><div class="label">合计<div class="desc">${onlyNb ? `有 .nb 的 ${items.length} 本` : `书架 ${data.total} 本`} · 已缓存 ${data.withCached} 本 · 有 .nb ${data.withNb} 本</div></div></div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
 /** 导出全部 TXT：服务端异步任务（Python 导出）+ 进度条轮询，避免网关超时返回 HTML 错误页 */
 async function exportAllTxt(btn) {
   const label = (t) => { if (btn) btn.textContent = t; };
@@ -2520,9 +2566,23 @@ async function renderSettings() {
           <div class="switch ${cfg.metaFallback !== false ? 'on' : ''}" id="sw-meta"></div></div>
         <div class="row"><div class="label">液态玻璃底栏<div class="desc">底栏改为半透明玻璃质感，随主题自动适配</div></div>
           <div class="switch ${cfg.liquidGlass ? 'on' : ''}" id="sw-glass"></div></div>
+      
       </div>
       <div class="section">
-        <h3>TRE 引擎</h3>
+        <h3>书源与规则</h3>
+        <a class="row" href="#/sources" style="text-decoration:none"><div class="label">书源管理<div class="desc" id="src-summary">导入、检测、分组与批量删除</div></div><span style="color:var(--text-2)">›</span></a>
+      
+
+        <div class="row"><div class="label">替换规则<div class="desc" id="rules-count">加载中…</div></div>
+          <input type="file" id="rules-file" accept=".json,application/json" hidden />
+          <button class="btn" id="rules-import" style="padding:5px 10px;font-size:12px">导入文件</button>
+          <button class="btn" id="rules-paste" style="padding:5px 10px;font-size:12px">粘贴</button>
+          <button class="btn ghost" id="rules-clear" style="padding:5px 8px;font-size:12px;color:var(--danger)">清空</button></div>
+        <div id="rules-list"></div>
+      
+      </div>
+      <div class="section">
+        <h3>引擎与解析</h3>
         <div class="row"><div class="label">Python 引擎<div class="desc" id="engine-status">检测中…</div></div>
           <div class="switch" id="sw-engine"></div></div>
         <div class="row"><div class="label">运行环境<div class="desc" id="engine-runtime">检测中…</div></div></div>
@@ -2540,30 +2600,61 @@ async function renderSettings() {
         <div class="row"><div class="label">扫描目录<div class="desc" id="stat-ebook">检查本地 epub/mobi/txt/pdf</div></div>
           <button class="btn" id="scan-ebook" style="padding:5px 10px;font-size:12px">立即扫描</button>
         </div>
+      
+
+        <div class="row"><div class="label">优先手机解析<div class="desc">开启后搜索先交给在线设备，失败再本机解析</div></div>
+          <div class="switch ${cfg.preferRemote ? 'on' : ''}" id="sw-prefer"></div></div>
+        <a class="row" href="#/bus" style="text-decoration:none"><div class="label">手机解析待命<div class="desc" id="bus-summary">查看哪些设备可以代理解析</div></div><span style="color:var(--text-2)">›</span></a>
+      
       </div>
       <div class="section">
         <h3>手机接入</h3>
-        <div class="row row-url compact">
-          <div class="row-inline">
-            <div class="desc" id="api-base" style="flex:1">-</div>
-            <button class="btn" id="copy-base" style="padding:4px 9px;font-size:12px">复制</button>
+        <div class="row row-addr">
+          <div class="addr-main">
+            <div class="label">直连地址</div>
+            <div class="desc" id="api-base">-</div>
           </div>
+          <button class="btn" id="copy-base">复制</button>
         </div>
-        <div class="row row-url compact">
-          <div class="row-inline">
-            <div class="desc" id="api-alts" style="flex:1">-</div>
-            <button class="btn" id="copy-alts" style="padding:4px 9px;font-size:12px">复制</button>
+        <div class="row row-addr" id="row-alts">
+          <div class="addr-main">
+            <div class="label">其他地址</div>
+            <div class="desc" id="api-alts">-</div>
           </div>
+          <button class="btn" id="copy-alts">复制</button>
         </div>
-        <div class="row row-url compact" id="row-ipv6" style="display:none">
-          <div class="row-inline">
-            <div class="desc" id="api-ipv6" style="flex:1">-</div>
-            <button class="btn" id="copy-ipv6" style="padding:4px 9px;font-size:12px">复制</button>
+        <div class="row row-addr" id="row-ipv6" style="display:none">
+          <div class="addr-main">
+            <div class="label">IPv6 直连地址</div>
+            <div class="desc" id="api-ipv6">-</div>
           </div>
+          <button class="btn" id="copy-ipv6">复制</button>
+        </div>
+        <div class="row row-addr" id="row-ipv6-alts" style="display:none">
+          <div class="addr-main">
+            <div class="label">其他 IPv6 地址</div>
+            <div class="desc" id="api-ipv6-alts">-</div>
+          </div>
+          <button class="btn" id="copy-ipv6-alts">复制</button>
         </div>
         <div class="row"><div class="label">访问令牌<div class="desc" id="api-token" style="word-break:break-all">-</div></div>
           <button class="btn" id="copy-token" style="padding:5px 10px;font-size:12px">复制</button>
           <button class="btn ghost" id="reset-token" style="padding:5px 8px;font-size:12px;color:var(--danger)">重置</button></div>
+      
+        <div class="row row-addr">
+          <div class="addr-main">
+            <div class="label">书源导入链接</div>
+            <div class="desc" id="apk-src-link">-</div>
+          </div>
+          <button class="btn" id="copy-apk-link">复制</button>
+        </div>
+        <div class="row row-addr">
+          <div class="addr-main">
+            <div class="label">书源 JSON 地址</div>
+            <div class="desc" id="apk-src-json">-</div>
+          </div>
+          <button class="btn" id="copy-apk-json">复制</button>
+        </div>
       </div>
       <div class="section">
         <h3>下载</h3>
@@ -2575,40 +2666,25 @@ async function renderSettings() {
           <input id="set-dir-custom" placeholder="/vol1/1000/Books" style="max-width:44%;font-size:12px" />
           <button class="btn" id="save-dir-custom" title="保存自定义目录" style="padding:4px 10px;font-size:15px;line-height:1">💾</button>
         </div>
+      
       </div>
       <div class="section">
         <h3>数据</h3>
         <div class="row"><div class="label">书源数量<div class="desc" id="stat-src">-</div></div></div>
-        <div class="row"><div class="label">书籍数量<div class="desc" id="stat-book">-</div></div></div>
+        <a class="row" href="#/books" style="text-decoration:none"><div class="label">书籍数量<div class="desc" id="stat-book">-</div></div><span style="color:var(--text-2)">›</span></a>
+        <a class="row" href="#/books?nb=1" style="text-decoration:none"><div class="label">本地 .nb 缓存文件<div class="desc" id="stat-nb">加载中…</div></div><span style="color:var(--text-2)">›</span></a>
         <div class="row"><div class="label">搜索缓存<div class="desc" id="stat-cache">-</div></div><button class="btn" id="clear-cache" style="padding:5px 10px;font-size:12px">清空</button></div>
         <a class="row" href="#/offline" style="text-decoration:none"><div class="label">离线缓存<div class="desc" id="stat-ebook-count">-</div></div><span style="color:var(--text-2)">›</span></a>
         <div class="row"><div class="label">导出日志<div class="desc">含版本、配置、书源/电子书统计、最近运行日志（JSON）</div></div>
           <button class="btn" id="export-logs" style="padding:5px 10px;font-size:12px">导出 .json</button></div>
-      </div>
-      <div class="section">
-        <h3>书源</h3>
-        <a class="row" href="#/sources" style="text-decoration:none"><div class="label">书源管理<div class="desc" id="src-summary">导入、检测、分组与批量删除</div></div><span style="color:var(--text-2)">›</span></a>
-      </div>
-      <div class="section">
-        <h3>软总线</h3>
-        <div class="row"><div class="label">优先手机解析<div class="desc">开启后搜索先交给在线设备，失败再本机解析</div></div>
-          <div class="switch ${cfg.preferRemote ? 'on' : ''}" id="sw-prefer"></div></div>
-        <a class="row" href="#/bus" style="text-decoration:none"><div class="label">手机解析待命<div class="desc" id="bus-summary">查看哪些设备可以代理解析</div></div><span style="color:var(--text-2)">›</span></a>
-      </div>
-      <div class="section">
-        <h3>屏蔽规则</h3>
-        <div class="row"><div class="label">替换规则<div class="desc" id="rules-count">加载中…</div></div>
-          <input type="file" id="rules-file" accept=".json,application/json" hidden />
-          <button class="btn" id="rules-import" style="padding:5px 10px;font-size:12px">导入文件</button>
-          <button class="btn" id="rules-paste" style="padding:5px 10px;font-size:12px">粘贴</button>
-          <button class="btn ghost" id="rules-clear" style="padding:5px 8px;font-size:12px;color:var(--danger)">清空</button></div>
-        <div id="rules-list"></div>
+      
       </div>
       <div class="section">
         <h3>版本更新</h3>
         <div class="row"><div class="label">当前版本<div class="desc">V${esc(APP_VER)}</div></div>
           <button class="btn" id="btn-check-update" style="padding:5px 10px;font-size:12px">检查更新</button></div>
         <div id="update-info"></div>
+      
       </div>
       <div class="section">
         <h3>关于</h3>
@@ -2617,8 +2693,7 @@ async function renderSettings() {
         <div class="row" id="open-docs" style="cursor:pointer"><div class="label">软件协议总线说明<div class="desc">随包文档</div></div><span style="color:var(--text-2)">›</span></div>
         <div class="row"><div class="label">刷新封面<div class="desc">清掉封面缓存并重新抓取一次</div></div>
           <button class="btn" id="refresh-covers" style="padding:5px 10px;font-size:12px">刷新</button></div>
-        <div class="row row-url compact"><div class="label" style="margin-bottom:2px">书源导入</div>
-          <div class="desc" id="apk-src-link">-</div></div>
+      
       </div>`;
 
     const helpRow = $('#open-help');
@@ -2674,6 +2749,15 @@ async function renderSettings() {
     const [{ sources }, { books }] = await Promise.all([api('/sources'), api('/books')]);
     $('#stat-src').textContent = `${sources.length} 个（${sources.filter((s) => s.enabled).length} 个启用）`;
     $('#stat-book').textContent = `${books.length} 本`;
+    // .nb 缓存统计（数据区 → #/books?nb=1）
+    try {
+      const bc = await api('/books/cache');
+      const nbEl = $('#stat-nb');
+      if (nbEl) {
+        const chapters = (bc.items || []).reduce((n, x) => n + (x.synced || 0), 0);
+        nbEl.textContent = `${bc.withNb} 本 · ${chapters} 章（客户端同步）`;
+      }
+    } catch { /* 统计失败不影响设置页 */ }
 
     // 离线缓存统计（数据区 → #/offline）
     try {
@@ -3030,23 +3114,38 @@ async function renderSettings() {
     const baseEl = $('#api-base');
     if (baseEl) baseEl.textContent = apiBase;
     const altEl = $('#api-alts');
-    if (altEl && Array.isArray(cfg.lanIps) && cfg.lanIps.length > 1) {
+    if (altEl) {
       const others = (cfg.lanIps || []).filter((x) => x !== apiBase);
-      const v6 = (cfg.ipv6Lans || []).filter((x) => !String(x).includes('::1]'));
-      altEl.textContent = others.join('  ') || '—';
+      altEl.innerHTML = others.length ? others.map((u) => '<div>' + esc(u) + '</div>').join('') : '—';
       const ca = document.getElementById('copy-alts');
       if (ca) ca.onclick = () => copy(others.join('\n'), 'IPv4 地址');
-      // IPv6 独占一行，单独复制按钮
-      const v6El = document.getElementById('api-ipv6');
-      const v6Row = document.getElementById('row-ipv6');
-      if (v6Row && v6El) {
+    }
+    // IPv6 与 IPv4 同构：直连地址 / 其他地址
+    {
+      const v6 = (cfg.ipv6Lans || []).filter((x) => !String(x).includes('::1]'));
+      const primaryRow = document.getElementById('row-ipv6');
+      const primaryEl = document.getElementById('api-ipv6');
+      const altsRow = document.getElementById('row-ipv6-alts');
+      const altsEl = document.getElementById('api-ipv6-alts');
+      if (primaryRow && primaryEl) {
         if (v6.length) {
-          v6El.textContent = v6.join('  ');
-          v6Row.style.display = '';
+          primaryEl.innerHTML = '<div>' + esc(v6[0]) + '</div>';
+          primaryRow.style.display = '';
           const cv6 = document.getElementById('copy-ipv6');
-          if (cv6) cv6.onclick = () => copy(v6.join('\n'), 'IPv6 地址');
+          if (cv6) cv6.onclick = () => copy(v6[0], 'IPv6 地址');
         } else {
-          v6Row.style.display = 'none';
+          primaryRow.style.display = 'none';
+        }
+      }
+      if (altsRow && altsEl) {
+        const rest = v6.slice(1);
+        if (rest.length) {
+          altsEl.innerHTML = rest.map((u) => '<div>' + esc(u) + '</div>').join('');
+          altsRow.style.display = '';
+          const cv6a = document.getElementById('copy-ipv6-alts');
+          if (cv6a) cv6a.onclick = () => copy(rest.join('\n'), '其他 IPv6 地址');
+        } else {
+          altsRow.style.display = 'none';
         }
       }
     }
@@ -3082,8 +3181,10 @@ async function renderSettings() {
       };
 
     // 阅读 APK 接入：一键生成 legado:// 书源导入链接
-    const apkJsonUrl = `${apiBase}api/m/booksource?token=${encodeURIComponent(cfg.apiToken || '')}`;
-    const apkImportUrl = 'legado://import/bookSource?src=' + encodeURIComponent(apkJsonUrl);
+    const jsonBase = String(apiBase || '').replace(/\/+$/, '');
+    const apkJsonUrl = `${jsonBase}/api/m/booksource?token=${encodeURIComponent(cfg.apiToken || '')}`;
+    // 明码显示：地址里没有 &，Android Uri 解析 src 时不需要百分号编码
+    const apkImportUrl = 'legado://import/bookSource?src=' + apkJsonUrl;
     const lkEl = $('#apk-src-link');
     if (lkEl) lkEl.textContent = apkImportUrl;
     const jEl = $('#apk-src-json');

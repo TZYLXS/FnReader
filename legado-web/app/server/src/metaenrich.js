@@ -14,7 +14,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const execFileAsync = promisify(execFile);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
 const MUA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1';
@@ -22,37 +25,35 @@ const CACHE_TTL = 7 * 24 * 3600 * 1000;
 
 const WEB_NOVEL_HOSTS = ['qidian.com', 'jjwxc.net'];
 
-function httpGet(url, ua, timeout = 20000) {
-  // 用 curl：亚马逊对 Node undici 的 TLS 指纹不友好，会返回 meta refresh 拦截页
+async function httpGetOnce(url, ua, timeout = 20000) {
   try {
-    return httpGetOnce(url, ua, timeout);
-  } catch {
-    try { return httpGetOnce(url, ua, timeout); } catch { return ''; }
-  }
-}
-
-function httpGetOnce(url, ua, timeout = 20000) {
-  try {
-    const out = execFileSync('curl', [
+    const { stdout } = await execFileAsync('curl', [
       '-sL', '-m', String(Math.round(timeout / 1000)), '-A', ua || UA,
       '-H', 'Accept-Language: en-US,en;q=0.9,zh-CN;q=0.8',
       '-H', 'Accept: text/html,application/xhtml+xml',
       url,
-    ], { encoding: 'utf8', maxBuffer: 24 * 1024 * 1024 });
-    return out || '';
+    ], { encoding: 'utf8', timeout: timeout + 5000, maxBuffer: 24 * 1024 * 1024 });
+    return stdout || '';
   } catch (e) {
-    if (process.env.META_DEBUG) console.error('[meta] curl error:', e.message, e.status, String(e.stderr || '').slice(0, 200));
+    if (process.env.META_DEBUG) console.error('[meta] curl error:', e.message, e.code, String(e.stderr || '').slice(0, 200));
     return '';
   }
 }
 
-// 亚马逊会间歇性返回 1.5KB 的跳转拦截页：拿到大页面才算成功，最多重试 5 次
-function fetchWithRetry(url, ua, minLen = 20000, tries = 5) {
+async function httpGet(url, ua, timeout = 20000) {
+  // 用 curl（异步）：亚马逊对 Node undici 的 TLS 指纹不友好，会返回 meta refresh 拦截页
+  const first = await httpGetOnce(url, ua, timeout);
+  if (first) return first;
+  return httpGetOnce(url, ua, timeout);
+}
+
+// 亚马逊会间歇性返回 1.5KB 的跳转拦截页：拿到大页面才算成功，最多重试 5 次（异步等待，不阻塞事件循环）
+async function fetchWithRetry(url, ua, minLen = 20000, tries = 5) {
   for (let i = 0; i < tries; i++) {
-    const html = httpGet(url, ua);
+    const html = await httpGet(url, ua);
     if (html && html.length >= minLen && !/meta\s+http-equiv=["']refresh/i.test(html.slice(0, 500))) return html;
     if (process.env.META_DEBUG) console.error('[meta] retry', i + 1, 'len', html.length, url.slice(0, 80));
-    execFileSync('sleep', ['1'], { stdio: 'ignore' });
+    await sleep(1000);
   }
   return '';
 }
@@ -88,10 +89,10 @@ function qidianBookId(bookUrl) {
   return m ? m[1] : '';
 }
 
-function fromQidian(book) {
+async function fromQidian(book) {
   const id = qidianBookId(book.bookUrl);
   if (!id) return null;
-  const html = httpGet(`https://m.qidian.com/book/${id}/`, MUA);
+  const html = await httpGet(`https://m.qidian.com/book/${id}/`, MUA);
   if (!html || html.length < 5000) return null;
   const title = metaOf(html, 'og:title') || book.name;
   const intro = metaOf(html, 'og:description') || '';
@@ -107,10 +108,10 @@ function jinjiangBookId(bookUrl) {
   return m ? m[1] : '';
 }
 
-function fromJinjiang(book) {
+async function fromJinjiang(book) {
   const id = jinjiangBookId(book.bookUrl);
   if (!id) return null;
-  const html = httpGet(`https://m.jjwxc.net/book2/${id}`, MUA);
+  const html = await httpGet(`https://m.jjwxc.net/book2/${id}`, MUA);
   if (!html || html.length < 2000) return null;
   const strip = (s) => String(s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
   const introM = html.match(/id="novelintro"[^>]*>([\s\S]{0,2000}?)<\/div>/i);
@@ -122,11 +123,11 @@ function fromJinjiang(book) {
 }
 
 // ---------------- 亚马逊（出版物） ----------------
-function fromAmazon(book) {
+async function fromAmazon(book) {
   const dbg = (...a) => { if (process.env.META_DEBUG) console.error('[meta]', ...a); };
   const kw = `${book.name || ''} ${book.author || ''}`.trim();
   if (!kw) return null;
-  const search = fetchWithRetry(`https://www.amazon.com/s?k=${encodeURIComponent(kw)}`, UA, 50000);
+  const search = await fetchWithRetry(`https://www.amazon.com/s?k=${encodeURIComponent(kw)}`, UA, 50000);
   dbg('search', kw, 'len', search.length);
   if (!search) return null;
   const asin = (search.match(/data-asin="([A-Z0-9]{10})"/) || [])[1];
@@ -149,7 +150,7 @@ function fromAmazon(book) {
     };
   })();
 
-  const html = fetchWithRetry(`https://www.amazon.com/dp/${asin}`, UA, 100000, 3);
+  const html = await fetchWithRetry(`https://www.amazon.com/dp/${asin}`, UA, 100000, 3);
   dbg('product len', html.length, 'captcha', /captcha|Robot Check/i.test(html));
   const strip = (v) => String(v || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const title = metaOf(html, 'og:title')
@@ -183,10 +184,14 @@ function fromAmazon(book) {
 }
 
 // ---------------- 封面落盘 ----------------
-function downloadCover(url, coversDir) {
+async function downloadCover(url, coversDir) {
   if (!url) return '';
   try {
-    const buf = execFileSync('curl', ['-sL', '-m', '20', '-A', UA, url], { maxBuffer: 12 * 1024 * 1024 });
+    const { stdout: buf } = await execFileAsync('curl', ['-sL', '-m', '20', '-A', UA, url], {
+      encoding: 'buffer',
+      timeout: 25000,
+      maxBuffer: 12 * 1024 * 1024,
+    });
     if (!buf || buf.length < 1000) return '';
     const ext = (url.match(/\.(jpg|jpeg|png|webp)(?:[?#]|$)/i) || [])[1] || 'jpg';
     const name = crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + '.' + ext.replace('jpeg', 'jpg');
@@ -244,16 +249,16 @@ async function enrichBook(book, opts = {}) {
     const kind = bookKind(book.bookUrl);
     let provider = null;
     if (kind === 'web') {
-      provider = fromQidian(book) || fromJinjiang(book);
+      provider = (await fromQidian(book)) || (await fromJinjiang(book));
     } else {
-      provider = fromAmazon(book);
+      provider = await fromAmazon(book);
     }
     if (!provider) {
       cache[key] = { at: Date.now(), result: null, failed: true };
       saveCache(dataDir, cache);
       return null;
     }
-    const cover = provider.cover ? downloadCover(provider.cover, coversDir) : '';
+    const cover = provider.cover ? await downloadCover(provider.cover, coversDir) : '';
     result = {
       coverUrl: cover || '',
       intro: provider.intro || '',

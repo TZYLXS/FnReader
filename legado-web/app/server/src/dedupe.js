@@ -7,6 +7,7 @@ function normText(s) {
     .replace(/作者[:：]/g, '')
     .replace(/作\s*者[:：]/g, '')
     .replace(/[《》「」【】\[\]()（）\s·・.。,:：;；!！?？"'’“”]/g, '')
+    .replace(/(全本|精校|完结|校对版|无删减|完整版|txt)+$/i, '')
     .replace(/^第.{1,6}[章节回]/, '')
     .toLowerCase()
     .trim();

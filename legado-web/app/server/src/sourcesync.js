@@ -52,14 +52,16 @@ function mergeSources(store, body = {}) {
   }
 
   for (const del of deleted) {
-    const url = del && del.bookSourceUrl;
+    // 客户端有两种写法：["url", ...] 和 [{bookSourceUrl, lastUpdateTime}]。
+    // 字符串没有时间戳，按“现在就删”处理，否则手机端的删除会静默丢失。
+    const url = typeof del === 'string' ? del : (del && del.bookSourceUrl);
     if (!url) continue;
     const cur = map.get(url);
     if (!cur) {
       skipped++;
       continue;
     }
-    const delTs = tsOf(del) || now;
+    const delTs = typeof del === 'string' ? now : (tsOf(del) || now);
     if (delTs >= tsOf(cur)) {
       const kept = store.sources.filter((s) => s.bookSourceUrl !== url);
       store.saveSources(kept);

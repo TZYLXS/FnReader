@@ -269,6 +269,40 @@ App 侧建议：收到 409 时提示「请在网页端确认缓存位置」，�
 - 想强制同步：请求体带 `skipIfLocal:false`
 - TXT 分章失败返回 502 `本地 TXT 解析失败：…`，客户端可回退传 `.nb`
 
+#### 多客户端 / 多书源并发合并（0.1.25+）
+
+同一本书被 7–8 个客户端用不同书源、不同章节数同时上传时，服务端不再"后到覆盖"，而是合并：
+
+| 维度 | 规则 |
+| --- | --- |
+| 作品身份 | `workId = sha1(normName + '|' + normAuthor)`；书名去《》、`(全本/精校/完结/校对版/无删减/TXT)` 后缀，作者去空格标点 |
+| 目录 | 同一 workId 只用一个目录，不再产生「书名 (2)」；旧目录按 bookUrl / 书名+作者自动复用 |
+| 章节身份 | 优先章号 `第N章/第十二回`（中文数字归一），无章号用标题归一化，再不行用正文 sha1 |
+| 章节数不同 | 取并集：主版本 + 各源独有章节；同章不同正文记 `variants`，正文取**更长**的一份 |
+| 切分差异 | 同章正文长度差 >2.2 倍记 `splitMismatch`，不强行合并，供页面排查 |
+| 原始文件 | 按来源分目录：`raw/<srcHash>/<文件名>.nb`，互不覆盖 |
+| 元数据 | `meta.json` v2：`workId / sources{srcHash:{bookUrl,origin,chapters,lastSync}} / chapters[{key,num,sha,file,variants,images}] / stats`|
+| 并发 | 锁粒度 = workId：同书串行、不同书并行；写入 `tmp + rename` 原子替换 |
+| 响应 | 新增 `sources / added / merged / duplicates / splitMismatch`；`chapters` 为合并后的 canonical 章数 |
+
+响应示例：
+
+```json
+{
+  "ok": true,
+  "dir": "/vol2/@appdata/…/downloads/cache/书名",
+  "chapters": 1520,
+  "withText": 1520,
+  "sources": 8,
+  "added": 145,
+  "merged": 760,
+  "duplicates": 615,
+  "splitMismatch": 12
+}
+```
+
+网页端「设置 → 数据 → 本地 .nb 缓存文件」按 `workId` 聚合展示：`来源 8 · 缓存 1520 章 · 同步 N 章 · 变体 M · 切分冲突 K`。
+
 ### 8.4 任务类型
 
 | type | payload | data 约定 |
@@ -893,6 +927,20 @@ POST /api/m/cache { layout:'legado', book, coverData, chapters, images }
 - 客户端把返回的每个源存本地，并把 `serverTime` 记为下次的 `since`
 
 ### 17.2 推送改动：`POST /api/m/sources/sync`
+
+客户端实现：`FnReaderAutoSync`（yuedu-pro 补丁，桥接服务连上后每 5 分钟自动跑一次）；
+服务端兼容三种请求体，客户端任选其一：
+
+- `{"updated":[...], "deleted":[...], "since":<毫秒>}`
+- 裸数组 `[...]`（等价于 `updated`）
+- `{"sources":[...]}`（等价于 `updated`）
+
+`deleted` 里两种写法都接受：
+
+- 字符串 `"https://…"`：直接删除（按“现在就删”处理，0.1.18 起不再被静默忽略）
+- 对象 `{ "bookSourceUrl": "https://…", "lastUpdateTime": 毫秒 }`：按 LWW 比较，服务端版本更新时保留并进 `pull`
+
+响应里的 `pull` / `pullDeleted` 是服务端比客户端新的部分，客户端应写回本机书源库。
 
 ```json
 {
