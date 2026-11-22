@@ -212,6 +212,7 @@ const MIME = {
   '.webp': 'image/webp',
 };
 
+const CONTENT_CACHE_VER = 'v4';
 const contentCache = new Map(); // key -> paragraphs
 function cacheGet(key) {
   return contentCache.get(key);
@@ -263,6 +264,8 @@ function cleanParagraphs(list) {
 function contentLooksJunk(paragraphs) {
   const text = (paragraphs || []).join('\n').trim();
   if (!text) return true;
+  // 只有一段且很短：多半是标题/一句摘要，不是完整正文
+  if (Array.isArray(paragraphs) && paragraphs.length <= 1 && text.length < 120) return true;
   // 反爬占位页通常很短；超过 800 字基本是真正文
   if (text.length > 800) return false;
   return /退出阅读模式|退出#?阅读|#退#出#阅#读|章节缺失|章节#?缺失|请使用其它.{0,4}浏览器|网页版.{0,6}最新内容|请退出转码|最快.{0,4}免费阅读|最新网址|本章未完|#中间#有#缺失|quyoulai|q#u#y#o#u#l#a#i/.test(
@@ -273,7 +276,7 @@ function contentLooksJunk(paragraphs) {
 async function loadChapterContent(book, index) {
   const chapter = book.chapters[index];
   if (!chapter) throw new Error('章节不存在');
-  const key = chapter.url || `${book.bookUrl}#${index}`;
+  const key = `${CONTENT_CACHE_VER}|${chapter.url || `${book.bookUrl}#${index}`}`;
   // 手机同步过来的缓存：正文直接读本地文件
   if (book.cachedDir && chapter.file) {
     try {
@@ -404,7 +407,7 @@ async function loadChapterContent(book, index) {
 function prefetchChapter(book, index) {
   if (index < 0 || index >= book.chapters.length) return;
   const chapter = book.chapters[index];
-  const key = chapter.url || `${book.bookUrl}#${index}`;
+  const key = `${CONTENT_CACHE_VER}|${chapter.url || `${book.bookUrl}#${index}`}`;
   if (cacheGet(key) || prefetching.has(key)) return;
   prefetching.add(key);
   const timer = setTimeout(async () => {
