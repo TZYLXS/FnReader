@@ -622,7 +622,8 @@ async function getContent(source, book, chapter) {
   out = out.filter((p) => !titleLike(p));
 
   // 仍然太短（<40 字）：再走一次通用正文抽取
-  if (out.join('').replace(/\s+/g, '').length < 40 && lastUrl) {
+  // 只有一段（哪怕字数不少）也视为规则没抓到完整正文，回退通用抽取
+  if ((out.length <= 1 || out.join('').replace(/\s+/g, '').length < 40) && lastUrl) {
     try {
       const { getArticle } = require('./article');
       const art = await getArticle(lastUrl);
