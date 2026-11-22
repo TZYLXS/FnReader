@@ -2356,7 +2356,6 @@ function linkLocalEbooksToShelf() {
     return 0;
   }
   const usable = entries.filter((e) => e.status === 'complete' || e.status === 'partial' || e.status === 'toc-only');
-  if (!usable.length) return 0;
 
   let books = store.books;
   let changed = 0;
@@ -2371,6 +2370,10 @@ function linkLocalEbooksToShelf() {
     books = kept;
     store.saveBooks(books);
     changed++;
+  }
+  if (!usable.length) {
+    if (changed) events.broadcast({ type: 'shelf', action: 'local-ebook', count: changed });
+    return changed;
   }
   for (const e of usable) {
     const key = normBookName(e.name);
