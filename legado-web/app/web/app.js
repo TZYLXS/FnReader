@@ -2525,8 +2525,6 @@ async function renderSettings() {
         <h3>TRE 引擎</h3>
         <div class="row"><div class="label">Python 引擎<div class="desc" id="engine-status">检测中…</div></div>
           <div class="switch" id="sw-engine"></div></div>
-        <div class="row"><div class="label">Java 目录引擎<div class="desc" id="java-status">检测中…</div></div>
-          <div class="switch ${cfg.javaEngine !== false ? 'on' : ''}" id="sw-java"></div></div>
         <div class="row"><div class="label">运行环境<div class="desc" id="engine-runtime">检测中…</div></div></div>
         <div class="row"><div class="label">Python 工作模式<div class="desc" id="pymode-desc">检测中…</div></div>
           <div class="switch" id="sw-pymode"></div></div>
@@ -2866,14 +2864,6 @@ async function renderSettings() {
           else if (r.python && r.python.ok) stEngine.textContent = '内置 Node 引擎（Python 可用：' + (r.python.engine || '') + '）';
           else stEngine.textContent = '内置 Node 引擎 · Python 不可用：' + ((r.python && r.python.error) || '未安装');
         }
-        const stJava = $('#java-status');
-        if (stJava) {
-          const j = r.java || {};
-          if (j.starting) stJava.textContent = '启动中…（引擎后台拉起，稍候自动刷新）';
-          else if (r.javaEngine === false) stJava.textContent = '已关闭 · 目录由 Node 处理';
-          else if (j.ok) stJava.textContent = '运行中 · Java ' + (j.java || '21') + (j.virtualThreads ? ' · 虚拟线程' : '') + ` · 端口 ${j.port || '-'}`;
-          else stJava.textContent = '启动失败：' + (j.lastError || j.error || 'Java 不可用');
-        }
         if (pyDesc) {
           if (core) pyDesc.textContent = '开：接管 Node 规则解析（搜索 / 目录 / 正文）';
           else if (master) pyDesc.textContent = '关：接管 TXT 下载 / 去重，不接管 Node 解析';
@@ -2900,25 +2890,6 @@ async function renderSettings() {
           toast(e.message);
         }
       };
-      const swJava = $('#sw-java');
-      if (swJava) {
-        swJava.onclick = async () => {
-          const next = !swJava.classList.contains('on');
-          const st = $('#java-status');
-          if (st) st.textContent = next ? '启动中…' : '关闭中…';
-          try {
-            await api('/engine', { method: 'POST', body: { javaEngine: next } });
-            swJava.classList.toggle('on', next);
-            toast(next ? 'Java 目录引擎已启动' : 'Java 目录引擎已关闭，目录回落到 Node');
-            applyEngineState(await api('/engine'));
-            setTimeout(async () => { try { applyEngineState(await api('/engine')); } catch { /* ignore */ } }, 2500);
-          } catch (e) {
-            swJava.classList.toggle('on', !next);
-            toast(e.message);
-            applyEngineState(await api('/engine').catch(() => ({})));
-          }
-        };
-      }
       if (swPyMode) {
         swPyMode.onclick = async () => {
           if (swPyMode.classList.contains('disabled')) return toast('Python 引擎已关闭，工作模式不可用');

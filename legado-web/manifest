@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.0.16
+version=3.1.0
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -9,8 +9,8 @@ maintainer_url=https://github.com/TZYLXS
 distributor=TZYLXS
 desktop_uidir=ui
 desktop_applaunchname=legado-web.main
-install_dep_apps      = nodejs_v22>22.0:java-21-openjdk>21
+install_dep_apps      = nodejs_v26>26.0
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=修复 Python 持久进程池：bridge 补上 --worker 模式（逐行收发 JSON），之前 worker 一启动就退出/超时，导致去重与 TXT 分章全部回落到 JS、健康页 python 一直 responses=0
+changelog=移除 Java 目录引擎，TOC 规范化改由 Python normalize_toc 完成；Python 进程池按 CPU 核数多核扩容（max(2, min(16, 核数-1))）；manifest 依赖改为 nodejs_v26 并随包 libatomic.so.1 兜底；搜索 12 路并发

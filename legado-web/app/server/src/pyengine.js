@@ -2,6 +2,7 @@
 // Python 规则引擎桥：持久进程池执行解析，失败时由调用方透明回退 Node。
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const readline = require('node:readline');
 
@@ -105,7 +106,11 @@ let closing = false;
 function poolSize() {
   const raw = process.env.LEGADO_PYTHON_WORKERS;
   if (raw === '0') return 0;
-  return Math.max(1, Math.min(8, Number(raw) || 2));
+  const explicit = Number(raw);
+  if (explicit > 0) return Math.max(1, Math.min(16, explicit));
+  // 多核优化：默认按 CPU 核数开池（留 1 核给 Node），2~16 之间
+  const cores = (os.cpus && os.cpus().length) || 2;
+  return Math.max(2, Math.min(16, cores - 1));
 }
 
 function failWorker(worker, error, kill) {

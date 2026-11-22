@@ -357,15 +357,15 @@ fnOS 上「安装完成但启动失败，提示依赖未更新」常见两类原
 - Node 运行时缺 `libatomic.so.1`（v26 常见）时可直接补系统库：`sudo apt-get update && sudo apt-get install -y libatomic1`，
   装完 `/var/apps/nodejs_v26/target/bin/node -v` 应能正常输出版本（本机已验证 v26.13.1）
 
-## 运行环境依赖声明（3.0.12+）
+## 运行环境依赖声明（3.0.12+，3.1.0 调整）
 
 `manifest` 里用 `install_dep_apps` 声明首次安装时自动补齐的运行环境，多个依赖用 **冒号** 分隔，`>` 指定最低版本：
 
 ```
-install_dep_apps = nodejs_v22>22.0:java-21-openjdk>21
+install_dep_apps = nodejs_v26>26.0
 ```
 
-- `nodejs_v22`：服务端 Node 运行时（必需）
-- `java-21-openjdk`：Java 21 目录引擎运行时（可选能力，但随包声明后首装会自动装好，省得用户手动处理）
-- Python 规则引擎不声明依赖：`server/python/vendor` 已随 FPK 打包（lxml/cssselect/requests 等），安装即用
+- `nodejs_v26`：服务端 Node 运行时（必需；3.1.0 起改为 v26）
+- 不再依赖 `java-21-openjdk`：Java 引擎已移除，目录规范化改由 Python 完成
+- Python 规则引擎不声明依赖：fpk 内已带 `server/python/vendor`（lxml/cssselect/requests 等）与 `server/lib/libatomic.so.1`（v26 缺库兜底）
 - 系统按列表顺序安装；依赖缺失/损坏时应用仍能启动，`cmd/main` 会自动探测可用 Node 并在 Java 不可用时回落 Node 目录解析

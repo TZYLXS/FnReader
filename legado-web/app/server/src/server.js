@@ -55,9 +55,7 @@ const { dedupeCache, findExistingDir } = require('./cacheclean');
 const tombstone = require('./tombstone');
 const { normalizeChapterList } = require('./chapter-order');
 const pyengine = require('./pyengine');
-const javaWorker = require('./java-worker');
 const metaenrich = require('./metaenrich');
-javaWorker.setEnabled(store.config.javaEngine !== false);
 const { mergeSources, pullSince } = require('./sourcesync');
 const events = require('./events');
 const remote = require('./remote');
@@ -153,8 +151,19 @@ function scheduleMetaEnrich(url, delay = 1200) {
 }
 
 async function normalizeTocOffload(chapters) {
-  const fromJava = await javaWorker.normalizeToc(chapters).catch(() => null);
-  const list = fromJava || normalizeChapterList(chapters);
+  // 目录规范化交给 Python 引擎（去重 / 剔杂项 / 按章节号稳定排序），最多等 3 秒，失败回落 JS
+  let list = null;
+  if (Array.isArray(chapters) && chapters.length > 1) {
+    const fromPy = await Promise.race([
+      pyengine
+        .call('normalize_toc', { chapters }, 3000)
+        .then((r) => (r && Array.isArray(r.chapters) ? r.chapters : null))
+        .catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+    ]);
+    if (fromPy) list = fromPy;
+  }
+  if (!list) list = normalizeChapterList(chapters);
   return list.map((chapter, index) => ({ ...chapter, index }));
 }
 
@@ -2628,7 +2637,7 @@ async function route(req, res, url) {
   }
 
   if (p === '/api/health')
-    return json(res, 200, { ok: true, app: APPNAME, version: APP_VERSION, build: BUILD_ID, runtime: { node: process.version, v8: process.versions.v8, compileCache: require('node:module').getCompileCacheDir?.() || '' }, parse: parsePool.stats(), python: pyengine.poolStats(), java: javaWorker.status() });
+    return json(res, 200, { ok: true, app: APPNAME, version: APP_VERSION, build: BUILD_ID, runtime: { node: process.version, v8: process.versions.v8, compileCache: require('node:module').getCompileCacheDir?.() || '' }, parse: parsePool.stats(), python: pyengine.poolStats() });
 
   if (p === '/api/m/info') {
     if (!checkApiToken(req, url)) return json(res, 401, { error: 'token 无效' });
@@ -4038,41 +4047,18 @@ function saveCover(target, buf, mime) {
       starting: true,
       error: 'Python 启动中…',
     });
-    const java = await withTimeout(javaWorker.health(), 1200, {
-      ...javaWorker.status(),
-      ok: null,
-      starting: true,
-      lastError: 'Java 启动中…',
-    });
     return json(res, 200, {
       engine: effectiveEngine(),
       engineSwitch: store.config.engine === 'python' ? 'python' : 'node',
       pyMode: String(store.config.pyMode || 'aux'),
       pythonAux: pythonAuxEnabled(),
       python: status,
-      javaEngine: store.config.javaEngine !== false,
-      java,
       node: { version: process.version, v8: process.versions.v8, compileCache: require('node:module').getCompileCacheDir?.() || '' },
     });
   }
 
   if (p === '/api/engine' && method === 'POST') {
     const body = await readJson(req);
-    if (body && typeof body.javaEngine === 'boolean') {
-      if (body.javaEngine) {
-        javaWorker.setEnabled(true);
-        javaWorker.start().catch(() => {}); // 后台启动，不阻塞请求
-      } else {
-        javaWorker.setEnabled(false);
-      }
-      store.saveConfig({ javaEngine: body.javaEngine });
-      return json(res, 200, {
-        ok: true,
-        javaEngine: body.javaEngine,
-        starting: !!body.javaEngine,
-        java: javaWorker.status(),
-      });
-    }
     if (body && (body.pyMode === 'aux' || body.pyMode === 'core')) {
       store.saveConfig({ pyMode: body.pyMode });
     }
@@ -5397,12 +5383,6 @@ tcp.listen(PORT, '::', () => {
         if (targets.length) console.log('[legado-web] 书城兜底：处理 ' + targets.length + ' 本缺封面/简介的书');
       } catch { /* ignore */ }
     }, 15000);
-  }
-  // Java 21 目录引擎：默认随服务启动（设置里可关闭）
-  if (store.config.javaEngine !== false) {
-    javaWorker.start()
-      .then((port) => console.log('[legado-web] Java 目录引擎已启动，端口 ' + port))
-      .catch((e) => console.log('[legado-web] Java 目录引擎未启动：' + e.message));
   }
 });
   tcp.on('error', (e) => console.error('[legado-web] tcp listen error:', e.message));
