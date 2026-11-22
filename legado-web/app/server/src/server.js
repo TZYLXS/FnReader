@@ -57,6 +57,7 @@ const tombstone = require('./tombstone');
 const { normalizeChapterList } = require('./chapter-order');
 const pyengine = require('./pyengine');
 const metaenrich = require('./metaenrich');
+const builtin = require('./builtin');
 const { mergeSources, pullSince } = require('./sourcesync');
 const events = require('./events');
 const remote = require('./remote');
@@ -1535,7 +1536,10 @@ async function mobileSearch(key, group, limit) {
   // 优先用体检通过的源，但一个都没有时退化为全部启用源（否则换源永远搜不到东西）
   let sources = store.sources.filter((s) => s.enabled);
   if (group) sources = sources.filter((s) => (s.bookSourceGroup || '') === group);
-  sources = sources.sort((a, b) => Number(b.checkStatus === 'ok') - Number(a.checkStatus === 'ok'));
+  // 内置源（微信读书/起点）优先，用户刚配好登录信息时先出结果
+  sources = sources.sort((a, b) =>
+    Number(builtin.isBuiltin(b)) - Number(builtin.isBuiltin(a)) ||
+    Number(b.checkStatus === 'ok') - Number(a.checkStatus === 'ok'));
   sources = sources.slice(0, Math.max(1, Math.min(30, Number(limit) || 8)));
   const buckets = await Promise.all(
     sources.map((s) =>
@@ -1903,6 +1907,74 @@ function exportAllProgress() {
     phase: exportAllJob.phase,
     error: exportAllJob.error,
   };
+}
+
+/** 内置书源：微信读书 / 起点（登录 Cookie 由用户在设置里填） */
+function ensureBuiltinSources() {
+  const list = store.sources;
+  let changed = false;
+  for (const [url, site] of Object.entries(builtin.SITES)) {
+    if (list.some((x) => x.bookSourceUrl === url)) continue;
+    list.push({
+      bookSourceUrl: url,
+      bookSourceName: site.name,
+      bookSourceGroup: '内置',
+      bookSourceType: 0,
+      bookSourceComment: '内置接入：在 设置 → 账号接入 填写登录 Cookie 后可用',
+      enabled: true,
+      enabledExplore: false,
+      searchUrl: url,
+      ruleSearch: {},
+      ruleBookInfo: {},
+      ruleToc: {},
+      ruleContent: {},
+      builtin: true,
+      lastUpdateTime: Date.now(),
+    });
+    changed = true;
+  }
+  if (changed) store.saveSources(list);
+}
+ensureBuiltinSources();
+
+/** 全量重新获取封面：后台逐本跑，前端轮询进度 */
+const coverJob = { running: false, done: 0, total: 0, changed: 0, failed: 0, startedAt: 0, finishedAt: 0, current: '' };
+function coverJobStatus() {
+  const { running, done, total, changed, failed, startedAt, finishedAt, current } = coverJob;
+  return { running, done, total, changed, failed, startedAt, finishedAt, current };
+}
+function startCoverRefetch() {
+  const list = store.books.slice();
+  Object.assign(coverJob, { running: true, done: 0, total: list.length, changed: 0, failed: 0, startedAt: Date.now(), finishedAt: 0, current: '' });
+  (async () => {
+    for (const b of list) {
+      if (!coverJob.running) break;
+      coverJob.current = b.name || '';
+      try {
+        const patch = await metaenrich.enrichBook(b, {
+          dataDir: store.dataDir,
+          coversDir: path.join(store.dataDir, 'covers'),
+          force: true,
+        });
+        if (patch && patch.coverUrl) {
+          const cur = store.findBook(b.bookUrl) || b;
+          store.upsertBook({ ...cur, coverUrl: patch.coverUrl, metaSource: patch.metaSource || cur.metaSource || '', metaAt: Date.now() });
+          coverJob.changed++;
+          events.broadcast({ type: 'shelf', action: 'cover', bookUrl: b.bookUrl, via: 'meta' });
+        } else {
+          coverJob.failed++;
+        }
+      } catch {
+        coverJob.failed++;
+      }
+      coverJob.done++;
+    }
+    coverJob.running = false;
+    coverJob.finishedAt = Date.now();
+  })().catch(() => {
+    coverJob.running = false;
+    coverJob.finishedAt = Date.now();
+  });
 }
 
 async function runExportAllJob() {
@@ -3456,6 +3528,7 @@ async function route(req, res, url) {
       added: merged.stats.added,
       merged: merged.stats.merged,
       duplicates: merged.stats.duplicates,
+      rawSkipped: merged.stats.rawSkipped,
       splitMismatch: merged.stats.splitMismatch,
     });
   }
@@ -4743,6 +4816,7 @@ function saveCover(target, buf, mime) {
       let sources = 0;
       let splitMismatch = 0;
       let variants = 0;
+      let rawSkipped = 0;
       let metaCounts = null;
       let savedAt = 0;
       if (dir) {
@@ -4751,6 +4825,7 @@ function saveCover(target, buf, mime) {
           sources = Object.keys(meta.sources || {}).length;
           splitMismatch = Number(meta.stats && meta.stats.splitMismatch) || 0;
           variants = (meta.chapters || []).reduce((n, c) => n + (Array.isArray(c.variants) ? c.variants.length : 0), 0);
+          rawSkipped = Number(meta.stats && meta.stats.rawSkipped) || 0;
           metaCounts = meta.counts || null;
           savedAt = Number(meta.savedAt) || 0;
         } catch { /* 没有 meta 就按 0 */ }
@@ -4773,6 +4848,7 @@ function saveCover(target, buf, mime) {
         sources,
         splitMismatch,
         variants,
+        rawSkipped,
       });
     }
     items.sort((a, b) => (b.synced - a.synced) || (b.cached - a.cached) || String(a.name).localeCompare(String(b.name), 'zh'));
@@ -5379,9 +5455,91 @@ function mergeFeedIntoBook(feed) {
     return json(res, 200, { ok: true });
   }
 
+  // 账号接入：只回是否已填 + 时间，不回 Cookie 明文
+  if (p === '/api/accounts' && method === 'GET') {
+    const acc = store.config.accounts || {};
+    return json(res, 200, {
+      ok: true,
+      accounts: {
+        weread: { set: !!((acc.weread || {}).cookie), updatedAt: Number((acc.weread || {}).updatedAt) || 0 },
+        qidian: { set: !!((acc.qidian || {}).cookie), updatedAt: Number((acc.qidian || {}).updatedAt) || 0 },
+      },
+    });
+  }
+  if (p === '/api/accounts' && method === 'POST') {
+    const body = await readJson(req);
+    const site = String((body && body.site) || '').trim();
+    if (!['weread', 'qidian'].includes(site)) return json(res, 400, { error: 'site 只能是 weread / qidian' });
+    const cookie = String((body && body.cookie) || '').trim().slice(0, 30000);
+    const accounts = { ...(store.config.accounts || {}) };
+    if (!cookie) delete accounts[site];
+    else accounts[site] = { cookie, updatedAt: Date.now() };
+    store.saveConfig({ accounts });
+    return json(res, 200, {
+      ok: true,
+      accounts: {
+        weread: { set: !!((accounts.weread || {}).cookie), updatedAt: Number((accounts.weread || {}).updatedAt) || 0 },
+        qidian: { set: !!((accounts.qidian || {}).cookie), updatedAt: Number((accounts.qidian || {}).updatedAt) || 0 },
+      },
+    });
+  }
+
+  // 单本重新获取封面：书城兜底（强制）→ 失败回源站详情页
+  if (p === '/api/books/cover' && method === 'POST') {
+    const body = await readJson(req);
+    const url = String((body && body.url) || '').trim();
+    if (!url) return json(res, 400, { error: '缺少 url' });
+    const book = store.findBook(url);
+    if (!book) return json(res, 404, { error: '书籍不在书架' });
+    let coverUrl = '';
+    let via = '';
+    try {
+      const patch = await metaenrich.enrichBook(book, {
+        dataDir: store.dataDir,
+        coversDir: path.join(store.dataDir, 'covers'),
+        force: true,
+      });
+      if (patch && patch.coverUrl) {
+        coverUrl = patch.coverUrl;
+        via = patch.metaSource || 'meta';
+      }
+    } catch { /* 继续回源站 */ }
+    if (!coverUrl) {
+      const source = resolveSource(book);
+      if (source) {
+        try {
+          const tmp = { ...book };
+          await getBookInfo(source, tmp);
+          if (tmp.coverUrl) {
+            coverUrl = tmp.coverUrl;
+            via = 'source';
+          }
+        } catch { /* ignore */ }
+      }
+    }
+    if (!coverUrl) return json(res, 502, { error: '没有取到新封面' });
+    const current = store.findBook(book.bookUrl) || book;
+    store.upsertBook({ ...current, coverUrl, metaSource: via, metaAt: Date.now() });
+    events.broadcast({ type: 'shelf', action: 'cover', bookUrl: book.bookUrl, via });
+    return json(res, 200, { ok: true, coverUrl, via, v: Date.now() });
+  }
+
+  if (p === '/api/covers/refetch' && method === 'POST') {
+    if (!coverJob.running) startCoverRefetch();
+    return json(res, 200, { ok: true, ...coverJobStatus() });
+  }
+  if (p === '/api/covers/refetch' && method === 'GET') {
+    return json(res, 200, { ok: true, ...coverJobStatus() });
+  }
+
   if (p === '/api/config' && method === 'GET') {
+    const safeAccounts = {};
+    for (const [k, v] of Object.entries(store.config.accounts || {})) {
+      safeAccounts[k] = { set: !!(v && v.cookie), updatedAt: Number((v && v.updatedAt) || 0) };
+    }
     const cfg = {
       ...store.config,
+      accounts: safeAccounts,
       directBase: directBase(),
       lanIp: lanIp(),
       lanIps: allLanIps().map((ip) => `http://${ip}:${process.env.TRIM_SERVICE_PORT || process.env.PORT || 1122}`),

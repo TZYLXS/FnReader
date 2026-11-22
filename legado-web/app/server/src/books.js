@@ -6,6 +6,7 @@ const { runJs } = require('./jsrules');
 const { evaluateXPath } = require('./xpath');
 const searchCache = require('./searchcache');
 const { fixChapterOrder, normalizeChapterList } = require('./chapter-order');
+const builtin = require('./builtin');
 
 /** 去掉 Legado 拼在 URL 末尾的 `,{'webView': true}` 配置（可能已 URL 编码） */
 function stripUrlConfig(u) {
@@ -188,6 +189,7 @@ function isJunkResult(name, author) {
 }
 
 async function searchSource(source, key, page = 1, opts = {}) {
+  if (builtin.isBuiltin(source)) return builtin.search(source, key, page, opts);
   if (!source.searchUrl) throw new Error('书源未配置搜索地址');
   if (source.ruleSearch && source.ruleSearch.checkKeyWord) {
     // 预留：校验关键字规则
@@ -277,6 +279,7 @@ function tryJson(text) {
 
 /** 补全书籍详情（封面/简介/目录地址） */
 async function getBookInfo(source, book, opts = {}) {
+  if (builtin.isBuiltin(source)) return builtin.info(source, book, opts);
   const url = book.bookUrl;
   const resp = await fetchPage(url, source, { charset: null });
   const doc = makeDoc(resp.body);
@@ -485,6 +488,7 @@ async function findFullTocUrls(source, book) {
 }
 
 async function getToc(source, book, opts = {}) {
+  if (builtin.isBuiltin(source)) return builtin.toc(source, book, opts);
   const tocUrl = book.tocUrl || book.bookUrl;
   let chapters = await parseTocFrom(tocUrl, source, book);
 
@@ -522,6 +526,7 @@ async function getToc(source, book, opts = {}) {
 }
 
 async function getContent(source, book, chapter) {
+  if (builtin.isBuiltin(source)) return builtin.content(source, book, chapter);
   const rule = source.ruleContent || {};
   let url = chapter.url;
   let paragraphs = [];

@@ -272,7 +272,8 @@ async function enrichBook(book, opts = {}) {
   }
 
   const patch = {};
-  if (!book.coverUrl && result.coverUrl) patch.coverUrl = result.coverUrl;
+  // force：用户主动「重新获取封面」时连已有封面一起替换
+  if (result.coverUrl && (opts.force || !book.coverUrl)) patch.coverUrl = result.coverUrl;
   if (!book.intro && result.intro) patch.intro = String(result.intro).slice(0, 2000);
   if (!book.rating && result.rating) {
     patch.rating = result.rating;

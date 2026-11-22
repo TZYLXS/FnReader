@@ -935,6 +935,7 @@ async function renderDetail() {
     <div class="detail-actions">
       <button class="btn ${inShelf ? 'primary' : 'primary'}" id="detail-add">${inShelf ? '开始阅读' : '加入书架'}</button>
       <button class="btn" id="detail-download" ${inShelf ? '' : 'disabled'}>下载 TXT</button>
+      <button class="btn" id="detail-cover">换封面</button>
     </div>
     <div class="section" style="margin:12px 14px">
       <h3>简介</h3>
@@ -955,6 +956,27 @@ async function renderDetail() {
   };
 
   $('#detail-download').onclick = () => startDownloadFlow(url, b.name);
+
+  if ($('#detail-cover')) {
+    $('#detail-cover').onclick = async () => {
+      const btn = $('#detail-cover');
+      btn.disabled = true;
+      btn.textContent = '获取中…';
+      try {
+        const r = await api('/books/cover', { method: 'POST', body: { url } });
+        b.coverUrl = r.coverUrl || b.coverUrl;
+        state.coverVer = Date.now();
+        const img = document.querySelector('.detail-cover img');
+        if (img && r.coverUrl) img.src = coverSrc(r.coverUrl, b.bookUrl) + (String(r.coverUrl).includes('?') ? '&' : '?') + 't=' + Date.now();
+        toast('封面已更新' + (r.via ? `（${r.via}）` : ''));
+      } catch (e) {
+        toast('换封面失败：' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '换封面';
+      }
+    };
+  }
 
   const fetchIntro = async (auto) => {
     const btn = $('#fetch-intro');
@@ -2357,6 +2379,7 @@ async function renderBooks() {
         `缓存 ${it.cached} 章`,
         `同步 ${it.synced} 章`,
         it.variants ? `变体 ${it.variants}` : '',
+        it.rawSkipped ? `去重 ${it.rawSkipped}` : '',
         it.splitMismatch ? `切分冲突 ${it.splitMismatch}` : '',
         it.totalChapters ? `共 ${it.totalChapters} 章` : '目录待解析',
         it.bytes ? formatSize(it.bytes) : '',
@@ -2446,7 +2469,29 @@ async function exportAllTxt(btn) {
 
 // 帮助入口（设置页「帮助/文档」与首次运行提示）
 function showHelp() {
-  return showDocs();
+  const modal = $('#modal');
+  const box = $('#modal-box');
+  box.innerHTML = `
+    <h3 style="margin-bottom:10px">使用帮助</h3>
+    <div class="doc-body" style="max-height:62vh;overflow:auto;font-size:13px;line-height:1.75">
+      <p><b>书架</b>：点书封继续阅读，长按可下载整本 TXT；空书架先去「搜索」或导入书源。</p>
+      <p><b>搜索</b>：多源聚合，默认只问启用的书源；「设置 → 账号接入」填了 Cookie 后，微信读书/起点会排在最前。</p>
+      <p><b>设置 → 书源与规则</b>：书源管理（导入/检测/分组）、替换规则（折叠，导入 Legado 的 exportReplaceRule.json）。</p>
+      <p><b>设置 → 引擎与解析</b>：Python 引擎开关、电子书解析方式（代理解析/仅本机/关闭）、优先手机解析。</p>
+      <p><b>设置 → 手机接入</b>：把「直连地址 + 访问令牌」填进手机 App；书源导入链接可直接在「阅读」里打开。</p>
+      <p><b>设置 → 账号接入</b>：粘贴微信读书 / 起点登录后的 Cookie，仅供内置书源使用，只存本机。</p>
+      <p><b>设置 → 数据</b>：书籍数量、本地 .nb 缓存、搜索缓存、导出日志；「刷新封面」会重新抓取全部封面。</p>
+      <p><b>常见问题</b>：封面不显示 → 详情页「换封面」或设置里刷新封面；目录为空 → 换源重试；书源同步失败 → 检查手机端令牌和网络。</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="help-docs">随包文档</button>
+      <button class="btn primary" id="help-ok">知道了</button>
+    </div>`;
+  modal.classList.remove('hidden');
+  const close = () => modal.classList.add('hidden');
+  $('#help-ok').onclick = close;
+  $('#help-docs').onclick = () => { close(); showDocs(); };
+  modal.onclick = (e) => { if (e.target === modal) close(); };
 }
 
 function maybeShowFirstRunHelp() {
@@ -2573,12 +2618,21 @@ async function renderSettings() {
         <a class="row" href="#/sources" style="text-decoration:none"><div class="label">书源管理<div class="desc" id="src-summary">导入、检测、分组与批量删除</div></div><span style="color:var(--text-2)">›</span></a>
       
 
-        <div class="row"><div class="label">替换规则<div class="desc" id="rules-count">加载中…</div></div>
-          <input type="file" id="rules-file" accept=".json,application/json" hidden />
-          <button class="btn" id="rules-import" style="padding:5px 10px;font-size:12px">导入文件</button>
-          <button class="btn" id="rules-paste" style="padding:5px 10px;font-size:12px">粘贴</button>
-          <button class="btn ghost" id="rules-clear" style="padding:5px 8px;font-size:12px;color:var(--danger)">清空</button></div>
-        <div id="rules-list"></div>
+        <details class="rules-fold">
+          <summary>
+            <div class="label">替换规则<div class="desc" id="rules-count">加载中…</div></div>
+            <span class="chev">›</span>
+          </summary>
+          <div class="rules-body">
+            <input type="file" id="rules-file" accept=".json,application/json" hidden />
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px">
+              <button class="btn" id="rules-import" style="padding:5px 10px;font-size:12px">导入文件</button>
+              <button class="btn" id="rules-paste" style="padding:5px 10px;font-size:12px">粘贴</button>
+              <button class="btn ghost" id="rules-clear" style="padding:5px 8px;font-size:12px;color:var(--danger)">清空</button>
+            </div>
+            <div id="rules-list"></div>
+          </div>
+        </details>
       
       </div>
       <div class="section">
@@ -2657,6 +2711,26 @@ async function renderSettings() {
         </div>
       </div>
       <div class="section">
+        <h3>账号接入</h3>
+        <div class="row row-stack">
+          <div class="label">微信读书<div class="desc" id="acc-weread">未填写 Cookie</div></div>
+          <div class="acc-controls">
+            <input id="acc-weread-input" placeholder="粘贴 weread.qq.com 的 Cookie" />
+            <button class="btn" id="acc-weread-save">保存</button>
+            <button class="btn ghost" id="acc-weread-clear">清除</button>
+          </div>
+        </div>
+        <div class="row row-stack">
+          <div class="label">起点中文网<div class="desc" id="acc-qidian">未填写 Cookie</div></div>
+          <div class="acc-controls">
+            <input id="acc-qidian-input" placeholder="粘贴 qidian.com 的 Cookie" />
+            <button class="btn" id="acc-qidian-save">保存</button>
+            <button class="btn ghost" id="acc-qidian-clear">清除</button>
+          </div>
+        </div>
+        <div class="row"><div class="label">说明<div class="desc">登录后在浏览器开发者工具里复制 Cookie（含登录态），只保存在本机，供内置书源搜索/目录/正文使用。</div></div></div>
+      </div>
+      <div class="section">
         <h3>下载</h3>
         <a class="row" href="#/offline" style="text-decoration:none"><div class="label">已下载书籍<div class="desc" id="stat-dl">-</div></div><span style="color:var(--text-2)">›</span></a>
         <div class="row"><div class="label">保存位置<div class="desc" id="stat-dir">-</div></div>
@@ -2727,18 +2801,30 @@ async function renderSettings() {
     if (refreshCovers) {
       refreshCovers.onclick = async () => {
         refreshCovers.disabled = true;
-        refreshCovers.textContent = '刷新中…';
+        refreshCovers.textContent = '获取中 0/0';
         try {
-          const r = await api('/covers/refresh', { method: 'POST' });
-          state.coverVer = Date.now();
-          toast(`封面已刷新（清理 ${r.cleared || 0} 个缓存）`);
-          if (location.hash.startsWith('#/shelf')) renderShelf();
+          await api('/covers/refresh', { method: 'POST' });
+          await api('/covers/refetch', { method: 'POST' });
+          const poll = async () => {
+            const st = await api('/covers/refetch');
+            if (st.running) {
+              refreshCovers.textContent = `获取中 ${st.done}/${st.total}`;
+              setTimeout(poll, 1200);
+              return;
+            }
+            state.coverVer = Date.now();
+            refreshCovers.textContent = '刷新';
+            refreshCovers.disabled = false;
+            toast(`封面更新完成：${st.changed} 本成功，${st.failed} 本未取到`);
+            if (location.hash.startsWith('#/shelf')) renderShelf();
+          };
+          setTimeout(poll, 800);
+          return;
         } catch (e) {
           toast('刷新失败：' + e.message);
-        } finally {
-          refreshCovers.disabled = false;
-          refreshCovers.textContent = '刷新';
         }
+        refreshCovers.disabled = false;
+        refreshCovers.textContent = '刷新';
       };
     }
 
@@ -3179,6 +3265,31 @@ async function renderSettings() {
           toast('重置失败：' + e.message);
         }
       };
+
+    // 账号接入：微信读书 / 起点 Cookie
+    const accStatus = (el, info, label) => {
+      if (!el) return;
+      el.textContent = info && info.set ? `已填写（${new Date(info.updatedAt).toLocaleString()}）` : '未填写 Cookie';
+    };
+    accStatus($('#acc-weread'), (cfg.accounts || {}).weread, '微信读书');
+    accStatus($('#acc-qidian'), (cfg.accounts || {}).qidian, '起点中文网');
+    const saveAccount = async (site, inputId, statusId) => {
+      const input = $(inputId);
+      const cookie = input ? String(input.value || '').trim() : '';
+      if (!cookie && !confirm('清除该站点的 Cookie？')) return;
+      try {
+        const r = await api('/accounts', { method: 'POST', body: { site, cookie } });
+        accStatus($(statusId), r.accounts[site], site);
+        if (input) input.value = '';
+        toast(cookie ? 'Cookie 已保存' : 'Cookie 已清除');
+      } catch (e) {
+        toast('保存失败：' + e.message);
+      }
+    };
+    if ($('#acc-weread-save')) $('#acc-weread-save').onclick = () => saveAccount('weread', '#acc-weread-input', '#acc-weread');
+    if ($('#acc-weread-clear')) $('#acc-weread-clear').onclick = () => saveAccount('weread', '#acc-weread-input', '#acc-weread');
+    if ($('#acc-qidian-save')) $('#acc-qidian-save').onclick = () => saveAccount('qidian', '#acc-qidian-input', '#acc-qidian');
+    if ($('#acc-qidian-clear')) $('#acc-qidian-clear').onclick = () => saveAccount('qidian', '#acc-qidian-input', '#acc-qidian');
 
     // 阅读 APK 接入：一键生成 legado:// 书源导入链接
     const jsonBase = String(apiBase || '').replace(/\/+$/, '');

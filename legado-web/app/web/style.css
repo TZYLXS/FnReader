@@ -769,6 +769,32 @@ html[data-theme="book"] .chip.on { background: var(--accent); color: #fff8ee; }
 .row.row-url.compact .desc { font-size: 12px; line-height: 1.45; }
 
 
+/* 账号接入：窄屏上下堆叠，输入框占满一行 */
+.row.row-stack { flex-direction: column; align-items: stretch; gap: 8px; }
+.row.row-stack .label { flex: none; }
+.row.row-stack .acc-controls { display: flex; gap: 8px; align-items: center; }
+.row.row-stack .acc-controls input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+}
+.row.row-stack .acc-controls .btn { flex: 0 0 auto; padding: 6px 12px; font-size: 12px; }
+
+/* 替换规则折叠 */
+.rules-fold { border-top: 1px solid var(--line); }
+.rules-fold > summary { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; list-style: none; }
+.rules-fold > summary::-webkit-details-marker { display: none; }
+.rules-fold > summary .label { flex: 1; }
+.rules-fold > summary .chev { color: var(--text-2); transition: transform .15s; }
+.rules-fold[open] > summary .chev { transform: rotate(90deg); }
+.rules-fold .rules-body { padding: 2px 16px 12px; }
+
 /* 随包 Markdown 文档渲染 */
 .doc-body h1, .doc-body h2, .doc-body h3, .doc-body h4 { margin: 14px 0 8px; font-size: 15px; color: var(--text); }
 .doc-body p { margin: 6px 0; }
