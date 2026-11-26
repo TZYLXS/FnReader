@@ -11,8 +11,9 @@ android {
         applicationId = "com.tzylxs.busdebug"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        // 版本由构建传入：-PbusVersion=1.0.3.4.2 -PbusVersionCode=...
+        versionCode = ((project.findProperty("busVersionCode") as String?) ?: "1").toInt()
+        versionName = (project.findProperty("busVersion") as String?) ?: "1.0.0"
     }
 
     buildTypes {
