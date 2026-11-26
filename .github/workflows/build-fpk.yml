@@ -29,6 +29,16 @@ jobs:
           sudo mv fnpack /usr/local/bin/fnpack
           fnpack --help | head -3
 
+      - name: Bundle Node runtime
+        run: |
+          curl -fsSL -o /tmp/node.tar.xz https://nodejs.org/dist/v22.12.0/node-v22.12.0-linux-x64.tar.xz
+          tar -xJf /tmp/node.tar.xz -C /tmp node-v22.12.0-linux-x64/bin/node
+          mkdir -p legado-web/app/server/runtime/node/bin legado-web/app/server/runtime/node/lib
+          cp /tmp/node-v22.12.0-linux-x64/bin/node legado-web/app/server/runtime/node/bin/node
+          chmod +x legado-web/app/server/runtime/node/bin/node
+          if [ -f legado-web/app/server/lib/libatomic.so.1 ]; then cp legado-web/app/server/lib/libatomic.so.1 legado-web/app/server/runtime/node/lib/; fi
+          ls -lh legado-web/app/server/runtime/node/bin/node
+
       - name: Build fpk
         run: bash tools/build-fpk.sh
 
