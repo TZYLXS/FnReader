@@ -4906,8 +4906,16 @@ function saveCover(target, buf, mime) {
     prefetchChapter(book, index + 2);
     // 应用「替换 / 屏蔽」规则（去掉正文里的广告、推广信息）
     const cleaned = applyReplaceRules(book, chapter, result.paragraphs);
+    // 替换规则可能误伤（把整章裁成一句/标题）：正文明显缩水时回退原文
+    let finalParagraphs = cleaned.paragraphs;
+    const before = result.paragraphs.join('').replace(/\s+/g, '').length;
+    const after = finalParagraphs.join('').replace(/\s+/g, '').length;
+    if (result.paragraphs.length >= 5 && before > 200 && after < before * 0.55) {
+      logPush(`[legado-web] 替换规则裁剪过多（${before}→${after} 字），本章回退原文：${book.name || ''}`);
+      finalParagraphs = result.paragraphs;
+    }
     const title = cleaned.title;
-    const paragraphs = cleaned.paragraphs;
+    const paragraphs = finalParagraphs;
     return json(res, 200, {
       title,
       index,
