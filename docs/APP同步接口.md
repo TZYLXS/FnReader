@@ -977,6 +977,31 @@ POST /api/m/cache { layout:'legado', book, coverData, chapters, images }
 - 出口字段规范化：`bookSourceType` 统一 0/1/2/3（文本/音频/图片/漫画），`enabledCookieJar`、`enabledExplore`、`enabled` 统一布尔
 - 过滤坏源：无任何规则且 `lastUpdateTime<=0` 的源不下发
 
+### 17.2.2 本地小说文件绑定（3.4.1+）
+
+客户端把本地文件书也同步上来时，带：
+
+```json
+{
+  "bookUrl": "file:///storage/emulated/0/Books/某某小说.txt",
+  "localFile": true,
+  "fileName": "某某小说.txt",
+  "name": "某某小说",
+  "author": "",
+  "index": 12, "title": "第 13 章", "time": 1795390000000,
+  "totalChapterNum": 300
+}
+```
+
+服务端 `POST /api/m/books` 与 `POST /api/m/progress/batch` 都接受（不再只认 http）：
+
+1. 按 `fileName || name` 查 ebook 索引（忽略扩展名/书名号，模糊匹配）
+2. 命中 → 绑定为 `ebook://<sha1>` 条目：`localEbook{sha1,format,name,status}`、`contentSource=local`、`tocUrl=ebook://sha1`、目录取本地解析结果，进度用本次上报值
+3. 未命中 → 登记 `local://<normBookName>` 的 pending 条目（带 `sourceFileName`），等电子书扫描完成后自动升级为 `ebook://`，保留进度
+4. 响应计数：`{ok, added, updated, bound, pending, skippedDeleted, total}`，其中 `bound` 为本轮绑定成功数、`pending` 为待扫描数
+
+客户端可用 `bound/pending` 提示「已绑定 N 本、待扫描 M 本」。
+
 ### 17.3 判定规则
 
 | 情况 | 结果 |

@@ -2625,6 +2625,42 @@ function linkLocalEbooksToShelf() {
     }
   }
 
+  // pending 本地书：扫描到同名电子书后升级为 ebook://，保留手机上报的进度
+  for (const b of books) {
+    if (!(b.localPending || String(b.bookUrl).startsWith('local://'))) continue;
+    const e = localEbookByName(b.sourceFileName || b.name);
+    if (!e) continue;
+    const ebookUrl = 'ebook://' + e.sha1;
+    if (books.some((x) => x.bookUrl === ebookUrl)) {
+      // 已有同一本电子书：并入进度后删掉 pending 条目
+      const target = books.find((x) => x.bookUrl === ebookUrl);
+      if ((b.durChapterTime || 0) > (target.durChapterTime || 0)) {
+        target.durChapterIndex = b.durChapterIndex;
+        target.durChapterPos = b.durChapterPos;
+        target.durChapterTitle = b.durChapterTitle;
+        target.durChapterTime = b.durChapterTime;
+      }
+      b.__drop = true;
+      changed++;
+      continue;
+    }
+    const upgraded = ebookShelfBook(e, {
+      name: b.name,
+      title: b.durChapterTitle,
+      index: b.durChapterIndex,
+      pos: b.durChapterPos,
+      time: b.durChapterTime,
+      totalChapterNum: b.totalChapterNum,
+    });
+    Object.assign(b, upgraded);
+    b.localPending = false;
+    changed++;
+  }
+  if (books.some((b) => b.__drop)) {
+    books = books.filter((b) => !b.__drop);
+    store.saveBooks(books);
+  }
+
   // 回填老的 ebook:// 条目的 ebookFormat
   const fmtByeSha = new Map(usable.map((e) => ['ebook://' + e.sha1, e.format]));
   for (const b of books) {
@@ -2735,7 +2771,8 @@ function normBookName(s) {
 }
 
 function localEbookByName(name) {
-  const target = normBookName(name);
+  const raw = String(name || '');
+  const target = normBookName(raw) || normBookName(raw.replace(/\.[^.]+$/, ''));
   if (!target) return null;
   let list = [];
   try {
@@ -2743,7 +2780,7 @@ function localEbookByName(name) {
   } catch {
     return null;
   }
-  const exact = list.find((e) => normBookName(e.name) === target);
+  const exact = list.find((e) => normBookName(e.name) === target || normBookName(e.name).includes(target));
   if (exact) return exact;
   return (
     list.find((e) => {
@@ -2751,6 +2788,104 @@ function localEbookByName(name) {
       return n && (n.includes(target) || target.includes(n)) && Math.min(n.length, target.length) >= 2;
     }) || null
   );
+}
+
+
+/** 本地书（客户端 file:// 或 /storage/...）同步：按文件名绑到已扫描的电子书 */
+function localProgressOf(item) {
+  return {
+    durChapterIndex: Number(item.index != null ? item.index : item.durChapterIndex) || 0,
+    durChapterPos: Number(item.pos || item.durChapterPos) || 0,
+    durChapterTitle: String(item.title || item.durChapterTitle || ''),
+    durChapterTime: Number(item.time || item.durChapterTime) || Date.now(),
+  };
+}
+
+function ebookShelfBook(entry, item) {
+  const sha = entry.sha1;
+  const ebookUrl = 'ebook://' + sha;
+  let toc = { chapters: [] };
+  try {
+    toc = ebookRender.toc(store.dataDir, sha) || toc;
+  } catch { /* 目录读失败先建空目录，稍后刷新 */ }
+  const chapters = toc.chapters || [];
+  const meta = toc.meta || {};
+  const progress = localProgressOf(item);
+  return {
+    name: entry.name || item.name || '未命名',
+    author: meta.author || item.author || '',
+    bookUrl: ebookUrl,
+    tocUrl: ebookUrl,
+    origin: 'local-ebook',
+    originName: '本地电子书（手机同步）',
+    coverUrl: '',
+    intro: meta.description || item.intro || '',
+    chapters,
+    totalChapterNum: chapters.length || Number(item.totalChapterNum) || 0,
+    durChapterIndex: progress.durChapterIndex,
+    durChapterPos: progress.durChapterPos,
+    durChapterTitle: progress.durChapterTitle || (chapters[0] ? chapters[0].title : ''),
+    durChapterTime: progress.durChapterTime,
+    tocVia: 'ebook',
+    ebookFormat: entry.format,
+    contentSource: 'local',
+    localEbook: { sha1: sha, format: entry.format, name: entry.name, status: entry.status },
+    sourceFileName: String(item.fileName || ''),
+    addedAt: Date.now(),
+  };
+}
+
+/** 未扫到对应电子书时先挂起，等 ebook 扫描完成后由 linkLocalEbooksToShelf 升级 */
+function pendingLocalBook(item) {
+  const name = String(item.name || item.fileName || '').replace(/\.[^.]+$/, '') || '本地书';
+  const key = 'local://' + (normBookName(name) || encodeURIComponent(name));
+  const progress = localProgressOf(item);
+  return {
+    bookUrl: key,
+    name,
+    author: String(item.author || ''),
+    coverUrl: '',
+    intro: String(item.intro || ''),
+    origin: 'local-ebook',
+    originName: '本地书（待扫描）',
+    tocUrl: '',
+    chapters: [],
+    totalChapterNum: Number(item.totalChapterNum) || 0,
+    ...progress,
+    localPending: true,
+    sourceFileName: String(item.fileName || ''),
+    addedAt: Date.now(),
+  };
+}
+
+/**
+ * 手机上报的一条本地书：能按文件名绑定 ebook 就绑定，否则登记 pending。
+ * @returns {{status:'bound'|'pending', book:object}}
+ */
+function upsertLocalBookFromPhone(item) {
+  const wanted = String(item.fileName || item.name || '');
+  const entry = localEbookByName(wanted);
+  if (entry) {
+    const ebookUrl = 'ebook://' + entry.sha1;
+    const existing = store.findBook(ebookUrl);
+    if (existing) {
+      const progress = localProgressOf(item);
+      store.upsertBook({ ...existing, ...progress, localEbook: { sha1: entry.sha1, format: entry.format, name: entry.name, status: entry.status }, ebookFormat: entry.format, contentSource: 'local' });
+      return { status: 'bound', book: store.findBook(ebookUrl) };
+    }
+    const book = ebookShelfBook(entry, item);
+    store.upsertBook(book);
+    return { status: 'bound', book: store.findBook(ebookUrl) };
+  }
+  const pending = pendingLocalBook(item);
+  const existing = store.findBook(pending.bookUrl);
+  if (existing) {
+    const progress = localProgressOf(item);
+    store.upsertBook({ ...existing, ...progress, sourceFileName: pending.sourceFileName, name: pending.name || existing.name });
+    return { status: 'pending', book: store.findBook(pending.bookUrl) };
+  }
+  store.upsertBook(pending);
+  return { status: 'pending', book: store.findBook(pending.bookUrl) };
 }
 
 /** 手机任务并发闸门 + 熔断：App 按队列处理，连续超时就暂停代理解析 */
@@ -3247,6 +3382,12 @@ async function route(req, res, url) {
   if (p === '/api/ebook/scan' && method === 'POST') {
     // scanOnce 结束时 ctx.afterScan 已经做过书架联动，这里不再重复调用
     const r = await ebookScan.scanOnce(ebookCtx);
+    // TXT/EPUB 分章是异步的：延迟再联动一次，pending 本地书才能及时绑定
+    setTimeout(() => {
+      try {
+        linkLocalEbooksToShelf();
+      } catch { /* ignore */ }
+    }, 12000);
     return json(res, 200, r);
   }
 
@@ -3864,10 +4005,20 @@ function saveCover(target, buf, mime) {
     if (!list.length) return json(res, 400, { error: '请提供书籍对象或数组' });
     let added = 0;
     let updated = 0;
+    let bound = 0;
+    let pending = 0;
     ensureTombstone();
     let skippedDeleted = 0;
     for (const item of list) {
       const bookUrl = String((item && item.bookUrl) || '').trim();
+      const isLocal = !!(item && (item.localFile === true || (!/^https?:/i.test(bookUrl) && (item.fileName || bookUrl))));
+      if (isLocal) {
+        // 本地书：服务端按文件名扫描 ebook 索引并绑定；扫不到的挂起等下一轮扫描
+        const r = upsertLocalBookFromPhone(item);
+        if (r.status === 'bound') bound++;
+        else pending++;
+        continue;
+      }
       if (!/^https?:/i.test(bookUrl)) continue;
       // 被删过的书不再推回来；客户端要主动恢复必须显式 force: true
       if (tombstone.tombstoneOf(bookUrl) && !(item && item.force === true)) {
@@ -3936,7 +4087,7 @@ function saveCover(target, buf, mime) {
         if (url) scheduleMetaEnrich(url, 2000 + i * 2000);
       });
     }
-    return json(res, 200, { ok: true, added, updated, skippedDeleted, total: store.books.length });
+    return json(res, 200, { ok: true, added, updated, bound, pending, skippedDeleted, total: store.books.length });
   }
 
   // 批量回传阅读进度（App 同步用）
@@ -3945,8 +4096,22 @@ function saveCover(target, buf, mime) {
     const list = Array.isArray(body) ? body : body && Array.isArray(body.items) ? body.items : [];
     if (!list.length) return json(res, 400, { error: '请提供进度数组' });
     let updated = 0;
+    let bound = 0;
+    let pending = 0;
     const missing = [];
     for (const item of list) {
+      const rawUrl = String(item && item.bookUrl || '').trim();
+      if (item && (item.localFile === true || (!/^https?:/i.test(rawUrl) && (item.fileName || rawUrl)))) {
+        const r = upsertLocalBookFromPhone(item);
+        if (r.status === 'bound') bound++;
+        else pending++;
+        if (r.book) {
+          store.upsertBook(r.book);
+          events.broadcast({ type: 'progress', bookUrl: r.book.bookUrl, index: r.book.durChapterIndex, title: r.book.durChapterTitle, via: 'app' });
+          updated++;
+        }
+        continue;
+      }
       let book = store.findBook(item.bookUrl);
       if (!book) {
         if (tombstone.tombstoneOf(item.bookUrl) && item.force !== true) {
@@ -3987,7 +4152,7 @@ function saveCover(target, buf, mime) {
       events.broadcast({ type: 'progress', bookUrl: book.bookUrl, index: book.durChapterIndex, title: book.durChapterTitle, via: 'app' });
       updated++;
     }
-    return json(res, 200, { ok: true, updated, total: list.length, missing });
+    return json(res, 200, { ok: true, updated, bound, pending, total: list.length, missing });
   }
 
   if (p === '/api/m/cover' && method === 'GET') {
