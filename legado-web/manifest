@@ -1,5 +1,5 @@
 appname=legado-web
-version=3.4.1
+version=3.4.2
 display_name=阅读
 desc=在 fnOS 浏览器/App 中读书：兼容 Legado 书源，支持书架、搜索、订阅、整本下载与进度同步。
 source=thirdparty
@@ -12,4 +12,4 @@ desktop_applaunchname=legado-web.main
 service_port=1122
 checkport=false
 ctl_stop=true
-changelog=本地小说文件同步绑定：客户端上报 localFile/fileName，服务端按电子书索引绑定为 ebook:// 或登记 local:// pending，扫描完成后自动升级并保留阅读进度；/api/m/books 与 /api/m/progress/batch 返回 bound/pending 计数
+changelog=构建修正：CI 构建时下载并打入 Node v22.12.0 运行时，GitHub Release 资产与 NAS 安装包一致（3.4.1 资产缺 runtime）
