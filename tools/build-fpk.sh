@@ -24,7 +24,11 @@ echo "==> 1/4 打包前端服务（esbuild）"
 cd "$SRC/app/server"
 NODE_BIN="${NODE:-node}"
 ESB=node_modules/esbuild/bin/esbuild
-if [ -f "$ESB" ] && "$ESB" --version >/dev/null 2>&1; then
+if [ -n "${FNREADER_ESBUILD:-}" ] && [ -f "${FNREADER_ESBUILD}" ]; then
+  # 显式指定 esbuild 可执行文件（本机没有平台包时用下载的二进制）
+  "$FNREADER_ESBUILD" src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
+  "$FNREADER_ESBUILD" src/parse-worker.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=parse-worker.bundle.js >/dev/null
+elif [ -f "$ESB" ] && "$ESB" --version >/dev/null 2>&1; then
   # Linux 下是原生可执行文件，直接跑
   "$ESB" src/server.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=server.bundle.js >/dev/null
   "$ESB" src/parse-worker.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=parse-worker.bundle.js >/dev/null
@@ -50,18 +54,29 @@ cp "$SRC/app/ui/config" "$OUT/app/ui/config"
 cp "$SRC/app/ui/images/"*.png "$OUT/app/ui/images/"
 cp "$SRC/app/server/server.bundle.js" "$OUT/app/server/"
 cp "$SRC/app/server/parse-worker.bundle.js" "$OUT/app/server/parse-worker.js"
+# 随包 libatomic（nodejs_v26 在部分系统缺 libatomic.so.1）
+if [ -d "$SRC/app/server/lib" ]; then
+  mkdir -p "$OUT/app/server/lib"
+  cp -r "$SRC/app/server/lib/." "$OUT/app/server/lib/"
+fi
+
+# 随包 Node runtime（不依赖应用中心 nodejs_v26）
+NODE_RUNTIME="$BASE/build-cache/node-linux/bin/node"
+if [ -d "$SRC/app/server/runtime/node" ]; then
+  # CI 已在源码树里放好（workflow: Bundle Node runtime）
+  mkdir -p "$OUT/app/server/runtime"
+  cp -r "$SRC/app/server/runtime/." "$OUT/app/server/runtime/"
+  chmod +x "$OUT/app/server/runtime/node/bin/node" 2>/dev/null || true
+elif [ -f "$NODE_RUNTIME" ]; then
+  mkdir -p "$OUT/app/server/runtime/node/bin" "$OUT/app/server/runtime/node/lib"
+  cp "$NODE_RUNTIME" "$OUT/app/server/runtime/node/bin/node"
+  chmod +x "$OUT/app/server/runtime/node/bin/node"
+  if [ -f "$SRC/app/server/lib/libatomic.so.1" ]; then
+    cp "$SRC/app/server/lib/libatomic.so.1" "$OUT/app/server/runtime/node/lib/"
+  fi
+fi
 
 # Python 规则引擎（可选，缺 legado_rule 时自动回退 Node）
-# Java 21 目录引擎：优先用 JDK 编译，没有 JDK 就复制预编译 class
-JAVA_HOME_DETECTED="${FNREADER_JAVA_HOME:-/var/apps/java-21-openjdk/target}"
-if [ -x "$JAVA_HOME_DETECTED/bin/javac" ] && [ -f "$SRC/app/server/src/java/FnReaderJavaWorker.java" ]; then
-  mkdir -p "$OUT/app/server/java" "$OUT/app/server/src/java"
-  cp "$SRC/app/server/src/java/FnReaderJavaWorker.java" "$OUT/app/server/src/java/"
-  "$JAVA_HOME_DETECTED/bin/javac" -encoding UTF-8 -d "$OUT/app/server/java" "$OUT/app/server/src/java/FnReaderJavaWorker.java" || echo "Java 编译失败，跳过"
-elif [ -d "$SRC/app/server/java" ]; then
-  mkdir -p "$OUT/app/server/java"
-  cp "$SRC/app/server/java/"*.class "$OUT/app/server/java/" 2>/dev/null || true
-fi
 
 if [ -d "$SRC/app/server/python" ]; then
   mkdir -p "$OUT/app/server/python"
@@ -73,6 +88,9 @@ cp -r "$SRC/app/web/." "$OUT/app/web/"
 
 # 系统更新日志随包发布
 mkdir -p "$OUT/app/web/docs"
+if [ -d "$BASE/docs" ]; then
+  cp "$BASE"/docs/*.md "$OUT/app/web/docs/" 2>/dev/null || true
+fi
 if [ -f "$DIST/更新日志.txt" ]; then
   cp "$DIST/更新日志.txt" "$OUT/app/web/docs/changelog.txt"
 elif [ -f "$BASE/docs/更新日志.txt" ]; then
@@ -80,7 +98,7 @@ elif [ -f "$BASE/docs/更新日志.txt" ]; then
 fi
 
 echo "==> 3/4 检查包结构"
-for f in manifest config/privilege config/resource ICON.PNG ICON_256.PNG app/ui/config app/server/server.bundle.js app/web/index.html; do
+for f in manifest config/privilege config/resource ICON.PNG ICON_256.PNG app/ui/config app/server/server.bundle.js app/web/index.html app/server/runtime/node/bin/node; do
   [ -e "$OUT/$f" ] || { echo "缺少文件: $f"; exit 1; }
 done
 du -sh "$OUT"
