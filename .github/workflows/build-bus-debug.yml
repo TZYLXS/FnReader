@@ -7,6 +7,9 @@ on:
       - 'tools/bus-debug-app/**'
       - '.github/workflows/build-bus-debug.yml'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,8 +37,22 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="0.0.$(date +%y%m%d)"
+          fi
+          IFS=. read -r a b c <<< "$V"
+          CODE=$(( (10#${a:-0})*1000000 + (10#${b:-0})*1000 + (10#${c:-0}) ))
+          echo "name=1.0.$V" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "debug app version: 1.0.$V ($CODE)"
+
       - name: Build debug APK
-        run: gradle -p tools/bus-debug-app assembleDebug --no-daemon --stacktrace
+        run: gradle -p tools/bus-debug-app assembleDebug --no-daemon --stacktrace -PbusVersion=${{ steps.ver.outputs.name }} -PbusVersionCode=${{ steps.ver.outputs.code }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -43,3 +60,17 @@ jobs:
           name: bus-debug-apk
           path: tools/bus-debug-app/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Copy APK for release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p dist
+          cp tools/bus-debug-app/app/build/outputs/apk/debug/app-debug.apk dist/bus-debug.apk
+          ls -lh dist/bus-debug.apk
+
+      - name: Attach APK to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/bus-debug.apk
+          overwrite_files: true
